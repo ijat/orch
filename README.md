@@ -16,6 +16,78 @@ when the window resets.
 
 Status: in active use, still changing.
 
+## Why use it
+
+- **You stay in charge at the two points that matter.** You approve the plan before any code is
+  written and the merge before anything lands on your branch. Between those gates it runs on its own.
+- **Work survives crashes and usage limits.** All state lives in Markdown files: plan, status, log,
+  review and journal. A dead session, a closed terminal or a usage pause resumes from the files, not
+  from scratch.
+- **Separate reviewers check the work.** A code reviewer with a fresh context, plus a security reviewer
+  on sensitive changes, which it offers and never runs silently. They review against the approved plan,
+  for up to 3 fix rounds.
+- **It spends usage deliberately.** A cheap Sonnet implementer does most of the work. Opus plans and
+  reviews, and a step escalates to a stronger tier only for a stated reason, which goes in the journal.
+  It paces itself against your 5h/7d limits, so a long task pauses instead of hitting the wall.
+- **Runs are bounded.** Pilot batches measure cost before a big step. Check-ins catch a silent agent
+  that's looping, and three strikes stop retry spirals.
+- **It learns.** Mistakes go into a `LESSONS.md`. Lessons that change behaviour get promoted into the
+  skill itself, and every decision is journaled for later analysis.
+
+## How it differs from other ways to run agents
+
+| | Plain subagents / one long session | `/goal` (Claude Code) | Dynamic workflows (Claude Code) | **orch** |
+|---|---|---|---|---|
+| Who decides "done" | the agent itself | a small model reads the conversation after each turn | the script | reviewers against the approved plan, then you at merge |
+| Human gates | ad hoc | none until the condition is met | none mid-run | plan approval and merge approval, plus cost and decision gates |
+| Survives a crash | no | goal restored on resume; counters reset | no | yes: every role checkpoints to files |
+| Isolation | your branch | your branch | your branch | its own git worktree until you merge |
+| Model per role | one | one, plus an evaluator | per agent | per role and per spawn, with a written tradeoff |
+| Loop limits | none | a turn cap you write yourself | per script | 3 review rounds, 2 visual redo rounds, three strikes, check-ins |
+| Usage pacing | none | pauses on limits | none | slows at 90%, pauses at 95%, resumes on its own |
+
+Use `/goal` when one agent can reach a checkable end state, like "tests pass". Use dynamic workflows
+for wide fan-out with no human in the loop. Use orch for multi-step engineering work where you want
+a plan you approve, independent review and a merge you control.
+
+## Track record
+
+The skill has been in regular use for about seven weeks (since 2026-08-27). The numbers below come from
+its own records. Journaled outcomes start on 2026-09-26, when the journal was added. Review findings
+are counted from the review files themselves.
+
+| | |
+|---|---|
+| Tasks run | 84 across 13 repositories |
+| Journaled task ends since 2026-09-26 | 41: 36 merged, 1 abandoned, 4 with no outcome recorded |
+| Plans | 46 approvals at the gate, 5 sent back for revision there; 13 mid-task revisions (5 after a blocker, 8 asked for by the user) |
+| Caught by code review before merge | 18 blockers, 205 should-fix and 287 nits, over 66 reviews |
+| Caught by security review | 3 high, 15 medium and 36 low, over 23 reviews |
+| Blockers raised by roles | 31; 13 resolved by the orchestrator itself, 4 by a side investigation, 14 by asking the user |
+| Usage-limit pauses | 5 pauses, 7 automatic resumes |
+| Lessons | 15 promoted from `LESSONS.md` into standing rules |
+
+### What changed because of the data
+
+- **Tiers chosen per spawn** (2026-10-08). Mean review rounds on merged standard tasks fell from 2.7
+  (n=11) to 2.1 (n=9).
+  Escalations went from barely logged to logged every time.
+- **Batching implementers into ≤ 2 steps** was tried and reverted (2026-10-03). Measured volume went
+  up, not down.
+- **Planner sketches** are kept under watch. 10 of 48 were judged wrong, so they stay an experiment
+  rather than a rule.
+- **A full audit on 2026-10-15** found duplicated and drifted role rules and fixed them. The same
+  scenarios were run against the old and new role files: existing behaviour scored the same (20/21
+  each), and the fixes passed 42/42.
+
+### Not proven yet
+
+- The visual director loop, pilot batches, check-ins and three strikes were added on 2026-10-15.
+  None has run in a real task yet.
+- Program mode (roadmaps of milestones) has been used once.
+- The numbers above come from one person's projects. Your mileage will vary with codebase and model
+  versions.
+
 ## How it works
 
 ### The main flow
