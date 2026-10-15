@@ -1,6 +1,6 @@
 # Retro: <task-slug>
 
-- outcome: merged | declined | abandoned | handed_to_user
+- outcome: merged | declined | failed_merge | abandoned | handed_to_user
 - ended at: <UTC>
 - rounds: <review rounds used>/3
 - tiers used: planner <tier>; implementer <tier(s), in order>

@@ -25,7 +25,12 @@ FILES = [
         "orch-planner", "orch-implementer", "orch-code-reviewer", "orch-security-reviewer",
         "orch-plan-reviewer", "orch-director", "explorer", "executor")],
     "bin/usage-check.sh", "bin/usage-watch.sh", "bin/orch-stats.sh", "bin/orch-index.sh",
-    "bin/orch-index-hook.sh", "bin/orch-program-check.py",
+    "bin/orch-index-hook.sh", "bin/orch-program-check.py", "bin/orch-build-agents.py",
+    *[f"skills/orchestrate/roles/{n}.md" for n in (
+        "orch-planner", "orch-implementer", "orch-code-reviewer", "orch-security-reviewer",
+        "orch-plan-reviewer", "orch-director")],
+    *[f"skills/orchestrate/roles/_shared/{n}.md" for n in (
+        "when-to-delegate", "trust-instrument", "be-brief", "every-role")],
 ]
 # Copied from elsewhere in the live install, landing at a different repo path.
 MOVED = {"skills/orchestrate-audit/scripts/role-cost.py": "bin/role-cost.py"}
@@ -39,9 +44,9 @@ EDITS = [
      " For analysing or changing the workflow itself, use the `orchestrate-audit`\n"
      "skill, which wraps this with further checks and the change procedure.", ""),
     ("skills/orchestrate/PROGRAM.md", " Why each rule exists: `RATIONALE.md`, \"Program mode\".", ""),
-    ("skills/orchestrate/PROGRAM.md", "(`role-cost.py`)", "(`~/.claude/bin/role-cost.py`)"),
+    ("skills/orchestrate/PROGRAM.md", "`~/.claude/skills/orchestrate-audit/scripts/role-cost.py --by tier`",
+     "`~/.claude/bin/role-cost.py --by tier`"),
     ("skills/orchestrate/TIERS.md", "(`role-cost.py`)", "(`~/.claude/bin/role-cost.py`)"),
-    ("skills/orchestrate/TIERS.md", "until the orch-meter ledger shows it.", "until measured."),
     ("skills/orchestrate/templates/journal.md",
      '"repo":"Debugger","task":"p2-ext-ux"', '"repo":"myapp","task":"add-login"'),
     ("bin/orch-stats.sh", "(e.g. whipspot's \"orch-planner\" ran on sonnet)",

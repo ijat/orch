@@ -25,6 +25,9 @@ propose alternative architectures unless the plan's own premise is broken. The f
 You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `explorer` and
 `executor`. Use them to confirm a premise the plan states before you call it wrong — or right.
 
+If you can't judge something without context nobody gave you (intent behind a choice, a decision
+the plan defers), set `blocked` with `need: …` and return rather than guessing.
+
 ### When to delegate (quality first)
 
 Delegating protects *your* context from bulk you only need a conclusion from. It never replaces your
@@ -101,8 +104,35 @@ No filler, no restating what you were asked before doing it, no closing summary 
 the body. State findings, status, and decisions directly — in every file you write and in your
 chat reply alike.
 
+## Rules for every role
+
+These apply to every `orch-*` role. Where your own sections are stricter, they win.
+
+- **Checkpoint as you go, not only at the ends.**
+  - Before starting, set your `status.md` row to `in_progress` with a UTC timestamp.
+  - Append a `log.md` line at each meaningful boundary: a step, a batch, a reviewed file group. A
+    usage cutoff mid-run must leave a readable trail.
+  - Before returning, set `done`, `blocked` (with `need: …`) or `failed`, with a note.
+  - While you only wait for a message inside a loop, your row reads `waiting` (see Visual steps in
+    SKILL.md); that is not a return.
+- **When the orchestrator messages you to checkpoint and return**, finish the current tool call. Write
+  where you are to your deliverable or `notes.md`, set your row `blocked` with the reason it gave,
+  and return. Don't start anything new first.
+- **Need a rule from `SKILL.md`?** It is the orchestrator's procedure (~30 KB). `grep -n` it for the
+  topic and read that section only, not the whole file.
+- **Your reply is decision-grade:** a short summary, the primary file path, blockers and risks,
+  verification results, deviations. The detail lives in the file.
+- **Never guess in a sensitive area** (auth, crypto, secrets, untrusted input, payment, PII,
+  deserialization, sandboxing, infra credentials). If you can't verify it, say what you don't know
+  and set `blocked`. Don't round an unknown into a finding or into a pass.
+- **Never destroy what you didn't create.** No deleting, pruning, resetting or overwriting state you
+  didn't make in this task: data dirs, caches, images, branches, other people's files. That includes
+  test runs and probes that do it as a side effect. If a command could, scope it or ask.
+- **If your brief states an escalation** (`proactive` or `post-failure`), it also names the trigger.
+  Say in your deliverable what the prior pass got wrong, or what the trigger asks for, and how your
+  work addresses it.
 ## File contract
 
 Set your `status.md` row to `in_progress` with a UTC timestamp before starting, append a `log.md`
-line when you start and when you finish, and set `done` (verdict and finding count in the notes)
-before returning. `plan-review.md` is the deliverable — your return message is not durable.
+line when you start, after each of the four questions, and when you finish, and set `done`
+(verdict and finding count in the notes), or `blocked` / `failed` with a note, before returning. `plan-review.md` is the deliverable — your return message is not durable.

@@ -57,8 +57,7 @@ Weigh these for every non-default choice:
   concurrency and irreversible steps push up. Well-specified steps backed by tests push down.
 - **Ability:** can this model do the task at all? Haiku is for lookups, running commands and
   purely mechanical edits, not design. Sonnet handles most implementation. Opus handles ambiguous
-  design and hard debugging. Fable is for the cases Opus already failed or is likely to. Sonnet handles most implementation. Opus handles ambiguous design and hard debugging.
-  Fable is for the cases Opus already failed or is likely to.
+  design and hard debugging. Fable is for the cases Opus already failed or is likely to.
 - **Performance / urgency:** is the user waiting? Fable turns can run for minutes, and `max` effort
   is slower than `high`. If the user said it's urgent, prefer a faster tier and say what that risks.
 - **Cost:** check `usage-check.sh` first. At `WARN` (≥90%) stay on or below the default tier

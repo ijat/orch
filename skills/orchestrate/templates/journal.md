@@ -11,25 +11,25 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 | kind | when | extra fields |
 |---|---|---|
 | `task_start` | task dir created | `mode` (standard/lite), `request` (≤ 1 line) |
-| `tier_choice` **choice** | before each planner/implementer spawn, and any non-default reviewer | `role`, `tier` (`<model>/<effort>`), `tradeoff` (≤ 1 line, see `TIERS.md`) |
+| `tier_choice` **choice** | before each planner/implementer/director spawn, and any non-default reviewer | `role`, `tier` (`<model>/<effort>`), `tradeoff` (≤ 1 line, see `TIERS.md`) |
 | `spawn` | each subagent spawn | `role`, `agent`, `tier`, `steps` (array or null), `usage_5h`, `usage_7d` |
 | `return` | each subagent returns | `role`, `agent`, `outcome` (done/blocked/failed/stopped), `tokens`, `tool_uses`, `duration_ms` (from the completion notice if it reports them, else null) |
 | `escalation` **choice** | a tier is raised | `role`, `from`, `to`, `trigger` (plan_flag/plan_shape/review_pattern/prior_tier_failed/blocker/user), `tradeoff` |
 | `blocker` | a role returns blocked | `role`, `need` (≤ 1 line), `rung` (1/2/3 — where it got resolved), `resolved_by` |
 | `security_offer` | step 5, or step 10 re-check | `areas` (array), `answer` (accepted/declined/not_offered), `late` (bool) |
 | `review_round` | each reviewer return | `round`, `reviewer`, `blockers`, `should_fix`, `nits`, `verdict` |
-| `gate` | plan or merge approval | `gate` (plan/merge), `outcome` (approved/revised/declined) |
+| `gate` | plan or merge approval | `gate` (plan/roadmap/merge/pilot), `outcome` (approved/revised/declined) |
 | `plan_revision` | a revision appended | `n`, `trigger` (blocker/user/review) |
 | `sketch` | a sketched step finishes | `step`, `followed` (full/partial/no), `sketch_wrong` (bool), `escalated` (bool) |
 | `pause` / `resume` | usage pause and resume | `usage_5h` |
-| `checkin` | each check-in on a silent role (dispatch step 5) | `role`, `silent_min`, `verdict` (ok/looping), `action` (continue/stopped) |
+| `checkin` | each check-in on a silent role (dispatch step 5) | `role`, `silent_min`, `verdict` (ok/looping), `action` (continue/messaged/stopped) |
 | `pilot` | a pilot batch returns | `step`, `items`, `tokens`, `rounds`, `est_rest_tokens`, `answer` (continue/retier/hold) |
 | `override` | the user overrides a default | `what` |
 | `direct_edit` | direct-edit allowance used | `what` |
 | `lesson` | LESSONS entry written or promoted | `file`, `title`, `promoted_to` (or null) |
 | `mode_switch` | lite task moved to standard | `from`, `to`, `reason` (scope_exceeded/ineligible/review_rounds/user), `phase` (plan/implement/review) |
 | `judgement` **choice** | any other non-obvious decision you made | `decision`, `confidence` (low/medium/high) |
-| `task_end` | task ends, any outcome | `outcome` (merged/declined/abandoned/handed_to_user), `rounds` |
+| `task_end` | task ends, any outcome | `outcome` (merged/declined/failed_merge/abandoned/handed_to_user), `rounds` |
 | `plan_shape` **choice** | every planner return | `shape` (single/roadmap), `criteria` (array of the planner's criterion numbers hit), `tier`, `overridden` (bool) |
 | `checker` | each `orch-program-check.py` run | `fails`, `warns`, `verdict` (OK/FAIL) |
 | `plan_review` | each plan-reviewer return | `round`, `blockers`, `should`, `notes`, `verdict` |

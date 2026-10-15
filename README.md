@@ -24,7 +24,9 @@ Status: in active use, still changing.
 | `skills/orchestrate/PROGRAM.md` | Program mode: a roadmap of milestones for big features |
 | `skills/orchestrate/TIERS.md` | Guide for choosing each role's model and effort |
 | `skills/orchestrate/templates/` | One template per task file: plan, status, log, review, journal, … |
-| `agents/orch-*.md` | Roles: planner, implementer, code reviewer, security reviewer, plan reviewer, director (visual judgement) |
+| `agents/orch-*.md` | Roles: planner, implementer, code reviewer, security reviewer, plan reviewer, director (visual judgement). **Generated**, do not edit |
+| `skills/orchestrate/roles/` | Role sources; `_shared/` holds blocks every role includes |
+| `bin/orch-build-agents.py` | Renders `roles/` into `~/.claude/agents/orch-*.md`. Agent files can't import other files at runtime, so shared rules are inlined at build time |
 | `agents/explorer.md`, `agents/executor.md` | Cheap helpers that any role can call: read-only lookups, and builds/tests that report a digest |
 | `bin/usage-check.sh`, `bin/usage-watch.sh` | Read your usage-limit state from a local cache. No network |
 | `bin/orch-ratelimit-cache.sh` | Writes that cache from the statusline input |
@@ -78,7 +80,8 @@ Say "orchestrate this" (or "lite mode" for a small task) and describe the work. 
 This repo is a sanitised **export** of a live `~/.claude` install. The live files are the source
 of truth.
 
-1. Edit the skill in `~/.claude`.
+1. Edit the skill in `~/.claude`. For a role, edit `skills/orchestrate/roles/`, then run
+   `~/.claude/bin/orch-build-agents.py`; never edit `agents/orch-*.md` directly.
 2. Run `scripts/export.py`. It copies the files here, applies its listed edits, and fails if a
    local denylist (kept outside the repo) matches anything.
 3. Commit and push.

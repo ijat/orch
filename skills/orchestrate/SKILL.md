@@ -33,7 +33,7 @@ below it).
 | Code reviewer | `orch-code-reviewer` | `opus/high` | — |
 | Security reviewer | `orch-security-reviewer` | `opus/high` | — **offered**, never silently run or skipped |
 | Plan reviewer | `orch-plan-reviewer` | `sonnet/high` | — roadmaps and `opus/max` plans only (`PROGRAM.md` §1) |
-| Director | `orch-director` | `opus/high` | → `opus/max` — plan steps marked `visual:` only (step 7) |
+| Director | `orch-director` | `opus/high` | → `opus/max` after the user reverses an accepted verdict — plan steps marked `visual:` only (step 7) |
 | Explorer | `explorer` | `haiku/low` | read-only lookups and claim checks |
 | Executor | `executor` | `haiku/low` | runs builds/tests/lint, returns a digest |
 
@@ -99,7 +99,7 @@ agent, tell the user and say why** — it's the most expensive rung.
   review.md           # code reviewer's findings + resolutions
   security-review.md  # only if the security reviewer was offered AND accepted
   notes.md            # any role's working notes (diagnoses, measurements, reports)
-  visual-<N>.md       # director/implementer batch file, visual steps only
+  visual-s<S>-<N>.md  # director/implementer batch file, step S batch N; visual steps only
   artifacts/          # images, builds, patches, scripts too big for prose
   sketches/           # planner's non-binding step-<N>.md sketches, hard steps only
   journal.jsonl       # orchestrator's structured decision record (for analysis)
@@ -145,7 +145,7 @@ Never hand-roll the cache parsing.
 | 5h window | Action |
 |---|---|
 | < 90% | Normal pace. |
-| 90–94% (`WARN`) | Slow down: sequential not parallel implementers, planner at `opus/high` not `opus/max` unless already earned, batch findings instead of round-tripping small ones. Tell the user, log it. |
+| 90–94% (`WARN`) | Slow down: sequential not parallel implementers (a director + implementer pair counts as one), planner at `opus/high` not `opus/max` unless already earned, batch findings instead of round-tripping small ones. Tell the user, log it. |
 | ≥ 95% (`STOP`) | Pause — procedure below. |
 | `STALE` / `UNKNOWN` | Treat as `WARN` until a fresh sample. A stale low number is the dangerous one. |
 
@@ -169,18 +169,19 @@ A user can override the thresholds for a run (e.g. "spend the window fully") —
    - Looping (the same failure or the same sweep repeating, no commit since the last check-in):
      `SendMessage` it to checkpoint in `notes.md` and return `blocked` with `need: stuck — …`
      (it reads the message at its next tool call); if nothing lands within one tick, `TaskStop` it
-     and checkpoint from its files yourself. Then work the escalation ladder with a sharper brief.
+     and checkpoint from its files yourself. Then work the rung ladder (§Escalation ladder) with a
+     sharper brief; a tier raise is allowed as `post-failure`, trigger `blocker`.
    Journal a `checkin` line either way. A check-in reads files only — never the subagent's
    transcript.
 
 Continuous `Monitor` + `usage-watch.sh --interval 20` is reserved for work that needs sub-minute
-reaction. If you arm one: `persistent: true` (the default 5-min timeout dies silently), exactly one
-at a time, and `TaskStop` it **in the same turn** the watched subagent returns. Before killing any
+reaction. If you arm one: `timeout_ms: 1800000` (the 30-min maximum; the default 5 min dies silently) and
+re-arm on every expiry notice, exactly one at a time, and `TaskStop` it **in the same turn** the watched subagent returns. Before killing any
 stray `usage-watch` process, check `ps -o ppid,lstart,args` — other live sessions run their own.
 
 ### Pause on STOP
 
-1. `TaskStop` the running subagent.
+1. `TaskStop` the running subagent (on a visual step, both the director and the implementer).
 2. Checkpoint its progress in `status.md` (`blocked`, why); set `task_state: paused_usage_limit`;
    log the percentage.
 3. Tell the user in one line: what paused, at what %, and that it resumes automatically. The
@@ -255,7 +256,7 @@ it's tied to this repo (prefer repo when unsure).
 
 ```markdown
 ## 2026-08-27 — <short title>
-- role: planner | implementer | code-reviewer | security-reviewer | orchestrator
+- role: planner | implementer | code-reviewer | security-reviewer | plan-reviewer | director | orchestrator
 - task: <task-slug> (<repo-name>)
 - what happened: concretely
 - what was actually true: the correction
@@ -286,8 +287,8 @@ earn an `opus/max` planner). The user may force lite anyway — journal it as `o
 - **Step 3:** `status.md` gets `mode: lite`; the `planner` row reads `n/a (lite)`. Journal
   `task_start` with `mode: "lite"`.
 - **Step 4:** spawn the lite agent (`description`: `orch-implementer-<model>[<effort>] lite: <task>`)
-  in **phase 1**: read-only on the repo, writes a lite `plan.md` (see the role file), sets
-  `awaiting_approval`, returns. Gate it exactly as a standard plan. Revisions go back to the same
+  in **phase 1**: read-only on the repo, writes a lite `plan.md` (see the role file) and
+  returns; you set `task_state: awaiting_approval`. Gate it exactly as a standard plan. Revisions go back to the same
   agent via `SendMessage`.
 - **Step 5:** if the lite plan names a sensitive area after all, switch to standard (below).
 - **Step 7:** after creating the worktree, `SendMessage` the **same** agent — its context is the
@@ -351,8 +352,8 @@ done
 
 Spawn the chosen planner tier with: the user's request verbatim; absolute repo path and branch;
 absolute task dir and `plan.md` path; the tier and one-line reason for the header; anything relevant
-from the lessons files; and that it's read-only on the codebase (writes only `plan.md`, `status.md`,
-`log.md`).
+from the lessons files; and that it's read-only on the codebase (writes only `plan.md` or `roadmap.md`, `sketches/`,
+`notes.md`, `status.md`, `log.md`).
 
 **Shape.** Every plan states `shape: single | roadmap` (first Summary line of `plan.md`, header of
 `roadmap.md`). A `roadmap` (or a planner
@@ -410,19 +411,33 @@ part worktree and delete its branch. Log each part-branch, merge, and removal.
 
 **Visual steps** (plan step has `visual: <acceptance>`): spawn the director first (in background,
 default `opus/high`), then the implementer at the plan's tier, giving each the other's agent ID —
-`Agent` has no name parameter. They loop by `SendMessage` pointers to `visual-<N>.md` (protocol in
-both role files); you don't relay, and you're notified when either returns. Journal a `spawn`
-for each, and on return read the batch files' verdict lines, not the crops. If a step not marked `visual:` turns out to need visual judgement, you may add a director
-mid-step: journal it as `override` with the reason. The director's accepts are final; its
-escalations come to you as `blocked` and go to the user.
+`Agent` has no name parameter. They loop by `SendMessage` pointers to `visual-s<S>-<N>.md` (protocol in
+both role files); you don't relay unless one of them returns `blocked` with `need: … unreachable`.
+Journal a `spawn` for each. Either one ends its turn while it waits for the other, so you get
+completion notices mid-loop. **A return whose `status.md` row reads `waiting` is not a finish:** don't
+journal `return`, don't advance, just keep the usage ticks. The pair is finished when the
+implementer's row is `done` for the step; then read the batch files' verdict lines, not the crops.
+**Whenever you replace the implementer on a visual step** (after the pilot, three strikes, a check-in
+stop, an escalation, a usage re-spawn), first `SendMessage` the director `implementer is now <new id>`,
+and give the new implementer the director's ID. If a step not marked `visual:` turns out to need visual judgement, you may add a director
+mid-step: journal it as `override` with the reason. The director's accepts are final. Its
+escalations come to you as `blocked`. An escalation about a recorded user decision goes straight to
+the user (rungs 1–2 can't answer it); any other `blocked` works the rung ladder first.
 
 **Pilot batches:** a step with `pilot: <items>` runs those items first as their own spawn, at the
-step's tier. When it returns, take its tokens from the completion notice, and its redo or review
-rounds, and extrapolate to the step's remaining items. Show the user one line — "pilot: N items,
-T tokens, R rounds → est. T×M for the rest at this tier" — through `AskUserQuestion`: continue,
+step's tier. Measure it by the 5h usage it moved: `usage-check.sh` right before the spawn and right after the
+return. The completion notice's token count is the run's final context size, not its spend, so
+don't extrapolate from it. Note anything else that ran meanwhile. Take its redo or review rounds too,
+and extrapolate to the step's remaining items. Show the user one line — "pilot: N items,
++P% of the 5h window, R rounds → est. +P×M% for the rest at this tier" — through `AskUserQuestion`: continue,
 continue at another tier, or hold. Journal a `pilot` line. Only after their answer, spawn the rest;
 the pilot's lessons (traps, a better batch order) go into that spawn's brief. On a visual step, the pilot is
 batch 1 of the director loop.
+
+**Shared devices** (a GUI VM, a phone, a test board other sessions may use): before briefing work on
+one, run a control-checked idle probe (known processes found, open remote connections, recent writes).
+Brief the role to re-probe right before driving it, stop on any foreign activity, and never touch a
+window it didn't open.
 
 **Blockers:** an implementer that finds a plan assumption invalid stops — that's its contract. Work
 the escalation ladder; if the plan itself must change, re-invoke the planner (same tier, unless the
