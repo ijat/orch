@@ -52,8 +52,10 @@ a plan you approve, independent review and a merge you control.
 
 ## Track record
 
-The skill has been in regular use for about seven weeks (since 2026-08-27). The numbers below come from
-its own records. Journaled outcomes start on 2026-09-26, when the journal was added. Review findings
+The workflow goes back to late December 2025. It began as a project-specific orchestration skill
+inside one repository and evolved into this standalone skill. Records were only kept from
+2026-08-27, so the numbers below cover about the last seven weeks, not the whole history. They come
+from the skill's own records. Journaled outcomes start on 2026-09-26, when the journal was added. Review findings
 are counted from the review files themselves.
 
 | | |
