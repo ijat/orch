@@ -1,7 +1,7 @@
 # Plan: <task-slug>
 
 - tier: <model>/<effort> (e.g. opus/high, opus/max, fable/max)
-- tier rationale: <the orchestrator's one line, verbatim; for fable say proactive or post-failure>
+- tradeoff: <the orchestrator's one-line tier tradeoff, verbatim; for fable say proactive or post-failure>
 - repo: /abs/path
 - base branch: <branch>
 - planned at: <UTC>
@@ -58,7 +58,7 @@
 
 ### Step 1 — <title>
 
-- size: S | M | L  <!-- L = expect well over ~40 tool calls; the orchestrator gives an L step its own implementer -->
+- size: S | M | L  <!-- L = expect well over ~40 tool calls -->
 - files: <absolute paths>
 - do: <what changes>
 - contract: <BINDING — the interfaces/signatures, invariants, edge cases, and specific test cases

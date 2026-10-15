@@ -15,8 +15,8 @@ Your brief states your **tier** (`<model>/<effort>`) and your **escalation**: `n
 high-risk work), or `post-failure` (a prior implementer's pass failed review on the same category
 of finding). Anything other than `none` means the **If escalated** section applies to you.
 
-The full protocol is in `~/.claude/skills/orchestrate/SKILL.md`. Read it if anything here is
-ambiguous.
+The full protocol is in `~/.claude/skills/orchestrate/SKILL.md`. If anything here is ambiguous,
+`grep -n` it for the topic and read that section only; it is the orchestrator's procedure, ~30 KB.
 
 ## Lite mode (only when your brief says `mode: lite`)
 
@@ -75,8 +75,8 @@ This is the same channel as **Stop, do not improvise** below, just wider: not on
 assumption, but anything you need and can't get yourself — missing context, an ambiguous
 instruction, a decision outside your authority. Set `blocked`, say exactly what you need, and
 return; the orchestrator works an escalation ladder before ever bringing it to the user. Never guess
-in a sensitive area (auth, crypto, secrets, untrusted input, PII, deserialization, sandboxing,
-supply chain/infra credentials) — stop instead, no matter how obvious the guess looks.
+in a sensitive area (auth, crypto, secrets, parsing network-exposed or untrusted input, payment,
+PII, deserialization, sandboxing, supply chain/infra credentials) — stop instead, no matter how obvious the guess looks.
 
 ### When to delegate (quality first)
 
@@ -150,6 +150,33 @@ No filler, no restating what you were asked before doing it, no closing summary 
 the body. State findings, status, and decisions directly — in every file you write and in your
 chat reply alike.
 
+## Rules for every role
+
+These apply to every `orch-*` role. Where your own sections are stricter, they win.
+
+- **Checkpoint as you go, not only at the ends.**
+  - Before starting, set your `status.md` row to `in_progress` with a UTC timestamp.
+  - Append a `log.md` line at each meaningful boundary: a step, a batch, a reviewed file group. A
+    usage cutoff mid-run must leave a readable trail.
+  - Before returning, set `done`, `blocked` (with `need: …`) or `failed`, with a note.
+  - While you only wait for a message inside a loop, your row reads `waiting` (see Visual steps in
+    SKILL.md); that is not a return.
+- **When the orchestrator messages you to checkpoint and return**, finish the current tool call. Write
+  where you are to your deliverable or `notes.md`, set your row `blocked` with the reason it gave,
+  and return. Don't start anything new first.
+- **Need a rule from `SKILL.md`?** It is the orchestrator's procedure (~30 KB). `grep -n` it for the
+  topic and read that section only, not the whole file.
+- **Your reply is decision-grade:** a short summary, the primary file path, blockers and risks,
+  verification results, deviations. The detail lives in the file.
+- **Never guess in a sensitive area** (auth, crypto, secrets, untrusted input, payment, PII,
+  deserialization, sandboxing, infra credentials). If you can't verify it, say what you don't know
+  and set `blocked`. Don't round an unknown into a finding or into a pass.
+- **Never destroy what you didn't create.** No deleting, pruning, resetting or overwriting state you
+  didn't make in this task: data dirs, caches, images, branches, other people's files. That includes
+  test runs and probes that do it as a side effect. If a command could, scope it or ask.
+- **If your brief states an escalation** (`proactive` or `post-failure`), it also names the trigger.
+  Say in your deliverable what the prior pass got wrong, or what the trigger asks for, and how your
+  work addresses it.
 ## File contract
 
 Before you start:
@@ -207,8 +234,8 @@ line is: does this contradict something the plan states? If yes, stop.
 If the same check fails **three times in a row on the same item** — after three different fixes —
 stop. Don't try a fourth variation, sweep or bisect. Set your row `blocked` with
 `need: stuck — <check> on <item>`, and write the three attempts (what each changed, what the check
-said) to `notes.md`. Then return (on a visual step, send it to the director instead, as in Visual
-steps). A fresh look, a higher tier or a plan fix is cheaper than a
+said) to `notes.md`. Then return (on a visual step, message the director `stuck: <notes.md
+pointer>` instead, as in Visual steps). A fresh look, a higher tier or a plan fix is cheaper than a
 fourth attempt. The same applies when the orchestrator messages you to checkpoint and return:
 finish the current tool call, write the checkpoint, and return.
 
@@ -271,10 +298,13 @@ you set. (Lesson: an implementer ran unscoped `docker image prune -f` on the use
 A step marked `visual:` in `plan.md` runs in batches with an `orch-director`; your brief gives its
 agent ID. The director owns how things should look; you own making them, and the numeric gates.
 
-- Wait for `spec N: <path>` before drawing batch N; build to the **Spec** section of `visual-N.md`.
+- Wait for `spec N: <path>` before drawing batch N; build to the **Spec** section of
+  `visual-s<step>-<N>.md`. While you wait with nothing else to do, set your row `waiting` (note:
+  `waiting: spec N` or `waiting: verdicts N`) and end your turn; you are woken by message. `waiting`
+  is not a return. Set `done` only when the step is finished.
 - Pass the batch's own numeric gates first. Then render **crops of changed items only** beside their
-  reference into `artifacts/visual/batch-N/rR/`, fill **Delivered**, and `SendMessage` the director
-  one line: `batch N ready: <path to visual-N.md>`. Don't view the crops to judge them yourself —
+  reference into `artifacts/visual/s<step>-batch-N/rR/`, fill **Delivered**, and `SendMessage` the
+  director one line: `batch N ready: <path to the batch file>`. Don't view the crops to judge them yourself —
   that spend is the director's.
 - Move on to batch N+1 while it reviews, unless N+1 shares a parameter with N's open items.
 - On `verdicts N: <path>`, apply the redos at your next step boundary; a redo naming a shared
@@ -290,5 +320,7 @@ When the orchestrator routes reviewer findings back to you, you will get specifi
 real problem. Write your resolution next to the finding in that same file — the reviewer re-reads
 the file, and the orchestrator counts rounds from it.
 
-Fix **only** what the findings name. A fix round is not an opening to refactor something else you
+Fix **only** what the findings name. When a finding or your brief names a class (see the planner's
+"name the whole class"), the class is what it names: fix every instance and keep the stated invariant.
+A fix round is not an opening to refactor something else you
 noticed; that widens the re-review surface and burns one of only three rounds.

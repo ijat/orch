@@ -29,8 +29,9 @@ It survives merge points and is removed only at program end.
    findings → one planner revision → re-run the checker and re-review only what changed. Journal
    `plan_review`.
 4. **Security offer** (SKILL.md step 5) for every sensitive milestone, once, at this gate.
-5. **Budget.** Run `usage-check.sh`. Estimate the program from the milestone sizes and the
-   per-size medians of past tasks (`~/.claude/bin/role-cost.py`); say whether it fits the 5h/7d headroom.
+5. **Budget.** Run `usage-check.sh`. Estimate the program from the milestone sizes and past runs per tier
+   (`~/.claude/bin/role-cost.py --by tier`; it has no per-size grouping,
+   so give a range); say whether it fits the 5h/7d headroom.
 6. **Gate.** Show the user: the shape line, Summary, the Milestones table as is, every checker WARN
    with the planner's justification, plan-review findings and how they were handled, the security
    answers needed, the budget line. Approving the roadmap approves its `you` column: you stop for the
@@ -42,8 +43,8 @@ It survives merge points and is removed only at program end.
 Journal `milestone_start`; set `milestone: M<n> — <phase>` in `status.md`.
 
 1. **Detail plan**, written now against what's actually built:
-   - `standard`: an `orch-planner` at the row's planner tier writes `m<NN>-<slug>/plan.md` from the
-     plan template, scoped to the milestone, citing the roadmap's contracts. A milestone too small
+   - `standard`: an `orch-planner` at the row's planner tier, briefed `shape: single (milestone)`,
+     writes `m<NN>-<slug>/plan.md` from the plan template, scoped to the milestone, citing the roadmap's contracts. A milestone too small
      to deserve its own planner should have been `lite` — that's a roadmap revision, not a shortcut.
    - `lite`: the lite agent's phase 1 (SKILL.md "Lite mode"), scoped to the milestone.
    - **You approve it** against the roadmap row and contracts. It goes to the user only when the row's
@@ -54,7 +55,9 @@ Journal `milestone_start`; set `milestone: M<n> — <phase>` in `status.md`.
    command(s); a failure is fixed before the next milestone starts.
 4. **If the row is a review point:** code review (plus security review where scheduled and accepted)
    over `git diff <reviewed_through>..HEAD` — every milestone since the previous review point.
-   Fix rounds and the round-3 stop are SKILL.md step 9, per review point. Journal `review_point`;
+   Brief the reviewers with that range and the milestone plans it spans; `review.md` goes in the
+   review-point milestone's dir. Fix rounds and the round-3 stop are SKILL.md step 9, per review
+   point, under the standard rules even when a spanned milestone ran lite. Journal `review_point`;
    on pass set `reviewed_through` to HEAD.
 5. **Re-plan check** at each review point (§3).
 6. **If the row is a merge point:** SKILL.md step 10 — sensitivity re-check, summary, **ask the
@@ -70,13 +73,15 @@ Sequential only: no two milestones run at once.
 At each review point, compare the remaining rows with what was built and learned (blockers,
 deviations, review findings, probe results). Nothing broken → journal `replan` with `changed: []`
 and continue. A premise or contract broke, a milestone grew past its size, or the user changed
-direction → send the roadmap planner (same tier) to append `## Revision N` touching only the
-affected rows; re-run the checker; show the user the changed rows (before/after) and get approval.
+direction → send the roadmap planner (same tier) to rewrite the affected rows of the Milestones table in place,
+bump `revision:`, and append `## Revision N` with each changed row before and after (the checker reads
+only the Milestones table); re-run the checker; show the user the changed rows (before/after) and get approval.
 Journal `replan` with the changed rows and why.
 
 ## 4. When to stop for the user
 
-Only at: the roadmap gate; rows marked in `you`; every merge; a roadmap revision; an escalation-ladder
+Only at: the roadmap gate; rows marked in `you`; every merge; a roadmap revision; a pilot gate; a
+director escalation about a recorded decision; disputed findings after round 3; an escalation-ladder
 rung 3; a usage STOP (prefer pausing between milestones); a checker FAIL you can't route back to
 the planner.
 
