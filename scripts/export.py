@@ -26,6 +26,7 @@ FILES = [
         "orch-plan-reviewer", "orch-director", "explorer", "executor")],
     "bin/usage-check.sh", "bin/usage-watch.sh", "bin/orch-stats.sh", "bin/orch-index.sh",
     "bin/orch-index-hook.sh", "bin/orch-program-check.py", "bin/orch-build-agents.py",
+    "bin/orch-build-hook.sh",
     *[f"skills/orchestrate/roles/{n}.md" for n in (
         "orch-planner", "orch-implementer", "orch-code-reviewer", "orch-security-reviewer",
         "orch-plan-reviewer", "orch-director")],
