@@ -18,6 +18,27 @@ Status: in active use, still changing.
 
 ## Why use it
 
+You make two decisions: approve the plan, and approve the merge. The agents (blue) do the rest,
+including the build-and-review loop in between. Yellow is you.
+
+```mermaid
+flowchart LR
+    U([You]) -->|describe the task| PL[Plan]
+    PL -->|plan.md| G1{{You approve?}}
+    G1 -->|change it| PL
+    G1 -->|yes| B[Build]
+    B --> R[Review]
+    R -->|issues found| B
+    R -->|clean| G2{{You approve the merge?}}
+    G2 -->|yes| M([Merged into your branch])
+    G2 -->|no| K([Kept on its own branch])
+
+    classDef you fill:#fff3c4,stroke:#c9a400,color:#000
+    classDef agent fill:#e3ecff,stroke:#5b7fd6,color:#000
+    class U,G1,G2 you
+    class PL,B,R agent
+```
+
 - **You stay in charge at the two points that matter.** You approve the plan before any code is
   written and the merge before anything lands on your branch. Between those gates it runs on its own.
 - **Work survives crashes and usage limits.** All state lives in Markdown files: plan, status, log,
