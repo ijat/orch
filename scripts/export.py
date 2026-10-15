@@ -95,6 +95,8 @@ def main():
             p = os.path.join(root, fn)
             if os.path.abspath(p) == os.path.abspath(__file__):
                 continue
+            if os.path.relpath(p, repo) == "LICENSE":  # the copyright holder's name belongs there
+                continue
             for i, line in enumerate(open(p, encoding="utf-8", errors="replace"), 1):
                 if rx.search(line):
                     print(f"DENYLIST {os.path.relpath(p, repo)}:{i}: {line.strip()[:120]}", file=sys.stderr)

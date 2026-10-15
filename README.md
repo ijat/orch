@@ -200,3 +200,7 @@ of truth.
 3. Commit and push.
 
 Don't run `install.sh` over the live install. It would replace live files with the sanitised copies.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
