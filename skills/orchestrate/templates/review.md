@@ -10,6 +10,7 @@
 
 ### F1 — <one-line summary>
 - severity: blocker | should-fix | nit
+- origin: introduced | pre-existing — <blame evidence for pre-existing: commit or "on base">
 - file: /abs/path:LINE
 - what: what is wrong, concretely.
 - why it matters: the consequence, not the principle.
@@ -23,4 +24,6 @@
 - reviewed at / scope / verdict: ...
 - F1: resolved | still open | disputed — <implementer's reasoning and your response>
 - new findings continue the numbering (F7, F8, …) in the same shape as above.
+- a finding marked resolved, or disputed and then ruled on, is closed: never re-raise it or a
+  restatement of it under a new number.
 -->

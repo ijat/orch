@@ -461,8 +461,11 @@ security-ledger path. The two may run concurrently.
 
 1. Route findings to an implementer as concrete fixes. When a finding is one instance of a class
    (state reset, validation, cleanup), name the whole class and the invariant the fix must keep, in
-   the implementer's brief and the reviewer's re-review scope.
-2. Re-review only the touched files, unless the reviewer named a broader concern.
+   the implementer's brief and the reviewer's re-review scope. Code-review findings that are `nit`
+   or `origin: pre-existing` are not routed and never start or extend a round; they go to the user
+   at step 10. Security findings are always routed.
+2. Re-review only the touched files, unless the reviewer named a broader concern. Name the closed
+   findings (resolved, or disputed and ruled on) in the brief; the reviewer doesn't re-raise them.
 3. Increment `review_round` in `status.md`; log it.
 
 After round 3 with findings still open, **stop** — no fourth round at the same tier. If the open
@@ -481,10 +484,11 @@ If the repo has rules about user-facing output, grep the **built artefact** for 
 strings yourself before this gate — a green report checked the source. When you brief anyone to
 embed a whole file, say where it must and must not land.
 
-When review passes:
+When review passes (no routed finding still open):
 
 1. Summarize for the user: files touched, what changed, what reviewers found and how it was
-   resolved.
+   resolved. List the unrouted nits and pre-existing findings separately; the user may send any of
+   them back to step 9 (it counts toward the 3 rounds) or leave them.
 2. **Ask explicitly before merging** into the base branch. Never auto-merge.
 3. On confirmation: `git merge --no-ff orch/<task-slug>` — never fast-forward, even on "just
    merge" — and verify it landed.
