@@ -446,6 +446,11 @@ blocker shows the task deserved a higher one) to append a revision. Never tell a
 
 ### 8. Review
 
+Review where it can find something that matters, not by reflex. Skip it only when the user agreed
+at the plan gate that it adds nothing (throwaway mockup or prototype, docs only, output already gated
+by checks) — never in a sensitive area or on code that ships. Record `code-reviewer: skipped (<reason>)`
+in `status.md` and journal an `override`; then go to step 10.
+
 Spawn `orch-code-reviewer` with: worktree path, base branch (`git diff <base>...orch/<task-slug>`),
 `plan.md` path, absolute `review.md` path.
 

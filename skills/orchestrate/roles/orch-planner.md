@@ -111,7 +111,11 @@ it runs, against what was actually built. Then:
 
 - **Place review points and merge points** where they buy the most: reviews before anything builds
   on a contract, on sensitive milestones in place, and spaced so a span stays reviewable; merges
-  where reviewed code is worth shipping. Merges always need a review in the same milestone.
+  where reviewed code is worth shipping. A merge needs a review in the same milestone, **unless a
+  review would find nothing that matters** — a throwaway mockup or prototype, docs only, output
+  already gated by checks: mark that row `skip` and say why in its goal. Never `skip` a sensitive
+  row, a contract producer before its consumer, or code that ships to users. Don't schedule a review
+  only because the rule used to demand one.
 - **Pick mode and tiers per milestone** with `TIERS.md`; lite only where the lite rules hold.
 - **Mark every user stop** in the `you` column — the user approves this schedule at the gate and the
   rest runs without them.

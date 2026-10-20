@@ -54,7 +54,8 @@ read the source yourself.
    unless the plan already makes it a step-0 probe with a hard stop.
 2. **Review and merge schedule** (roadmaps). Run `~/.claude/bin/orch-program-check.py <roadmap.md>`
    and quote its verdict line. Then judge what the script can't: a risky contract reviewed late, a
-   review point on low-risk work while a hard milestone goes unreviewed, a user stop placed where a
+   review point on low-risk work while a hard milestone goes unreviewed, a review scheduled where it can
+   find nothing that matters (should be `skip`), a `skip` on work that ships, a user stop placed where a
    decision it depends on hasn't been made yet.
 3. **Tier and mode choices.** A tier or mode that doesn't fit the milestone or step (`opus/max` on
    wiring, `sonnet` or lite on a concurrency core, lite on anything that breaks the lite rules). Use
