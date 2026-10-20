@@ -26,8 +26,11 @@
      mode       standard | lite      (lite only for milestones that meet SKILL.md's lite rules)
      tiers      free text, e.g. "opus/high → sonnet/high" or "lite opus/medium"
      sensitive  - | <areas from SKILL.md step 5>
-     review     - | code | code+sec  (a review point covers every milestone since the previous one)
-     merge      - | yes              (a merge point must also be a review point)
+     review     - | skip | code | code+sec  (a review point covers every milestone since the previous one;
+                skip = merge without review on purpose — only where a review would find nothing that
+                matters (throwaway mockup/prototype, docs-only, output already gated by checks); give
+                the reason in the goal cell; never on a sensitive row; the user approves it at the gate)
+     merge      - | yes              (a merge point must be a review point or `skip`)
      you        - | <why the user is needed: merge, mock, eye-check, sudo, decision D-n>
      size       S | M | L            (L = several days of agent work or ≥ ~10 steps)
      confidence high | med | low      (low needs a probe in "Premises and probes") -->

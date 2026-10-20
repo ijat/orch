@@ -53,7 +53,7 @@ Journal `milestone_start`; set `milestone: M<n> — <phase>` in `status.md`.
 2. **Implement** as SKILL.md step 7, on the program worktree.
 3. **Tests after every milestone**, review point or not: `executor` runs the plan's verification
    command(s); a failure is fixed before the next milestone starts.
-4. **If the row is a review point:** code review (plus security review where scheduled and accepted)
+4. **If the row is a review point:** (a `skip` row is not one — no reviewer runs) code review (plus security review where scheduled and accepted)
    over `git diff <reviewed_through>..HEAD` — every milestone since the previous review point.
    Brief the reviewers with that range and the milestone plans it spans; `review.md` goes in the
    review-point milestone's dir. Fix rounds and the round-3 stop are SKILL.md step 9, per review
@@ -87,7 +87,8 @@ the planner.
 
 ## 5. Program end
 
-The last milestone is always a review and merge point (the checker enforces it). Then SKILL.md step
+The last milestone is always a merge point, and a review point unless the user approved `skip` (the
+checker enforces it). Then SKILL.md step
 11 cleanup, `task_end`, and `retro.md` with its **Milestones: planned vs actual** table filled.
 
 ## Resume

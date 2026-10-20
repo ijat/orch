@@ -73,7 +73,7 @@ def main():
         bad = []
         if not re.fullmatch(r"\d+", r["m"]): bad.append("M")
         if r["mode"] not in ("standard", "lite"): bad.append("mode")
-        if r["review"] not in ("-", "code", "code+sec"): bad.append("review")
+        if r["review"] not in ("-", "skip", "code", "code+sec"): bad.append("review")
         if r["merge"] not in ("-", "yes"): bad.append("merge")
         if r["size"] not in WEIGHT: bad.append("size")
         if r["confidence"] not in ("high", "med", "low"): bad.append("confidence")
@@ -88,16 +88,26 @@ def main():
         fails.append(f"milestones must be numbered 1..N in run order, got {nums}")
     known = set(nums)
     by_n = {r["n"]: r for r in ms}
-    reviewed = [r["n"] for r in ms if r["review"] != "-"]
+    reviewed = [r["n"] for r in ms if r["review"] in ("code", "code+sec")]   # `skip` is not a review
 
+    pending = []   # milestones since the last code review, not yet merged
     for r in ms:
         n = r["n"]
-        # F: never merge unreviewed code
+        # F: never merge unreviewed code by accident; `skip` is a deliberate, user-approved no-review
         if r["merge"] == "yes" and r["review"] == "-":
-            fails.append(f"M{n}: merge point without a review point — unreviewed code would reach the base branch")
+            fails.append(f"M{n}: merge point without a review — review it, or mark `skip` if a review would add nothing")
+        if r["review"] in ("code", "code+sec"):
+            pending = []
+        else:
+            pending.append(n)
+        if r["merge"] == "yes":
+            carried = [k for k in pending if by_n[k]["review"] == "-"]
+            if r["review"] == "skip" and carried:
+                fails.append(f"M{n}: `skip` merge would also ship unreviewed {', '.join('M%d' % k for k in carried)} — review them, or mark each `skip`")
+            pending = []
         # F: sensitive areas reviewed in place
         if r["sensitive"] != "-":
-            if r["review"] == "-":
+            if r["review"] in ("-", "skip"):
                 fails.append(f"M{n}: touches {r['sensitive']} but is not reviewed in place")
             elif r["review"] == "code":
                 warns.append(f"M{n}: sensitive ({r['sensitive']}) with code review only — fine only if the user declined the security reviewer")
@@ -120,7 +130,7 @@ def main():
     if ms:
         last = ms[-1]
         if last["review"] == "-" or last["merge"] != "yes":
-            fails.append(f"M{last['n']} (last): must be a review point and a merge point")
+            fails.append(f"M{last['n']} (last): must be a merge point, and a review point or `skip`")
 
     # F: a contract's producer is reviewed before its first consumer starts
     for ln in sec.get("contracts between milestones", []):
@@ -154,7 +164,7 @@ def main():
     # W: shape sanity — a roadmap that is really a single plan
     if 0 < len(ms) <= 2:
         warns.append(f"only {len(ms)} milestone(s) — consider a single plan")
-    elif ms and not any(r["review"] != "-" or r["merge"] == "yes" or r["you"] != "-" for r in ms[:-1]):
+    elif ms and not any(r["review"] in ("code", "code+sec") or r["merge"] == "yes" or r["you"] != "-" for r in ms[:-1]):
         warns.append("no review, merge or user stop before the last milestone — this is a single plan with headings")
 
     # W: low confidence needs a probe
