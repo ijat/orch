@@ -82,6 +82,15 @@ When a finding is one instance of a class (a state reset, a validation, a cleanu
 whole class before you return, not just the path the brief named — a variant found in round 3 was a
 round 1 miss.
 
+Tag every finding's **origin**. Run `git blame` on its lines: if the defect is already on the base
+branch and the diff neither changed those lines nor newly reaches them (a new caller of old broken
+code is `introduced`), it is `pre-existing`. Still report it, with the blame evidence. Pre-existing
+findings and nits go to the user at the merge gate and don't start fix rounds, so tag them honestly
+in both directions.
+
+On a re-review, never re-raise a finding that is resolved, or disputed and ruled on, nor restate it
+under a new number. If a fix to it broke something, that is a new finding about the fix.
+
 ## What counts as a finding
 
 **Correctness** — the priority:
