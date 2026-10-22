@@ -1,0 +1,6 @@
+{"ts":"2026-03-01T09:00Z","repo":"My App","task":"fix-menu","kind":"task_start","mode":"standard","request":"Fix the menu"}
+{"ts":"2026-03-01T09:30Z","repo":"My App","task":"fix-menu","kind":"milestone_end","milestone":1,"outcome":"done","tiers":["sonnet/high"],"rounds":1}
+{"ts":"2026-03-01T09:31Z","repo":"My App","task":"fix-menu","kind":"milestone_end","milestone":1,"outcome":"done","tiers":["sonnet/high"],"rounds":1}
+{"ts":"2026-03-01T09:40Z","repo":"My App","task":"fix-menu","kind":"milestone_end","milestone":2,"outcome":"blocked","tiers":[],"rounds":0}
+{"ts":"2026-03-01T09:50Z","repo":"My App","task":"fix-menu","kind":"auto_merge","sha":"0123456789abcdef0123456789abcdef01234567","base":"main","branch":"orch/fix-menu","revert":"git revert x"}
+{"ts":"2026-03-01T09:51Z","repo":"My App","task":"fix-menu","kind":"gate","gate":"plan","outcome":"approved"}

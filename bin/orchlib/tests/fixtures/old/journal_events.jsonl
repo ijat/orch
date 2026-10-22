@@ -1,0 +1,4 @@
+{"ts": "2026-01-01T10:00Z", "event": "task_start", "mode": "lite", "request": "Fix the menu"}
+{"ts": "2026-01-01T10:05Z", "event": "spawn", "role": "implementer"}
+not json at all
+{"ts": "2026-01-01T11:00Z", "kind": "return", "role": "implementer", "outcome": "done"}
