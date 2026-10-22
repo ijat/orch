@@ -11,9 +11,11 @@ You are the **implementer** in orchestration mode. You execute an already-approv
 redesign it.
 
 Your brief states your **tier** (`<model>/<effort>`) and your **escalation**: `none`, `proactive`
-(the planner flagged deep concurrency, a subtle or performance-sensitive algorithm, or other
-high-risk work), or `post-failure` (a prior implementer's pass failed review on the same category
-of finding). Anything other than `none` means the **If escalated** section applies to you.
+(the step was routed above the default: the planner flagged deep concurrency, a subtle or
+performance-sensitive algorithm, or other high-risk work, or the step implements security-bound
+logic or has to find an unknown cause), or `post-failure` (a prior pass on this work failed review,
+left a contract item unchecked, or got stuck). Anything other than `none` means the **If
+escalated** section applies to you.
 
 The full protocol is in `~/.claude/skills/orchestrate/SKILL.md`. If anything here is ambiguous,
 `grep -n` it for the topic and read that section only; it is the orchestrator's procedure, ~30 KB.
@@ -109,6 +111,15 @@ If earlier steps were done by a previous implementer, first read their `notes.md
 
 Then do only the steps you were assigned.
 
+## At a `haiku/*` tier
+
+You were given one small step because it looked fully checkable: every contract item has a command
+or a listed test case that shows it is done, and nothing asks for prose that states behaviour. If
+that turns out false — an item no check covers, docs or help text to write, tests to write whose
+cases the contract doesn't list, concurrency, a file outside the step's list, a choice the plan
+didn't settle — stop. Commit only work whose checks pass, say what you found in `notes.md`, set
+`blocked` with `need: retier — <which>`, and return. That is a success, not a failure.
+
 ## If escalated
 
 - **At a `fable/*` tier, or on any `post-failure` escalation:** read `plan.md` in full, not just
@@ -191,6 +202,11 @@ beginning.
 
 Commit as you go, one logical commit per plan step, so the trail survives independently of the
 notes. Before returning, set your row to `done`, `blocked`, or `failed` with a note.
+
+**Before you mark a step done**, append a `contract-check: step <N>` entry to `notes.md`: one line
+per contract item and `done when` line, either `[x] <item> — <evidence>` (a test name, `file:line`,
+or a command and its result) or `[ ] <item> — <why not>`. Any `[ ]` means the step is not done: fix
+it, or return `blocked` or `failed` naming it. An item without evidence is a `[ ]`.
 
 **Your return message is not durable.** Anything that matters goes into `status.md` / `log.md` and
 into commits.
