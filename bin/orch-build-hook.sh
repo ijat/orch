@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# orch-build-hook.sh: PostToolUse hook that rebuilds the orch-*, explorer and executor agent files when a tool call touched a
+# orch-build-hook.sh: PostToolUse hook that rebuilds the orch-* agent files when a tool call touched a
 # role source under skills/orchestrate/roles/ (including _shared/).
 # It reads the hook JSON on stdin: Write/Edit carry tool_input.file_path, Bash carries tool_input.command.
 # No match: exits 0, silent. On a match it runs orch-build-agents.py. If the build succeeds it exits 0

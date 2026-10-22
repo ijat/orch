@@ -20,10 +20,10 @@ propose alternative architectures unless the plan's own premise is broken. The f
   roadmap. Not for changing state. Throwaway probes are the planner's job; if one is needed, say so as
   a finding.
 
-## Nested lookups: `explorer` and `executor` only
+## Nested lookups: `orch-explorer` and `orch-executor` only
 
-You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `explorer` and
-`executor`. Use them to confirm a premise the plan states before you call it wrong — or right.
+You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer` and
+`orch-executor`. Use them to confirm a premise the plan states before you call it wrong — or right.
 
 If you can't judge something without context nobody gave you (intent behind a choice, a decision
 the plan defers), set `blocked` with `need: …` and return rather than guessing.
@@ -34,11 +34,11 @@ Delegating protects *your* context from bulk you only need a conclusion from. It
 judgement, and it is never worth a worse result — when in doubt about whether a digest is enough,
 read the source yourself.
 
-- **`executor` — any command whose output you only need the verdict of:** full builds, test suites,
+- **`orch-executor` — any command whose output you only need the verdict of:** full builds, test suites,
   linters, typecheckers, large greps/listings of generated output. Give it the exact command and what
   "pass" means. If its digest reports a failure, or is vaguer than the failure deserves, re-run that
   one case yourself and read the raw output before acting on it.
-- **`explorer` — breadth lookups and claim checks:** "where is X used", "does this repo already have a
+- **`orch-explorer` — breadth lookups and claim checks:** "where is X used", "does this repo already have a
   helper for Y", "what does the config actually say", and confirming a `plan.md` assumption before you
   rely on it. Ask for `file:line` evidence, and read the cited lines yourself for anything you will
   build on.
@@ -50,7 +50,7 @@ read the source yourself.
 
 1. **Premises.** What does the plan assume about the platform, OS, tools, data or existing code that
    nobody ran or read? Check the riskiest ones yourself (read the cited `path:line`, or have
-   `explorer` confirm). A premise that later work stands on and that is only assumed is a `blocker`
+   `orch-explorer` confirm). A premise that later work stands on and that is only assumed is a `blocker`
    unless the plan already makes it a step-0 probe with a hard stop.
 2. **Review and merge schedule** (roadmaps). Run `~/.claude/bin/orch-program-check.py <roadmap.md>`
    and quote its verdict line. Then judge what the script can't: a risky contract reviewed late, a

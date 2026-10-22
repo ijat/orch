@@ -23,13 +23,13 @@ FILES = [
         "security-ledger", "security-review", "sketch", "status")],
     *[f"agents/{n}.md" for n in (
         "orch-planner", "orch-implementer", "orch-code-reviewer", "orch-security-reviewer",
-        "orch-plan-reviewer", "orch-director", "explorer", "executor")],
+        "orch-plan-reviewer", "orch-director", "orch-explorer", "orch-executor")],
     "bin/usage-check.sh", "bin/usage-watch.sh", "bin/orch-stats.sh", "bin/orch-index.sh",
     "bin/orch-index-hook.sh", "bin/orch-program-check.py", "bin/orch-build-agents.py",
     "bin/orch-build-hook.sh",
     *[f"skills/orchestrate/roles/{n}.md" for n in (
         "orch-planner", "orch-implementer", "orch-code-reviewer", "orch-security-reviewer",
-        "orch-plan-reviewer", "orch-director", "explorer", "executor")],
+        "orch-plan-reviewer", "orch-director", "orch-explorer", "orch-executor")],
     *[f"skills/orchestrate/roles/_shared/{n}.md" for n in (
         "when-to-delegate", "trust-instrument", "be-brief", "every-role")],
 ]
