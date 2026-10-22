@@ -75,6 +75,7 @@ plus your open findings.
 <!-- @include _shared/every-role.md -->
 ## File contract
 
-Set your `status.md` row to `in_progress` with a UTC timestamp before starting, append a `log.md`
-line when you start, after each of the four questions, and when you finish, and set `done`
-(verdict and finding count in the notes), or `blocked` / `failed` with a note, before returning. `plan-review.md` is the deliverable — your return message is not durable.
+Checkpoint with `~/.claude/bin/orch -t <task> role plan-reviewer <state> --note "<N>" --log "<what>"` (`<task>` is your task dir):
+`in_progress` before starting, a log line when you start, after each of the four questions, and when
+you finish, and `done` (verdict and finding count in the notes), or `blocked` / `failed` with a note,
+before returning. `plan-review.md` is the deliverable — your return message is not durable.

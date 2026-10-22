@@ -31,7 +31,8 @@
                 matters (throwaway mockup/prototype, docs-only, output already gated by checks); give
                 the reason in the goal cell; never on a sensitive row; the user approves it at the gate)
      merge      - | yes              (a merge point must be a review point or `skip`)
-     you        - | <why the user is needed: merge, mock, eye-check, sudo, decision D-n>
+     you        - | <why the user is needed: mock, eye-check, sudo, decision D-n; name `merge` only when
+                the user wants to approve that merge — `orch merge` refuses where this cell names it>
      size       S | M | L            (L = several days of agent work or ≥ ~10 steps)
      confidence high | med | low      (low needs a probe in "Premises and probes") -->
 
@@ -52,7 +53,7 @@
 
 ## Decisions
 
-<!-- As plan.md: - **D1 <title>** — <choice>. Rejected: <alternative> (<why>). Status: decided | needs user -->
+<!-- As plan.md: - **D1 <title>** — <choice>. Rejected: <alternative> (<why>). Status: decided | needs user (reversible: yes|no) -->
 
 ## Risks and unknowns
 

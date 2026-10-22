@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orchestration</title>
+<style>
+:root {
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --bg: #ffffff;
+  --fg: #1b1b1b;
+  --muted: #555555;
+  --line: #c8c8c8;
+  --box: #f4f4f4;
+  --warn-bg: #ffe9a8;
+  --warn-fg: #3a2a00;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #151515;
+    --fg: #ececec;
+    --muted: #a8a8a8;
+    --line: #444444;
+    --box: #202020;
+    --warn-bg: #5a4500;
+    --warn-fg: #fff2cc;
+  }
+}
+html { font-size: 16px; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.5;
+  margin: 0 auto;
+  max-width: 60rem;
+  padding: 1rem;
+}
+h1 { font-size: 1.6rem; margin: 0 0 1rem; }
+h2 { font-size: 1.25rem; margin: 2rem 0 0.5rem; border-bottom: 1px solid var(--line); }
+h3 { font-size: 1rem; margin: 0 0 0.25rem; }
+ul { margin: 0.25rem 0; padding-left: 1.25rem; }
+p { margin: 0.25rem 0; }
+progress { width: 100%; height: 0.75rem; }
+.task { background: var(--box); border: 1px solid var(--line); margin: 0.75rem 0; padding: 0.5rem 0.75rem; }
+.state { font-weight: bold; }
+.muted { color: var(--muted); }
+#banner { background: var(--warn-bg); color: var(--warn-fg); padding: 0.5rem 0.75rem; margin-bottom: 1rem; }
+</style>
+</head>
+<body>
+<h1 id="title"></h1>
+<div id="banner" hidden>Can't reach the dashboard server — retrying</div>
+<noscript><p>This page needs JavaScript to show the tasks.</p></noscript>
+<main id="app"></main>
+<script>
+(function () {
+  "use strict";
+
+  // Every value that came from the data goes through esc() before it is put into html.
+  function esc(value) {
+    if (value === null || value === undefined) { return ""; }
+    return String(value).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function waiting(data) {
+    var items = [];
+    data.tasks.forEach(function (t) {
+      if (t.state === "awaiting_approval") {
+        items.push("<li><strong>" + esc(t.id) + "</strong>: " + esc(t.state_words) + "</li>");
+      }
+      (t.questions || []).forEach(function (q) {
+        items.push("<li><strong>" + esc(t.id) + "</strong> " + esc(q.id) + ": " + esc(q.text) +
+          (q.blocks ? " (holds up: " + esc(q.blocks) + ")" : "") + "</li>");
+      });
+    });
+    return "<h2>Waiting for you</h2>" +
+      (items.length ? "<ul>" + items.join("") + "</ul>" : "<p>Nothing is waiting for you.</p>");
+  }
+
+  function tasksHead(data) {
+    return "<h2>Active tasks</h2>" + (data.tasks.length ? "" : "<p>No active tasks.</p>");
+  }
+
+  function pair(label, value) {
+    return value === null || value === undefined ? "" : "<li>" + esc(label) + esc(value) + "</li>";
+  }
+
+  function task(t) {
+    var lines = [];
+    var before = t.state === "planning" || t.state === "awaiting_approval";   // nothing is built yet
+    var steps = t.steps_total ? "Step " + (t.steps_done === null ? (before ? 0 : "?") : t.steps_done) + " of " + t.steps_total : "No steps yet";
+    lines.push("<li>" + esc(steps) + "</li>");
+    if (t.percent !== null && t.percent !== undefined) { lines.push("<li>" + esc(t.percent) + "% done</li>"); }
+    if (t.milestones_total !== null && t.milestones_total !== undefined) {
+      lines.push("<li>" + esc("Milestone " + (t.milestones_done === null ? "?" : t.milestones_done) + " of " + t.milestones_total) + "</li>");
+    }
+    lines.push("<li>" + esc("Tokens reported by agents: " + (t.tokens_reported === null ? "none yet" : t.tokens_reported)) + "</li>");
+    lines.push("<li>" + esc("Last update " + (t.updated_age_min === null ? "unknown" : t.updated_age_min + " min ago")) + "</li>");
+    lines.push("<li>" + esc("Open questions: " + t.questions_open) + "</li>");
+    var usage = t.usage_last;
+    if (usage) {
+      lines.push("<li>" + esc("Usage when the last agent started: 5h " + (usage["5h"] === null ? "?" : usage["5h"] + "%") +
+        ", 7d " + (usage["7d"] === null ? "?" : usage["7d"] + "%")) + "</li>");
+    }
+    lines.push(pair("Now: ", t.current));
+    lines.push(pair("Last log line: ", t.last_log));
+    var html = "<h3>" + esc(t.id) + "</h3><p class=\"state\">" + esc(t.state_words) + "</p>";
+    if (t.percent !== null && t.percent !== undefined) {
+      html += "<progress max=\"100\" value=\"" + esc(t.percent) + "\"></progress>";
+    }
+    return html + "<ul>" + lines.join("") + "</ul>";
+  }
+
+  function events(list) {
+    var html = "<h2>Recent events</h2>";
+    if (!list.length) { return html + "<p>No events yet.</p>"; }
+    html += "<p class=\"muted\">Times are UTC.</p><ul>";
+    list.forEach(function (e) {
+      html += "<li>" + esc(e.ts) + " " + esc(e.id) + ": " + esc(e.words) + "</li>";
+    });
+    return html + "</ul>";
+  }
+
+  function finishedList(title, rows) {
+    var html = "<h3>" + title + "</h3>";
+    if (!rows.length) { return html + "<p class=\"muted\">None.</p>"; }
+    html += "<ul>";
+    rows.slice(0, 30).forEach(function (r) {
+      html += "<li>" + esc(r.id) + (r.ended ? " (" + esc(r.ended) + ")" : "") + "</li>";
+    });
+    if (rows.length > 30) { html += "<li class=\"muted\">and " + esc(rows.length - 30) + " more</li>"; }
+    return html + "</ul>";
+  }
+
+  function finished(f) {
+    return "<h2>Finished</h2>" + finishedList("Merged", f.merged) + finishedList("Abandoned", f.abandoned);
+  }
+
+  // The page as an ordered list of [key, html]: one entry per block, so a block is redrawn only when it changed.
+  function view(data) {
+    var list = [["questions", waiting(data)], ["tasks", tasksHead(data)]];
+    data.tasks.forEach(function (t) { list.push(["task:" + t.id, task(t)]); });
+    list.push(["events", events(data.events)]);
+    list.push(["finished", finished(data.finished)]);
+    return list;
+  }
+
+  // Insert, remove and reorder keyed children of `container`; a child's html is replaced only when its string
+  // changed. The container itself is never replaced, so scroll position and open selections stay.
+  function apply(container, list) {
+    var doc = container.ownerDocument;
+    var byKey = Object.create(null);
+    var wanted = Object.create(null);
+    list.forEach(function (item) { wanted[item[0]] = true; });
+    Array.prototype.slice.call(container.children).forEach(function (node) {
+      var key = node.getAttribute("data-key");
+      if (wanted[key] && !byKey[key]) { byKey[key] = node; } else { container.removeChild(node); }
+    });
+    list.forEach(function (item, i) {
+      var key = item[0];
+      var node = byKey[key];
+      if (!node) {
+        node = doc.createElement("section");
+        node.setAttribute("data-key", key);
+        node.shown = null;
+        byKey[key] = node;
+      }
+      if (node.shown !== item[1]) {
+        node.innerHTML = item[1];
+        node.shown = item[1];
+      }
+      if (container.children[i] !== node) { container.insertBefore(node, container.children[i] || null); }
+    });
+  }
+
+  function start() {
+    var app = document.getElementById("app");
+    var banner = document.getElementById("banner");
+    var version = null;
+    document.getElementById("title").textContent = document.title;
+
+    function again(ms) { setTimeout(poll, ms); }
+
+    function show(data) {
+      banner.hidden = true;
+      if (version !== null && data.page_version !== version) {
+        location.reload();
+        return;
+      }
+      version = data.page_version;
+      try {
+        apply(app, view(data));
+      } catch (err) {
+        console.error(err);
+        return again(5000);
+      }
+      again(3000);
+    }
+
+    function poll() {
+      fetch("dashboard.json", { cache: "no-store" })
+        .then(function (res) {
+          if (!res.ok) { throw new Error("HTTP " + res.status); }
+          return res.json();
+        })
+        .then(show, function () {
+          banner.hidden = false;
+          again(5000);
+        });
+    }
+
+    poll();
+  }
+
+  if (typeof module !== "undefined" && module.exports) { module.exports = { esc: esc, view: view, apply: apply }; }
+  if (typeof document !== "undefined" && document.getElementById) { start(); }
+})();
+</script>
+</body>
+</html>

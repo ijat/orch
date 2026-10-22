@@ -1,0 +1,5 @@
+{"ts":"2026-03-01T10:00Z","repo":"myapp","task":"add-login","kind":"task_start","mode":"standard","request":"Add a login page"}
+{"ts":"2026-03-01T10:02Z","repo":"myapp","task":"add-login","kind":"tier_choice","role":"planner","tier":"opus/high","tradeoff":"default","reason":"cross-cutting change","alternatives":["opus/max"],"agent":"orch-planner"}
+{"ts":"2026-03-01T10:21Z","repo":"myapp","task":"add-login","kind":"spawn","role":"implementer","agent":"orch-implementer","tier":"sonnet/high","steps":[1,2],"usage_5h":12,"usage_7d":40}
+{"ts":"2026-03-01T11:00Z","repo":"myapp","task":"add-login","kind":"return","role":"implementer","agent":"orch-implementer","outcome":"done","tokens":81000,"tool_uses":64,"duration_ms":null}
+{"ts":"2026-03-01T11:30Z","repo":"myapp","task":"add-login","kind":"checkpoint","questions":2,"asked":true}

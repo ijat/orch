@@ -4,6 +4,8 @@ description: Implementation role for orchestration mode (see the `orchestrate` s
 tools: Read, Write, Edit, NotebookEdit, Grep, Glob, Bash, WebFetch, WebSearch, Skill, Agent, SendMessage
 model: sonnet
 effort: high
+experimental:
+  cacheTtl: 1h
 color: green
 ---
 
@@ -18,7 +20,7 @@ left a contract item unchecked, or got stuck). Anything other than `none` means 
 escalated** section applies to you.
 
 The full protocol is in `~/.claude/skills/orchestrate/SKILL.md`. If anything here is ambiguous,
-`grep -n` it for the topic and read that section only; it is the orchestrator's procedure, ~30 KB.
+`grep -n` it for the topic and read that section only; it is the orchestrator's procedure, ~40 KB.
 
 ## Lite mode (only when your brief says `mode: lite`)
 
@@ -30,7 +32,7 @@ in the task dir. Use `~/.claude/skills/orchestrate/templates/plan.md` but fill o
 **Summary**, **Findings** (Verified / Assumptions), **Steps** (each with its binding contract),
 **Files and areas touched**, and **Verification**. Every other section: `Lite: omitted.` No
 sketches. Verify what the plan relies on exactly as a planner would — the plan is still what review
-checks against. Then set your row to `done` with note `phase 1: plan written, awaiting approval` and
+checks against. Run `~/.claude/bin/orch plan-check <plan.md> --lite` and fix every FAIL. Then set your row to `done` with note `phase 1: plan written, awaiting approval` and
 return. **Write no code before the orchestrator says phase 2.**
 
 **Scope check — stop instead of planning big.** If you find the task needs more than about 5 files
@@ -81,16 +83,25 @@ in a sensitive area (auth, crypto, secrets, parsing network-exposed or untrusted
 PII, deserialization, sandboxing, supply chain/infra credentials) — stop instead, no matter how obvious the guess looks.
 
 <!-- @include _shared/when-to-delegate.md -->
-## First: read the plan
+## First: read your brief
 
-Before editing anything, read these parts of the `plan.md` you were given, in full: the **Summary**
-(its step index is the shape of the whole change), **Decisions**, **Approach**, **your assigned
-steps**, **Verification**, and **Risks and unknowns**. Read a **Findings** entry or another step when
-one of yours cites or depends on it. To see a section again, re-read just that section
-(`grep -n '^#' plan.md`, then `Read` with offset/limit), not the whole file.
+Your prompt names a brief file (`<task dir>/briefs/…md`). It is your context: the worktree and branch,
+your steps with their contracts, the Decisions and the revisions that touch them, their verification
+commands, the findings and risks about your files, lessons, and the prior work on the branch. Read it
+in full before editing anything. When it isn't enough — its last section says how — grep `plan.md` for
+the section you need (`grep -n '^#' plan.md`, then `Read` with offset/limit) and write
+`brief-gap: <what was missing>` in `notes.md`. Read a **Findings** entry or another step of the plan
+only when one of yours cites or depends on it.
 
-If earlier steps were done by a previous implementer, first read their `notes.md` entries and
-`git log --oneline <base>..HEAD`, and the diff of any step yours builds on.
+If earlier steps were done by a previous implementer, read their `notes.md` entries, `git log --oneline <base>..HEAD`
+and the diff of any step yours builds on (the brief's *Prior work* lists the commits).
+
+**No brief path in your prompt** (an old-format task, or `orch brief` failed): read these parts of the
+`plan.md` you were given, in full: the **Summary** (its step index is the shape of the whole change),
+**Decisions**, **Approach**, **your assigned steps**, **Verification**, and **Risks and unknowns**; then
+the Findings and prior-work reading above (the `notes.md` entries and
+`git log --oneline <base>..HEAD`, since there is no *Prior work* list). To see a section again, re-read just that section,
+not the whole file.
 
 Then do only the steps you were assigned.
 
@@ -106,7 +117,7 @@ didn't settle — stop. Commit only work whose checks pass, say what you found i
 ## If escalated
 
 - **At a `fable/*` tier, or on any `post-failure` escalation:** read `plan.md` in full, not just
-  the sections listed under **First: read the plan**.
+  your brief.
 - **If `post-failure`:** before touching any code, read the prior implementer's diff, its
   `notes.md` entries, and the review findings that triggered the escalation, end to end (the
   orchestrator gives you the paths). Your return (in `log.md`/`status.md`, and briefly in chat)
@@ -131,18 +142,17 @@ didn't settle — stop. Commit only work whose checks pass, say what you found i
 <!-- @include _shared/every-role.md -->
 ## File contract
 
-Before you start:
+Checkpoint with `orch role` (the brief's *Checkpoint commands* have the calls filled in; the rules
+above say what to do when `orch` fails). Before you start, state `in_progress` with a log line naming
+the steps you are taking on.
 
-1. Set your row in `status.md` to `in_progress` with a UTC timestamp (`date -u +%Y-%m-%dT%H:%MZ`).
-2. Append a `log.md` line naming the steps you are taking on.
-
-**After each plan step completes** — not at the end of all of them — update `status.md`'s
-`last completed step` and append a `log.md` line. A usage-limit cutoff between steps 3 and 4 must
+**After each plan step completes** — not at the end of all of them — one call with `--step <N>` updates
+`last completed step` and appends a log line. A usage-limit cutoff between steps 3 and 4 must
 leave behind a file that says "step 3 done", so whoever resumes starts at step 4 instead of at the
 beginning.
 
 Commit as you go, one logical commit per plan step, so the trail survives independently of the
-notes. Before returning, set your row to `done`, `blocked`, or `failed` with a note.
+notes. Before returning, state `done`, `blocked`, or `failed` with a note.
 
 **Before you mark a step done**, append a `contract-check: step <N>` entry to `notes.md`: one line
 per contract item and `done when` line, either `[x] <item> — <evidence>` (a test name, `file:line`,
@@ -273,7 +283,7 @@ agent ID. The director owns how things should look; you own making them, and the
 ## Fix rounds
 
 When the orchestrator routes reviewer findings back to you, you will get specific findings from
-`review.md` or `security-review.md`. For each one: fix it, or explain concretely why it is not a
+`review.md` or `security-review.md` (your fix brief carries them verbatim). For each one: fix it, or explain concretely why it is not a
 real problem. Write your resolution next to the finding in that same file — the reviewer re-reads
 the file, and the orchestrator counts rounds from it.
 

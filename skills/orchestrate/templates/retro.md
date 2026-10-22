@@ -8,6 +8,10 @@
 <!-- Written by the orchestrator when the task ends, however it ends. Short and honest: this is
      input for improving the workflow, not a status report. Delete comments as you fill. -->
 
+## Digest
+
+<!-- Paste the output of `orch end <outcome>`: merged, assumed decisions, open questions, security runs and skips, tokens/usage. -->
+
 ## Predictions vs outcome
 
 <!-- For each significant choice in journal.jsonl: what you expected, what happened. E.g.
