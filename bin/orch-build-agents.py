@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render orch-* agent files from role sources plus shared blocks.
+"""Render the orch-* agent files, plus explorer and executor, from role sources plus shared blocks.
 
 Agent files are subagent system prompts, and Claude Code does not expand imports in them
 (probed 2026-10-15), so shared rules are inlined at build time. A source line of the exact form
@@ -33,9 +33,10 @@ def main():
         sys.exit(__doc__)
     home = os.path.expanduser('~/.claude')
     roles, agents = args or (f'{home}/skills/orchestrate/roles', f'{home}/agents')
-    srcs = sorted(glob.glob(os.path.join(roles, 'orch-*.md')))
+    srcs = sorted(glob.glob(os.path.join(roles, 'orch-*.md'))
+                  + [p for n in ('explorer', 'executor') if os.path.isfile(p := os.path.join(roles, f'{n}.md'))])
     if not srcs:
-        sys.exit(f"no orch-*.md sources in {roles}")
+        sys.exit(f"no role sources in {roles}")
     differ = 0
     for s in srcs:
         text = render(s, roles)
