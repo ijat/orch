@@ -1,0 +1,9 @@
+{"ts":"2026-03-01T10:00Z","repo":"myapp","task":"add-login","kind":"task_start","mode":"standard","request":"Add a login page"}
+{"ts":"2026-03-01T10:21Z","repo":"myapp","task":"add-login","kind":"spawn","role":"implementer","agent":"orch-implementer","tier":"sonnet/high","steps":[1,2],"usage_5h":12,"usage_7d":40}
+{"ts":"2026-03-01T11:00Z","repo":"myapp","task":"add-login","kind":"return","role":"implementer","agent":"orch-implementer","outcome":"done","tokens":81000,"tool_uses":64,"duration_ms":null}
+{"ts":"2026-03-01T11:05Z","repo":"myapp","task":"add-login","kind":"spawn","role":"implementer","agent":"orch-implementer","tier":"sonnet/high","steps":[3],"usage_5h":31,"usage_7d":44}
+{"ts":"2026-03-01T11:20Z","repo":"myapp","task":"add-login","kind":"return","role":"implementer","agent":"orch-implementer","outcome":"blocked","tokens":19000,"tool_uses":20,"duration_ms":1}
+{"ts":"2026-03-01T11:21Z","repo":"myapp","task":"add-login","kind":"review_round","round":1,"reviewer":"code","blockers":0,"should_fix":1,"nits":0,"verdict":"pass","sha":"abc"}
+{"ts":"2026-03-01T11:22Z","repo":"myapp","task":"add-login","kind":"checkpoint","questions":2,"asked":true}
+{"ts":"2026-03-01T11:23Z","repo":"myapp","task":"add-login","kind":"checkpoint","questions":1,"asked":false}
+{"ts":"2026-03-01T11:24Z","repo":"myapp","task":"add-login","kind":"judgement","decision":"x","confidence":"high","reason":"r","alternatives":[]}

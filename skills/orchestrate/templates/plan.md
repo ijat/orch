@@ -5,6 +5,7 @@
 - repo: /abs/path
 - base branch: <branch>
 - planned at: <UTC>
+- planned against: <sha of the base branch tip the plan was written against>
 - status: draft | approved | revised (rev N)
 
 <!-- Guidance comments like this one are for you; delete them as you fill each section.
@@ -48,7 +49,7 @@
 
 <!-- One entry per design choice with more than one defensible answer. -->
 
-- **D1 <title>** — <choice>. Rejected: <alternative> (<why>). Status: decided | needs user
+- **D1 <title>** — <choice>. Rejected: <alternative> (<why>). Status: decided | needs user (reversible: yes|no)
 
 ## Approach
 
@@ -59,7 +60,9 @@
 ### Step 1 — <title>
 
 - size: S | M | L  <!-- L = expect well over ~40 tool calls -->
+- depends: <step ids this step needs finished first, e.g. 1, 2 — or none>
 - files: <absolute paths>
+- context: <optional; file — purpose; symbols@line, so the brief can say what to read first>
 - do: <what changes>
 - contract: <BINDING — the interfaces/signatures, invariants, edge cases, and specific test cases
   this step must satisfy. Breaking one means the implementer stops and reports.>

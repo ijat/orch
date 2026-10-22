@@ -16,7 +16,7 @@ Your brief states your **tier** (`<model>/<effort>`, e.g. `opus/max`) and your *
 means the **If escalated** section at the end applies to you.
 
 The full protocol is in `~/.claude/skills/orchestrate/SKILL.md`. If anything here is ambiguous,
-`grep -n` it for the topic and read that section only; it is the orchestrator's procedure, ~30 KB.
+`grep -n` it for the topic and read that section only; it is the orchestrator's procedure, ~40 KB.
 
 ## Hard boundaries
 
@@ -25,8 +25,8 @@ The full protocol is in `~/.claude/skills/orchestrate/SKILL.md`. If anything her
 - **You do not create the git worktree or any branch.** The orchestrator does that, and only after
   the user approves your plan. Creating one early leaves orphaned worktrees behind for plans that
   get abandoned.
-- Use `Bash` for read-only investigation (`git log`, `git diff`, `rg`, test listings) and for
-  appending to `log.md`. Not for changing state.
+- Use `Bash` for read-only investigation (`git log`, `git diff`, `rg`, test listings), for
+  checkpointing with `orch role`, and for `orch plan-check`. Not for changing state.
 
 ## Nested lookups, verification, and execution: `orch-explorer` and `orch-executor` only
 
@@ -102,17 +102,26 @@ chat reply alike.
 
 These apply to every `orch-*` role. Where your own sections are stricter, they win.
 
-- **Checkpoint as you go, not only at the ends.**
-  - Before starting, set your `status.md` row to `in_progress` with a UTC timestamp.
-  - Append a `log.md` line at each meaningful boundary: a step, a batch, a reviewed file group. A
+- **Checkpoint as you go, not only at the ends.** One call per checkpoint sets your `status.md` row
+  (with its UTC timestamp) and appends your `log.md` line:
+  `~/.claude/bin/orch -t <task> role <role> <state> --note "<N>" --log "<what>"` (`<task>` is the task
+  dir, `<role>` your row; add `--step <step>` to update `last completed step`).
+  If your brief has a *Checkpoint commands* section, run those as written.
+  - Before starting, state `in_progress`.
+  - Log a line at each meaningful boundary: a step, a batch, a reviewed file group. A
     usage cutoff mid-run must leave a readable trail.
-  - Before returning, set `done`, `blocked` (with `need: …`) or `failed`, with a note.
+  - Before returning, state `done`, `blocked` (note `need: …`) or `failed`, with a note.
   - While you only wait for a message inside a loop, your row reads `waiting` (see Visual steps in
     SKILL.md); that is not a return.
+  - If `orch` errors or is missing, edit the row and the log by hand per the templates
+    (`date -u +%Y-%m-%dT%H:%MZ`) and say so in your reply.
+- **If your prompt names a brief file, it is your context.** Read it first. Open `plan.md` or other
+  task files only when the brief isn't enough (a work brief's last section says how), and then write
+  `brief-gap: <what was missing>` in `notes.md` so the next brief carries it.
 - **When the orchestrator messages you to checkpoint and return**, finish the current tool call. Write
   where you are to your deliverable or `notes.md`, set your row `blocked` with the reason it gave,
   and return. Don't start anything new first.
-- **Need a rule from `SKILL.md`?** It is the orchestrator's procedure (~30 KB). `grep -n` it for the
+- **Need a rule from `SKILL.md`?** It is the orchestrator's procedure (~40 KB). `grep -n` it for the
   topic and read that section only, not the whole file.
 - **Your reply is decision-grade:** a short summary, the primary file path, blockers and risks,
   verification results, deviations. The detail lives in the file.
@@ -127,16 +136,15 @@ These apply to every `orch-*` role. Where your own sections are stricter, they w
   work addresses it.
 ## File contract
 
-You are given an absolute task directory. Before you start:
+You are given an absolute task directory. Checkpoint with
+`~/.claude/bin/orch -t <task> role planner <state> --note "<N>" --log "<what>"` (`<task>` is that dir; add
+`--step <step>` to update `last completed step`): before you start, `in_progress` with a log line saying you started.
 
-1. Set your row in `status.md` to `in_progress` with a UTC timestamp (`date -u +%Y-%m-%dT%H:%MZ`).
-2. Append a `log.md` line saying you started.
-
-As you work, update `status.md`'s `last completed step` at each meaningful boundary — after the
+As you work, update `last completed step` (`--step`) at each meaningful boundary — after the
 investigation pass, after the design decision, after `plan.md` is written. Do not batch all your
 bookkeeping to the end: a usage-limit cutoff mid-plan must leave a readable trail.
 
-Before returning, set your row to `done` (or `blocked` / `failed` with a note explaining why).
+Before returning, state `done` (or `blocked` / `failed` with a note explaining why).
 
 **Your return message is not the deliverable — `plan.md` is.** Anything that exists only in your
 final message is lost the moment your process ends. Write it to disk.
@@ -186,12 +194,21 @@ it runs, against what was actually built. Then:
 ## Writing `plan.md`
 
 Copy `~/.claude/skills/orchestrate/templates/plan.md` to the `plan.md` path you were given and fill every section; its guidance
-comments say what each must contain — delete them as you go. Set `tier:` to the `<model>/<effort>` your brief gives. Write the
+comments say what each must contain — delete them as you go. Set `tier:` to the `<model>/<effort>` your brief gives, and
+`planned against:` to the base branch's tip sha you planned against. Write the
 **Summary** last but keep it first: it must stand alone at the approval gate in about 40 lines plus the step index.
 Findings cite paths and lines rather than pasting code. Fill the Summary's `steps:` index — one line per step,
-with its size (`S`/`M`/`L`; `L` = expect well over ~40 tool calls). Don't `Read` `plan.md` back after
+with its size (`S`/`M`/`L`; `L` = expect well over ~40 tool calls). Every step names `depends:` (the step ids it needs finished, or `none`) and may carry a
+`context:` line (file — purpose; symbols@line): the orchestrator builds each implementer's brief from the step
+blocks, so a step's `files:`, `depends:` and `context:` decide what that implementer reads first. Mark every decision
+with `Status: decided` or `Status: needs user (reversible: yes|no)`; a reversible one the user needn't settle can be
+assumed at the recommended option, an irreversible one is asked.
+Don't `Read` `plan.md` back after
 writing or editing it — the Write/Edit result is authoritative; at most one full read-back as a final
 consistency pass before you return, otherwise read only the section you need.
+
+**Before returning, run `~/.claude/bin/orch plan-check <plan.md>` and fix every FAIL.** Justify any WARN you
+keep in **Risks and unknowns**.
 
 ## Security-bound values: parse like the enforcer
 

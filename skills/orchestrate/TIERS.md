@@ -144,7 +144,7 @@ ones), or brief length on its own (clean up to 1,104 words when every item was c
 1. `lite` → `opus/medium` (it must plan as well as code); `opus/high` at the edge of lite eligibility (the eligibility check passed but you recorded a caveat: an open design choice, a borderline file count, or a near-sensitive area). Never Haiku (unmeasured at planning) or Fable (that need means standard mode). [observed: 12 lite tasks, 0.5 review rounds on average]
 2. `history` → § Escalation ladder.
 3. `ceiling` → `fable/high`; tell the user first. [current rule]
-4. `flag`, `boundary`, `unknown_cause` or `refusal` → `opus/medium` (`proactive`); `boundary` with the security reviewer declined → `opus/high`. [observed, judgment]
+4. `flag`, `boundary`, `unknown_cause` or `refusal` → `opus/medium` (`proactive`); `boundary` when the user declined a due security review → `opus/high`. [observed, judgment]
 5. The Haiku gate passes → `haiku/medium`. [measured]
 6. Otherwise → `sonnet/high`. [measured]
 7. Apply § Caps and pressure, then journal the `tier_choice` with the deciding signals in `tradeoff`.
@@ -231,7 +231,7 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 | `sonnet/max` | cap only | no-Opus cap: second escalation | Opus is allowed | [judgment] |
 | `opus/low` | excluded until benchmarked | — | — | [judgment] first candidate for the next benchmark |
 | `opus/medium` | signal tier, rung 3 of the ladder | Opus signals; lite; post-failure from `sonnet/high` | gate-passing or plain steps | [observed, reference] |
-| `opus/high` | rung 4 | diligence failure at `opus/medium`; `boundary` with the security review declined; lite at the edge | before `opus/medium` has tried non-boundary work | [judgment, observed] |
+| `opus/high` | rung 4 | diligence failure at `opus/medium`; `boundary` when the user declined a due security review; lite at the edge | before `opus/medium` has tried non-boundary work | [judgment, observed] |
 | `opus/xhigh` | cap only | no-Fable cap: one fresh pass after `opus/high` | Fable is allowed | [judgment] |
 | `opus/max` | never | — | — | [judgment] past `xhigh`, re-plan |
 | `fable/low`, `fable/medium` | never (benchmark candidates) | — | — | [judgment] no measured gain over Opus, and every Fable spawn needs the user told |
@@ -248,7 +248,7 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 | Sonnet only | as no Opus; gate-passing steps → `sonnet/high` (`sonnet/medium` at 5h WARN) | [measured] |
 | No Fable | the ladder ends `opus/high → opus/xhigh` (one fresh pass) → the user | [judgment] |
 | Effort ceiling, e.g. ≤ medium | `haiku/medium` gated, `sonnet/medium` otherwise, `opus/medium` for signals; escalate by model only | [observed] |
-| 5h WARN, STALE or UNKNOWN | no proactive `opus/high`, except a `boundary` step whose security review the user declined (it keeps `opus/high`; if that can't run, pause); signal steps keep `opus/medium` (the plan earned it); Fable only with the user's OK; batch fix findings; never send a step that fails the gate to Haiku for budget — pause instead | [judgment] |
+| 5h WARN, STALE or UNKNOWN | no proactive `opus/high`, except a `boundary` step whose due security review the user declined (it keeps `opus/high`; if that can't run, pause); signal steps keep `opus/medium` (the plan earned it); Fable only with the user's OK; batch fix findings; never send a step that fails the gate to Haiku for budget — pause instead | [judgment] |
 | 5h STOP | pause (SKILL.md) | [current rule] |
 | 7d ≥ 90% | ask with `AskUserQuestion` (recommended option first, plus **Hold on**; recommend continue-as-routed when the remaining work is flagged or sensitive, otherwise saver routing): continue as routed; **saver routing** — unflagged, non-`sensitive` steps that fail the gate → `sonnet/medium`, the gate admits any M step, `algorithm`/`state` flags → `sonnet/high` with the sketch and escalation on the first failure, Opus kept for concurrency, `boundary`, `unknown_cause`, `refusal`; or hold until the reset | [measured for `sonnet/medium`; judgment for the rest] |
 | User waiting / urgent | no Haiku; gate-passing steps → `sonnet/high`; Opus signal steps keep Opus, and say it is slower; no `opus/high` or Fable unless earned | [measured wall time; judgment] |

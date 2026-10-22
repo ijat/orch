@@ -1,0 +1,38 @@
+[
+ [
+  "questions",
+  "<h2>Waiting for you</h2><ul><li><strong>myapp/add-login</strong> Q1: Use a session cookie or a token? (holds up: 3)</li><li><strong>myapp/needs-ok</strong>: Waiting for your approval</li><li><strong>myapp/needs-ok</strong> Q1: &lt;script&gt;alert(2)&lt;/script&gt; ok? (holds up: all)</li></ul>"
+ ],
+ [
+  "tasks",
+  "<h2>Active tasks</h2>"
+ ],
+ [
+  "task:myapp/add-login",
+  "<h3>myapp/add-login</h3><p class=\"state\">Building</p><progress max=\"100\" value=\"50\"></progress><ul><li>Step 2 of 4</li><li>50% done</li><li>Tokens reported by agents: 100000</li><li>Last update 30 min ago</li><li>Open questions: 1</li><li>Usage when the last agent started: 5h 31%, 7d 44%</li><li>Now: implementer: working on step 3</li><li>Last log line: 2026-03-01T11:00Z implementer: step 2 done</li></ul>"
+ ],
+ [
+  "task:My App/fix-menu",
+  "<h3>My App/fix-menu</h3><p class=\"state\">Building</p><progress max=\"100\" value=\"33\"></progress><ul><li>Step 1 of 3</li><li>33% done</li><li>Milestone 1 of 3</li><li>Tokens reported by agents: none yet</li><li>Last update 60 min ago</li><li>Open questions: 0</li><li>Now: implementer: menu</li><li>Last log line: 2026-03-01T12:00Z implementer: step 1 done</li></ul>"
+ ],
+ [
+  "task:myapp/paused-job",
+  "<h3>myapp/paused-job</h3><p class=\"state\">Paused: usage limit</p><progress max=\"100\" value=\"88\"></progress><ul><li>Step 7 of 8</li><li>88% done</li><li>Tokens reported by agents: none yet</li><li>Last update 360 min ago</li><li>Open questions: 0</li><li>Now: implementer: paused</li><li>Last log line: 2026-03-01T07:30Z orchestrator: paused for usage</li></ul>"
+ ],
+ [
+  "task:myapp/needs-ok",
+  "<h3>myapp/needs-ok</h3><p class=\"state\">Waiting for your approval</p><ul><li>Step 0 of 2</li><li>Tokens reported by agents: 5000</li><li>Last update 420 min ago</li><li>Open questions: 1</li><li>Last log line: 2026-03-01T06:10Z planner: &lt;script&gt;alert(&quot;log&quot;)&lt;/script&gt; plan ready</li></ul>"
+ ],
+ [
+  "task:myapp/mystery",
+  "<h3>myapp/mystery</h3><p class=\"state\">Unknown state: unknown</p><ul><li>No steps yet</li><li>Tokens reported by agents: none yet</li><li>Last update 40320 min ago</li><li>Open questions: 0</li><li>Usage when the last agent started: 5h ?, 7d 8%</li><li>Last log line: 2026-02-01T00:00Z orchestrator: started</li></ul>"
+ ],
+ [
+  "events",
+  "<h2>Recent events</h2><p class=\"muted\">Times are UTC.</p><ul><li>2026-03-01T11:22Z myapp/add-login: Asked you 2 questions</li><li>2026-03-01T11:21Z myapp/add-login: code review round 1: pass</li><li>2026-03-01T11:20Z myapp/add-login: implementer finished: blocked</li><li>2026-03-01T11:05Z myapp/add-login: Started implementer (sonnet/high)</li><li>2026-03-01T11:00Z myapp/add-login: implementer finished: done</li><li>2026-03-01T10:21Z myapp/add-login: Started implementer (sonnet/high)</li><li>2026-03-01T09:51Z My App/fix-menu: plan gate: approved</li><li>2026-03-01T09:50Z My App/fix-menu: Merged 0123456 into main</li><li>2026-03-01T07:30Z myapp/paused-job: Paused for usage (5h 96%)</li><li>2026-03-01T06:10Z myapp/needs-ok: &lt;b&gt;planner&lt;/b&gt; finished: &lt;img src=x onerror=alert(1)&gt;</li><li>2026-02-23T10:00Z myapp/declined-job: Task ended: declined</li><li>2026-02-22T10:00Z myapp/dropped: Task ended: abandoned</li><li>2026-02-21T10:00Z myapp/second-merged: Task ended: merged</li><li>2026-02-20T10:00Z myapp/old-merged: Task ended: merged</li><li>2026-02-01T00:02Z myapp/mystery: implementer finished: done</li><li>2026-02-01T00:01Z myapp/mystery: Started implementer (sonnet/high)</li></ul>"
+ ],
+ [
+  "finished",
+  "<h2>Finished</h2><h3>Merged</h3><ul><li>myapp/second-merged (2026-02-21T10:00Z)</li><li>myapp/old-merged (2026-02-20T10:00Z)</li></ul><h3>Abandoned</h3><ul><li>myapp/declined-job (2026-02-23T10:00Z)</li><li>myapp/dropped (2026-02-22T10:00Z)</li></ul>"
+ ]
+]

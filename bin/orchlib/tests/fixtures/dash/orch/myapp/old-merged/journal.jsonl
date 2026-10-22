@@ -1,0 +1,2 @@
+{"ts":"2026-02-20T09:00Z","repo":"myapp","task":"old-merged","kind":"task_start","mode":"standard","request":"x"}
+{"ts":"2026-02-20T10:00Z","repo":"myapp","task":"old-merged","kind":"task_end","outcome":"merged","rounds":1}

@@ -22,10 +22,11 @@ while IFS= read -r rel; do
     changed=$((changed+1)); echo "update   $rel"
     [ $dry = 1 ] || { mkdir -p "$(dirname "$backup/$rel")"; cp -p "$dst" "$backup/$rel"; cp -p "$src" "$dst"; }
   fi
-done < <(cd "$repo" && find skills agents bin -type f | sort)
+done < <(cd "$repo" && find skills agents bin -type f -not -path '*/__pycache__/*' -not -name '*.pyc' | sort)
 
-[ $dry = 1 ] || chmod +x "$dest"/bin/usage-*.sh "$dest"/bin/orch-*.sh "$dest"/bin/*.py 2>/dev/null || true
-mkdir -p "$dest/orchestrations" 2>/dev/null || true
+[ $dry = 1 ] || chmod +x "$dest"/bin/usage-*.sh "$dest"/bin/orch-*.sh "$dest"/bin/*.py "$dest"/bin/orch 2>/dev/null || true
+[ $dry = 1 ] || mkdir -p "$dest/orchestrations" 2>/dev/null || true
 echo "new $new, updated $changed, unchanged $same$([ $dry = 1 ] && echo ' (dry run)')"
 [ $changed -gt 0 ] && [ $dry = 0 ] && echo "backups of replaced files: $backup"
+[ $dry = 1 ] || echo "Upgrading an existing install? Run ~/.claude/bin/orch migrate --dry-run, then ~/.claude/bin/orch migrate."
 exit 0
