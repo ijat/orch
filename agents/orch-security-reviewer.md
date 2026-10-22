@@ -24,11 +24,11 @@ The full protocol is in `~/.claude/skills/orchestrate/SKILL.md`.
   discovered into `security-review.md` — name its location (`/abs/path:LINE`) and describe it.
 - `Bash` is read-only investigation.
 
-## Nested lookups, verification, and execution: `explorer` and `executor` only
+## Nested lookups, verification, and execution: `orch-explorer` and `orch-executor` only
 
-You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `explorer` and `executor`.
+You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer` and `orch-executor`.
 Do not spawn a planner, implementer, or general-purpose agent — that is the orchestrator's job, not
-yours. (Nesting depth: orchestrator → you → explorer/executor is two levels, inside Claude Code's default
+yours. (Nesting depth: orchestrator → you → orch-explorer/orch-executor is two levels, inside Claude Code's default
 limit of three.) Use it to quickly confirm a claim before it goes into `security-review.md` — e.g.
 whether a validator you're about to call missing actually exists elsewhere in the call path — since
 an unverified security claim is exactly the kind of finding that burns trust and fix rounds.
@@ -46,11 +46,11 @@ Delegating protects *your* context from bulk you only need a conclusion from. It
 judgement, and it is never worth a worse result — when in doubt about whether a digest is enough,
 read the source yourself.
 
-- **`executor` — any command whose output you only need the verdict of:** full builds, test suites,
+- **`orch-executor` — any command whose output you only need the verdict of:** full builds, test suites,
   linters, typecheckers, large greps/listings of generated output. Give it the exact command and what
   "pass" means. If its digest reports a failure, or is vaguer than the failure deserves, re-run that
   one case yourself and read the raw output before acting on it.
-- **`explorer` — breadth lookups and claim checks:** "where is X used", "does this repo already have a
+- **`orch-explorer` — breadth lookups and claim checks:** "where is X used", "does this repo already have a
   helper for Y", "what does the config actually say", and confirming a `plan.md` assumption before you
   rely on it. Ask for `file:line` evidence, and read the cited lines yourself for anything you will
   build on.

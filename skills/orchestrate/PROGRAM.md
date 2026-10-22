@@ -51,7 +51,7 @@ Journal `milestone_start`; set `milestone: M<n> — <phase>` in `status.md`.
      `you` column says so, or when it changes a contract, the scope, or a user decision — that's a
      roadmap revision (§3), not a detail-plan approval.
 2. **Implement** as SKILL.md step 7, on the program worktree.
-3. **Tests after every milestone**, review point or not: `executor` runs the plan's verification
+3. **Tests after every milestone**, review point or not: `orch-executor` runs the plan's verification
    command(s); a failure is fixed before the next milestone starts.
 4. **If the row is a review point:** (a `skip` row is not one — no reviewer runs) code review (plus security review where scheduled and accepted)
    over `git diff <reviewed_through>..HEAD` — every milestone since the previous review point.

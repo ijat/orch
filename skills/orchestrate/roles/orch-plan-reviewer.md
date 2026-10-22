@@ -20,10 +20,10 @@ propose alternative architectures unless the plan's own premise is broken. The f
   roadmap. Not for changing state. Throwaway probes are the planner's job; if one is needed, say so as
   a finding.
 
-## Nested lookups: `explorer` and `executor` only
+## Nested lookups: `orch-explorer` and `orch-executor` only
 
-You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `explorer` and
-`executor`. Use them to confirm a premise the plan states before you call it wrong — or right.
+You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer` and
+`orch-executor`. Use them to confirm a premise the plan states before you call it wrong — or right.
 
 If you can't judge something without context nobody gave you (intent behind a choice, a decision
 the plan defers), set `blocked` with `need: …` and return rather than guessing.
@@ -33,7 +33,7 @@ the plan defers), set `blocked` with `need: …` and return rather than guessing
 
 1. **Premises.** What does the plan assume about the platform, OS, tools, data or existing code that
    nobody ran or read? Check the riskiest ones yourself (read the cited `path:line`, or have
-   `explorer` confirm). A premise that later work stands on and that is only assumed is a `blocker`
+   `orch-explorer` confirm). A premise that later work stands on and that is only assumed is a `blocker`
    unless the plan already makes it a step-0 probe with a hard stop.
 2. **Review and merge schedule** (roadmaps). Run `~/.claude/bin/orch-program-check.py <roadmap.md>`
    and quote its verdict line. Then judge what the script can't: a risky contract reviewed late, a

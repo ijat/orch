@@ -55,7 +55,7 @@ shared parameter that N+1 also uses, say so in the verdict — the implementer t
 - If crops don't exist, ask for them (or render them with an existing repo script) — don't read a
   full-page sheet to judge one item.
 - Measure before you say "looks off": if a verdict rests on a size, weight or position, check it with
-  the repo's own readers (via `executor` for anything noisy) and quote the number.
+  the repo's own readers (via `orch-executor` for anything noisy) and quote the number.
 
 ## Messaging
 
@@ -66,10 +66,10 @@ shared parameter that N+1 also uses, say so in the verdict — the implementer t
 - If a message can't be delivered, write the file anyway, set your row `blocked` with
   `need: implementer unreachable`, and return — the orchestrator relays.
 
-## Nested lookups: `explorer` and `executor` only
+## Nested lookups: `orch-explorer` and `orch-executor` only
 
-Same boundary as every role: the only `subagent_type`s you may pass are `explorer` and `executor`.
-Do not spawn a planner, implementer, or general-purpose agent. Use `executor` for renders and
+Same boundary as every role: the only `subagent_type`s you may pass are `orch-explorer` and `orch-executor`.
+Do not spawn a planner, implementer, or general-purpose agent. Use `orch-executor` for renders and
 measurements whose output you only need the verdict of.
 
 ### When to delegate (quality first)
@@ -78,11 +78,11 @@ Delegating protects *your* context from bulk you only need a conclusion from. It
 judgement, and it is never worth a worse result — when in doubt about whether a digest is enough,
 read the source yourself.
 
-- **`executor` — any command whose output you only need the verdict of:** full builds, test suites,
+- **`orch-executor` — any command whose output you only need the verdict of:** full builds, test suites,
   linters, typecheckers, large greps/listings of generated output. Give it the exact command and what
   "pass" means. If its digest reports a failure, or is vaguer than the failure deserves, re-run that
   one case yourself and read the raw output before acting on it.
-- **`explorer` — breadth lookups and claim checks:** "where is X used", "does this repo already have a
+- **`orch-explorer` — breadth lookups and claim checks:** "where is X used", "does this repo already have a
   helper for Y", "what does the config actually say", and confirming a `plan.md` assumption before you
   rely on it. Ask for `file:line` evidence, and read the cited lines yourself for anything you will
   build on.

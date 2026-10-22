@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run a multi-agent orchestration workflow (planner → implementer → code review → optional security review → merge) for non-trivial, multi-step engineering work. Use when the user picks "orchestration mode", says "orchestrate this", "run this with subagents", "plan then implement then review", or accepts the orchestration offer for a feature, refactor, or multi-file bugfix. Coordinates `orch-planner` and `orch-implementer` (tier picked per spawn as model × effort, e.g. opus/max) plus `orch-code-reviewer` and `orch-security-reviewer` — each able to nest-call `explorer` (read-only lookups) and `executor` (runs builds/tests/lint, reports a condensed digest) — keeps durable state in per-task Markdown files plus a persistent per-repo security ledger and lessons-learned log, paces itself against the account's 5h/7d usage limits (slowing down at 90%, pausing and auto-resuming at 95%), and runs the work inside a dedicated git worktree. Also has a **lite mode** (one agent plans and implements, review kept) for small, low-risk tasks — use when the user picks "lite mode" / "orchestrate lite". For big features the planner may return a **roadmap** of milestones instead of a single plan (program mode, `PROGRAM.md`) — also use when the user asks to "plan this in milestones", "roadmap this", or resumes a multi-milestone program.
+description: Run a multi-agent orchestration workflow (planner → implementer → code review → optional security review → merge) for non-trivial, multi-step engineering work. Use when the user picks "orchestration mode", says "orchestrate this", "run this with subagents", "plan then implement then review", or accepts the orchestration offer for a feature, refactor, or multi-file bugfix. Coordinates `orch-planner` and `orch-implementer` (tier picked per spawn as model × effort, e.g. opus/max) plus `orch-code-reviewer` and `orch-security-reviewer` — each able to nest-call `orch-explorer` (read-only lookups) and `orch-executor` (runs builds/tests/lint, reports a condensed digest) — keeps durable state in per-task Markdown files plus a persistent per-repo security ledger and lessons-learned log, paces itself against the account's 5h/7d usage limits (slowing down at 90%, pausing and auto-resuming at 95%), and runs the work inside a dedicated git worktree. Also has a **lite mode** (one agent plans and implements, review kept) for small, low-risk tasks — use when the user picks "lite mode" / "orchestrate lite". For big features the planner may return a **roadmap** of milestones instead of a single plan (program mode, `PROGRAM.md`) — also use when the user asks to "plan this in milestones", "roadmap this", or resumes a multi-milestone program.
 ---
 
 # Orchestration mode
@@ -34,8 +34,8 @@ below it).
 | Security reviewer | `orch-security-reviewer` | `opus/high` | — **offered**, never silently run or skipped |
 | Plan reviewer | `orch-plan-reviewer` | `sonnet/high` | — roadmaps and `opus/max` plans only (`PROGRAM.md` §1) |
 | Director | `orch-director` | `opus/high` | → `opus/max` after the user reverses an accepted verdict — plan steps marked `visual:` only (step 7) |
-| Explorer | `explorer` | `haiku/low` | read-only lookups and claim checks |
-| Executor | `executor` | `haiku/low` | runs builds/tests/lint, returns a digest |
+| Explorer | `orch-explorer` | `haiku/low` | read-only lookups and claim checks |
+| Executor | `orch-executor` | `haiku/low` | runs builds/tests/lint, returns a digest |
 
 Always pass both `model` and `effort` for planners and implementers, even at the default tier, so the
 tier is explicit in the spawn record. The ladders are the normal path. Any other
@@ -58,11 +58,11 @@ Records before 2026-10-08 name tiers by agent file. Map them when resuming: `orc
 `sonnet/high`, `orch-implementer-expert` / `orch-implementer-opus` → `opus/medium`,
 `orch-implementer-fable` → `fable/high`.
 
-Every role (and you) may nest-call `explorer` and `executor`, and nothing else — each role's file
+Every role (and you) may nest-call `orch-explorer` and `orch-executor`, and nothing else — each role's file
 says so. This is instruction-enforced, not tool-gated; treat it as a real boundary. A role needing
 other help stops and reports to you.
 
-**Verify, don't assume — every role, you included.** State a claim only once you or `explorer`
+**Verify, don't assume — every role, you included.** State a claim only once you or `orch-explorer`
 read the thing it's about. What genuinely can't be checked gets labelled an assumption.
 
 ### Tier selection
@@ -209,7 +209,7 @@ choice, unconfirmable fact — stops, sets `blocked`, writes what it needs into 
 `log.md`, and returns. You then work down, in order, without skipping:
 
 1. **Answer it yourself** if you know or can check it in a moment.
-2. **Spawn for it** — usually `explorer`; or a planner revision, a targeted reviewer question, a
+2. **Spawn for it** — usually `orch-explorer`; or a planner revision, a targeted reviewer question, a
    fresh side-investigation.
 3. **Ask the user** only when 1 and 2 produced no real answer.
 
@@ -533,7 +533,7 @@ worktree and task directory plus the branch name.
   past `STOP`.
 - Leave a `Monitor` armed after the thing it watched returned.
 - Claim a hard crash will auto-resume.
-- Let a role spawn anything but `explorer`/`executor`.
+- Let a role spawn anything but `orch-explorer`/`orch-executor`.
 - Assert what could have been verified; go to the user before trying rungs 1 and 2.
 - Let any role guess inside a sensitive area.
 - Let a subagent write to `LESSONS.md`; log non-critical findings as lessons; leave a

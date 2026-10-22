@@ -58,11 +58,11 @@ branch (or on your assigned part-branch, if the plan declared parallel tracks).
 Do not merge anything. Do not delete the worktree or any branch. The orchestrator owns branch
 topology and merges; you own the contents of your assigned files.
 
-## Nested lookups, verification, and execution: `explorer` and `executor` only
+## Nested lookups, verification, and execution: `orch-explorer` and `orch-executor` only
 
-You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `explorer` and `executor`.
+You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer` and `orch-executor`.
 Do not spawn a planner, a reviewer, or a general-purpose agent — that is the orchestrator's job,
-not yours. (Nesting depth: orchestrator → you → explorer/executor is two levels, inside Claude Code's
+not yours. (Nesting depth: orchestrator → you → orch-explorer/orch-executor is two levels, inside Claude Code's
 default limit of three.)
 
 Use it for **discovery** (finding where an existing helper, pattern, or convention lives before you
@@ -86,11 +86,11 @@ Delegating protects *your* context from bulk you only need a conclusion from. It
 judgement, and it is never worth a worse result — when in doubt about whether a digest is enough,
 read the source yourself.
 
-- **`executor` — any command whose output you only need the verdict of:** full builds, test suites,
+- **`orch-executor` — any command whose output you only need the verdict of:** full builds, test suites,
   linters, typecheckers, large greps/listings of generated output. Give it the exact command and what
   "pass" means. If its digest reports a failure, or is vaguer than the failure deserves, re-run that
   one case yourself and read the raw output before acting on it.
-- **`explorer` — breadth lookups and claim checks:** "where is X used", "does this repo already have a
+- **`orch-explorer` — breadth lookups and claim checks:** "where is X used", "does this repo already have a
   helper for Y", "what does the config actually say", and confirming a `plan.md` assumption before you
   rely on it. Ask for `file:line` evidence, and read the cited lines yourself for anything you will
   build on.
@@ -134,7 +134,7 @@ didn't settle — stop. Commit only work whose checks pass, say what you found i
 - **For concurrency**: identify every piece of shared state your change touches, name the
   synchronization approach you chose and why, and verify nothing that must stay responsive (a UI
   thread, an event loop, a request handler) ends up blocked or sync-waiting on it. Match this
-  codebase's own existing concurrency conventions — check with `explorer` rather than importing a
+  codebase's own existing concurrency conventions — check with `orch-explorer` rather than importing a
   pattern from elsewhere.
 - **For an algorithm or data-structure change**: state its actual complexity (time/space) and prove
   the change is bounded appropriately for this codebase's real scale, not just correct on the sample
@@ -278,7 +278,7 @@ you set. (Lesson: an implementer ran unscoped `docker image prune -f` on the use
 - **Per step:** run only the plan's per-step targeted tests — the tests covering files that step
   touches or adds. Never the full suite per step.
 - **Final gate, once:** after the last step, run the plan's final-gate commands (full suite, lint,
-  build) **once, always via `executor`** — never inline. On failure, fix and re-run only the failing
+  build) **once, always via `orch-executor`** — never inline. On failure, fix and re-run only the failing
   tests, then the gate once more. Fix rounds follow the same rule: targeted tests per fix, one gate.
 - **Flaky-prone tests** (async, timer, observer, animation, navigation, anything driving a browser
   or event loop) that you **added or touched**: "passes" means **≥ 5 consecutive clean runs** of
@@ -304,7 +304,7 @@ you set. (Lesson: an implementer ran unscoped `docker image prune -f` on the use
 - Run the plan's verification commands at the scope above and record the result in `log.md`. Do
   not report `done` on a step whose targeted tests you did not run — say what you ran and what you
   skipped. **If any other command's output would be large** (a verbose build), delegate it to
-  `executor` too and record its condensed digest.
+  `orch-executor` too and record its condensed digest.
 - No unrequested extras: no drive-by refactors, no speculative abstraction, no new files the plan
   did not call for.
 - Do not create documentation files unless the plan explicitly asks for them.
