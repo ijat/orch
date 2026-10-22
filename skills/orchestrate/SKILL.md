@@ -29,7 +29,7 @@ below it).
 | Role | `subagent_type` | Default tier | Escalation ladder |
 |---|---|---|---|
 | Planner | `orch-planner` | `opus/high` | → `opus/max` → `fable/max` |
-| Implementer | `orch-implementer` | `sonnet/high` | → `opus/medium` → `fable/high` |
+| Implementer | `orch-implementer` | `sonnet/high` | → `opus/medium` → `opus/high` → `fable/high`; `haiku/medium` below it for gated steps (`TIERS.md`) |
 | Code reviewer | `orch-code-reviewer` | `opus/high` | — |
 | Security reviewer | `orch-security-reviewer` | `opus/high` | — **offered**, never silently run or skipped |
 | Plan reviewer | `orch-plan-reviewer` | `sonnet/high` | — roadmaps and `opus/max` plans only (`PROGRAM.md` §1) |
@@ -76,12 +76,19 @@ read the thing it's about. What genuinely can't be checked gets labelled an assu
   task can be Fable-tier from the first plan.
 - Otherwise `opus/high`.
 
-**Implementer:**
-- `opus/medium` when `plan.md` (Summary: `implementer tier:`) flags deep concurrency, a complex or
-  performance-sensitive algorithm, or other high-risk territory (`proactive`) — or when the default
-  tier failed review repeatedly **on the same category** of finding (`post-failure`).
+**Implementer** — route every spawn (plan step, fix round, pilot, lite task) with `TIERS.md`
+§ Implementer routing: an ordered procedure, first match wins. In short:
+- `sonnet/high` unless something below applies. `haiku/medium` only for a step that passes the
+  Haiku gate (small, every contract item checked by a command, no prose that states behaviour, no
+  flags), and for exact-edit fix lists.
+- `opus/medium` (`proactive`) when `plan.md` (Summary: `implementer tier:`) flags deep concurrency,
+  a complex or performance-sensitive algorithm, or a delicate state change, or when the step
+  implements security-bound logic, has to find an unknown cause, or is refusal-prone.
+- `post-failure`: one rung up `haiku/medium → sonnet/high → opus/medium → opus/high → fable/high`
+  per the ladder in `TIERS.md` — e.g. the default tier failed review twice **on the same category**
+  of finding → `opus/medium`.
 - `fable/high` only after an Opus pass also failed, or when the planner flagged ceiling need up
-  front. Never jump straight from the default to Fable.
+  front. Never jump to Fable from Haiku or Sonnet.
 - On a `post-failure` escalation, give the new tier the prior pass's diff and notes (path in the
   prompt); its contract requires naming what the prior pass got wrong.
 
@@ -363,8 +370,8 @@ Journal `plan_shape`; show the shape line at the gate, and if the user overrules
 `override` and send it back to the planner.
 
 Read `plan.md` yourself, then **present it to the user and get approval before any code is
-written.** Show its Summary and every decision marked `needs user`, and give the file path for the
-rest; if the Summary can't stand alone, send it back to the planner before the gate. If they want changes, send their feedback to the same planner tier to append a
+written.** Show its Summary, every decision marked `needs user`, and the implementer tier
+`TIERS.md` gives each step (one line each), and give the file path for the rest; if the Summary can't stand alone, send it back to the planner before the gate. If they want changes, send their feedback to the same planner tier to append a
 `## Revision N` section, and return to this gate — don't rewrite the plan yourself.
 
 ### 5. Sensitive-area check → offer the security reviewer
@@ -397,7 +404,9 @@ Read both lessons files again (step 4 command) and fold anything relevant into t
 **Sequential by default:** one implementer at the chosen tier, given the absolute worktree path, the
 absolute `plan.md` path, the step(s) to execute, the path of each assigned step's sketch if it has
 one, and the checkpointing contract. When a sketched step completes, read the implementer's
-`sketch-followed` / `sketch-deviation` note in `notes.md` and journal a `sketch` line.
+`sketch-followed` / `sketch-deviation` note in `notes.md` and journal a `sketch` line. When a
+`haiku/*` spawn returns, read its `contract-check` in `notes.md` before anything else; a gap
+re-routes the step (`TIERS.md` § Haiku gate).
 
 **Parallel only when `plan.md` explicitly declares disjoint file sets.** Then each part gets its own
 branch and worktree off the task branch:
@@ -425,7 +434,7 @@ escalations come to you as `blocked`. An escalation about a recorded user decisi
 the user (rungs 1–2 can't answer it); any other `blocked` works the rung ladder first.
 
 **Pilot batches:** a step with `pilot: <items>` runs those items first as their own spawn, at the
-step's tier. Measure it by the 5h usage it moved: `usage-check.sh` right before the spawn and right after the
+step's tier (`TIERS.md` pilots a gate-passing mechanical step with per-item checks at `haiku/medium`). Measure it by the 5h usage it moved: `usage-check.sh` right before the spawn and right after the
 return. The completion notice's token count is the run's final context size, not its spend, so
 don't extrapolate from it. Note anything else that ran meanwhile. Take its redo or review rounds too,
 and extrapolate to the step's remaining items. Show the user one line — "pilot: N items,
@@ -459,7 +468,9 @@ security-ledger path. The two may run concurrently.
 
 ### 9. Fix / re-review — max 3 rounds
 
-1. Route findings to an implementer as concrete fixes. When a finding is one instance of a class
+1. Route findings to an implementer as concrete fixes, at the tier `TIERS.md` § Fix rounds gives
+   (never below the tier that wrote the code, except an exact-edit list; a class raised again in
+   round 2 moves up a rung). When a finding is one instance of a class
    (state reset, validation, cleanup), name the whole class and the invariant the fix must keep, in
    the implementer's brief and the reviewer's re-review scope. Code-review findings that are `nit`
    or `origin: pre-existing` are not routed and never start or extend a round; they go to the user
@@ -527,7 +538,8 @@ worktree and task directory plus the branch name.
 - Let any role guess inside a sensitive area.
 - Let a subagent write to `LESSONS.md`; log non-critical findings as lessons; leave a
   behaviour-changing lesson unpromoted.
-- Spawn a Fable-tier agent without telling the user why; jump an implementer from default to Fable.
+- Spawn a Fable-tier agent without telling the user why; move an implementer to Fable without a
+  failed Opus pass or the planner's ceiling flag; give Haiku a step that fails its gate.
 - Use the direct-edit allowance for anything behavioural or sensitive.
 - Make a choice without journalling its real reason at the time; end a task without `retro.md`.
 - Treat a sketch as binding, or a sketch deviation as a review finding.
