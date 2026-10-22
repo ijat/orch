@@ -234,9 +234,9 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `skills/orchestrate/templates/` | One template per task file: plan, status, log, review, journal, … |
 | `agents/orch-*.md` | Roles: planner, implementer, code reviewer, security reviewer, plan reviewer, director (visual judgement). **Generated**, do not edit |
 | `skills/orchestrate/roles/` | Role sources; `_shared/` holds blocks every role includes |
-| `bin/orch-build-agents.py` | Renders `roles/` into `~/.claude/agents/orch-*.md`. Agent files can't import other files at runtime, so shared rules are inlined at build time |
+| `bin/orch-build-agents.py` | Renders `roles/` into `~/.claude/agents/` (`orch-*.md`, `explorer.md`, `executor.md`). Agent files can't import other files at runtime, so shared rules are inlined at build time |
 | `bin/orch-build-hook.sh` | PostToolUse hook: re-runs the build whenever a Write, Edit or Bash call touches `roles/`, and reports a failed build back to Claude |
-| `agents/explorer.md`, `agents/executor.md` | Cheap helpers that any role can call: read-only lookups, and builds/tests that report a digest |
+| `agents/explorer.md`, `agents/executor.md` | Cheap helpers that any role can call: read-only lookups, and builds/tests that report a digest. **Generated** from `roles/`, do not edit |
 | `bin/usage-check.sh`, `bin/usage-watch.sh` | Read your usage-limit state from a local cache. No network |
 | `bin/orch-ratelimit-cache.sh` | Writes that cache from the statusline input |
 | `bin/orch-index.sh`, `bin/orch-index-hook.sh` | Keep `~/.claude/orchestrations/ACTIVE.md`, the list of unfinished tasks |
@@ -291,7 +291,7 @@ This repo is a sanitised **export** of a live `~/.claude` install. The live file
 of truth.
 
 1. Edit the skill in `~/.claude`. For a role, edit `skills/orchestrate/roles/`; never edit
-   `agents/orch-*.md` directly. The build hook regenerates them after each edit made inside Claude
+   `agents/orch-*.md`, `explorer.md` or `executor.md` directly. The build hook regenerates them after each edit made inside Claude
    Code. After editing outside Claude Code, run `~/.claude/bin/orch-build-agents.py` yourself.
    Running sessions keep the agent definitions they started with; new sessions pick up the change.
 2. Run `scripts/export.py`. It copies the files here, applies its listed edits, and fails if a
