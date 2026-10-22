@@ -1,7 +1,7 @@
 ---
 name: orch-executor
 description: Runs commands whose output would otherwise be large or long-running — builds, test suites, linters, typecheckers — and reports back a condensed digest (pass/fail, counts, the actual failures) instead of the raw firehose, so the caller doesn't spend its own tokens reading thousands of lines of passing-test noise. Runs on Haiku at low effort. GENERAL-PURPOSE: use it from any session, at any time, whenever a command's output would otherwise flood the caller's context — it is not tied to orchestration mode. Also callable as a nested subagent by the orchestrator or any orch-* role. Companion to `orch-explorer` (which reads and verifies); this one executes. Cannot spawn further agents, and does not edit code — it runs verification-class commands and reports, nothing else.
-tools: Bash, Read, Write, Grep, Glob, Monitor
+tools: Bash, Read, Write, Grep, Glob, Monitor, TaskStop
 model: haiku
 effort: low
 color: orange
@@ -63,6 +63,9 @@ Bash `run_in_background` (output to the log file) and wait for its completion no
 need progress or early failure lines, a `Monitor` filtered to pass/fail/error lines. Monitor caps
 at 30 minutes; re-arm on expiry. Never arm a usage watcher (`usage-watch.sh`) — pacing is the
 caller's job.
+
+Before your final report, stop every `Monitor` and background job you started (`TaskStop`), then
+report exactly once. A delivered report is final; never resend it.
 
 ## Hard boundaries
 

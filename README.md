@@ -5,9 +5,10 @@ moves through these steps:
 
 1. A **planner** writes a plan, and you approve it.
 2. An **implementer** carries out the plan in its own git worktree.
-3. A **code reviewer** (and a **security reviewer**, if you accept one) checks the diff, for up to
-   3 fix rounds.
-4. You approve the merge.
+3. A **code reviewer** checks the diff, for up to 3 fix rounds. A **security reviewer** also runs
+   when a rule says so: a step implements security-bound logic, or the change adds network exposure.
+4. When review and the final gate are clean, the orchestrator merges the branch into your base
+   branch with a local `git merge --no-ff`. It never pushes. If any merge condition fails, it asks you.
 
 All state lives in Markdown files on disk, so a task survives a crashed session. The orchestrator
 picks each role's model and effort level per spawn, records every choice in a journal, and paces
@@ -18,8 +19,8 @@ Status: in active use, still changing.
 
 ## Why use it
 
-You make two decisions: approve the plan, and approve the merge. The agents (blue) do the rest,
-including the build-and-review loop in between. Yellow is you.
+You approve the plan. The agents (blue) do the rest, including the build-and-review loop and a
+clean merge. They come back to you (yellow) only for what they can't decide or undo themselves.
 
 ```mermaid
 flowchart LR
@@ -29,24 +30,35 @@ flowchart LR
     G1 -->|yes| B[Build]
     B --> R[Review]
     R -->|issues found| B
-    R -->|clean| G2{{You approve the merge?}}
-    G2 -->|yes| M([Merged into your branch])
-    G2 -->|no| K([Kept on its own branch])
+    R -->|clean| G2{All merge<br/>conditions hold?}
+    G2 -->|yes| M([Merged into your branch:<br/>local, never pushed])
+    G2 -->|no| A{{You decide}}
+    A -->|approve| M
+    A -->|no| K([Kept on its own branch])
 
     classDef you fill:#fff3c4,stroke:#c9a400,color:#000
     classDef agent fill:#e3ecff,stroke:#5b7fd6,color:#000
-    class U,G1,G2 you
-    class PL,B,R agent
+    class U,G1,A you
+    class PL,B,R,G2 agent
 ```
 
-- **You stay in charge at the two points that matter.** You approve the plan before any code is
-  written and the merge before anything lands on your branch. Between those gates it runs on its own.
+- **You stay in charge where it matters.** You approve the plan before any code is written. Between
+  that gate and the merge it runs on its own. A clean merge is a local `--no-ff` that is journaled with
+  a revert command and never pushed. A failed merge condition, a repo whose `policy.md` says
+  `merge: ask`, a push, a usage stop, sudo or a paid action all come to you.
+- **Questions queue.** When a role needs a decision, a reversible one outside the sensitive areas is
+  taken (the recommended option, recorded and listed in the digest). Anything else is parked in the task's `questions.md` and
+  everything it doesn't block keeps going. You get one batched question when nothing independent is left.
+  A notification goes out only for a parked question, an automatic merge, a hard stop or the end of a task.
 - **Work survives crashes and usage limits.** All state lives in Markdown files: plan, status, log,
   review and journal. A dead session, a closed terminal or a usage pause resumes from the files, not
   from scratch.
 - **Separate reviewers check the work.** A code reviewer with a fresh context, plus a security reviewer
-  on sensitive changes, which it offers and never runs silently. They review against the approved plan,
-  for up to 3 fix rounds.
+  when the rule fires (security-bound logic or network exposure; `policy.md` can force it or ask first).
+  Every run or skip is journaled. They review against the approved plan, for up to 3 fix rounds.
+- **Bookkeeping is one command.** `orch` does each state change in a single call, writes each role's
+  brief (just its context), checks the plan, and runs the merge guard. `orch dashboard --serve` shows
+  your tasks on a local page.
 - **It spends usage deliberately.** A cheap Sonnet implementer does most of the work. Opus plans and
   reviews, and a step escalates to a stronger tier only for a stated reason, which goes in the journal.
   It paces itself against your 5h/7d limits, so a long task pauses instead of hitting the wall.
@@ -59,19 +71,22 @@ flowchart LR
 
 | | Plain subagents / one long session | `/goal` (Claude Code) | Dynamic workflows (Claude Code) | **orch** |
 |---|---|---|---|---|
-| Who decides "done" | the agent itself | a small model reads the conversation after each turn | the script | reviewers against the approved plan, then you at merge |
-| Human gates | ad hoc | none until the condition is met | none mid-run | plan approval and merge approval, plus cost and decision gates |
+| Who decides "done" | the agent itself | a small model reads the conversation after each turn | the script | reviewers against the approved plan, then a merge guard in code (or you, when it fails) |
+| Human gates | ad hoc | none until the condition is met | none mid-run | plan approval, then only hard stops, parked questions and a merge the guard refuses |
 | Survives a crash | no | goal restored on resume; counters reset | no | yes: every role checkpoints to files |
-| Isolation | your branch | your branch | your branch | its own git worktree until you merge |
+| Isolation | your branch | your branch | your branch | its own git worktree until the merge |
 | Model per role | one | one, plus an evaluator | per agent | per role and per spawn, with a written tradeoff |
 | Loop limits | none | a turn cap you write yourself | per script | 3 review rounds, 2 visual redo rounds, three strikes, check-ins |
 | Usage pacing | none | pauses on limits | none | slows at 90%, pauses at 95%, resumes on its own |
 
 Use `/goal` when one agent can reach a checkable end state, like "tests pass". Use dynamic workflows
 for wide fan-out with no human in the loop. Use orch for multi-step engineering work where you want
-a plan you approve, independent review and a merge you control.
+a plan you approve, independent review and a merge that is local, journaled and revertible.
 
-## Track record
+## Track record (the old skill, before 2026-10-22)
+
+These numbers describe the skill as it was before 2026-10-22: security reviewer by offer, you
+approving every merge, bookkeeping by hand. Nothing here measures the current version.
 
 The workflow goes back to late December 2025. It began as a project-specific orchestration skill
 inside one repository and evolved into this standalone skill. Records were only kept from
@@ -90,7 +105,7 @@ are counted from the review files themselves.
 | Usage-limit pauses | 5 pauses, 7 automatic resumes |
 | Lessons | 15 promoted from `LESSONS.md` into standing rules |
 
-### What changed because of the data
+### What changed because of the data (before 2026-10-22)
 
 - **Tiers chosen per spawn** (2026-10-08). Mean review rounds on merged standard tasks fell from 2.7
   (n=11) to 2.1 (n=9).
@@ -105,6 +120,8 @@ are counted from the review files themselves.
 
 ### Not proven yet
 
+- The `orch` command, the stop policy, the automatic merge and the security rule (2026-10-22) have
+  unit tests but no old-versus-new measurement of cost or behaviour yet.
 - The visual director loop, pilot batches, check-ins and three strikes were added on 2026-10-15.
   None has run in a real task yet.
 - Program mode (roadmaps of milestones) has been used once.
@@ -127,19 +144,23 @@ flowchart TD
     PR -->|yes| PRV[Plan reviewer] --> G1
     PR -->|no| G1{{Gate: you approve the plan}}
     G1 -->|revise| P
-    G1 -->|approve| S{Touches a<br/>sensitive area?}
-    S -->|yes| SO{{Offer a security review}}
+    G1 -->|approve| S{Security rule:<br/>security-bound logic<br/>or network exposure?}
+    S -->|yes| SO[Security review scheduled]
     S -->|no| W
     SO --> W[Create git worktree<br/>only now]
     W --> I[Implement<br/>see the next chart]
-    I --> CR[Code review<br/>+ security review if accepted]
+    I --> CR[Code review<br/>+ security review if scheduled]
     CR --> F{Findings?}
-    F -->|none| G2
+    F -->|none| GT[Final gate:<br/>the plan's verification commands]
     F -->|yes, round ≤ 3| FX[Implementer fixes] --> CR
     F -->|still open after round 3| ESC[Escalate tier once,<br/>or hand dispute to you]
-    ESC --> G2{{Gate: you approve the merge}}
-    G2 -->|approve| M[git merge --no-ff] --> CL[Remove worktree]
+    ESC --> G2
+    GT --> MG{orch merge:<br/>every condition holds<br/>and policy is merge: auto?}
+    MG -->|yes| M[git merge --no-ff<br/>local, never pushed,<br/>notify with revert command]
+    MG -->|no| G2{{You approve the merge}}
+    G2 -->|approve| M
     G2 -->|decline| K[Keep the branch]
+    M --> CL[Remove worktree]
 ```
 
 ### Inside "Implement": the loops that keep a step bounded
@@ -242,10 +263,13 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `bin/orch-index.sh`, `bin/orch-index-hook.sh` | Keep `~/.claude/orchestrations/ACTIVE.md`, the list of unfinished tasks |
 | `bin/orch-stats.sh`, `bin/role-cost.py` | Analytics over the journals and transcripts |
 | `bin/orch-program-check.py` | Checks a program roadmap against its rules |
+| `bin/orch`, `bin/orchlib/` | The `orch` command: one call per state change (`spawn`, `return`, `role`, `journal`, `ask`), role briefs, plan checks, the guarded `merge`, and `migrate` for old task directories. Python 3.9+ standard library only; `orchlib/tests/` holds its tests |
+| `bin/orchlib/dashboard.py`, `bin/orchlib/dashboard.html` | `orch dashboard`: a read-only page of active tasks, questions waiting for you and recent events, served on 127.0.0.1 only |
+| `skills/orchestrate/templates/policy.md`, `…/questions.md` | Per-repo stop policy (`~/.claude/orchestrations/<repo>/policy.md`) and the queue of parked questions in a task |
 
 ## Install
 
-Requires Claude Code, `git`, `jq` and `python3`.
+Requires Claude Code, `git`, `jq` and Python 3.9 or newer.
 
 ```bash
 git clone <this repo> orch && cd orch
@@ -271,6 +295,29 @@ Then add the following to `~/.claude/settings.json`:
 }
 ```
 
+To run `orch` as a bare command, link it onto your `PATH` (optional):
+
+```bash
+ln -s ~/.claude/bin/orch ~/.local/bin/orch
+```
+
+### Upgrading an existing install
+
+```bash
+cd orch && git pull
+./install.sh --dry-run   # lists new and changed files; new: bin/orch, bin/orchlib/…
+./install.sh             # replaced files are backed up first
+~/.claude/bin/orch migrate --dry-run   # report what would change in your task directories
+~/.claude/bin/orch migrate             # add the new status.md fields to active tasks
+~/.claude/bin/orch migrate --all       # optional: finished tasks too
+```
+
+`orch migrate` only touches `status.md`. It backs up every file it changes under
+`~/.claude/orchestrations/.migrate-backup-<time>/` and never rewrites a plan. Run it when no
+session is working on those tasks. Task directories made before the upgrade stay readable; migrating
+fills in the new fields, and writes `unknown` where it can't tell. `orch` needs Python 3.9+ and `git`
+on the `PATH`.
+
 Without the cache, `usage-check.sh` reports `UNKNOWN`. The skill treats `UNKNOWN` as a warning, so
 it runs slowed down the whole time and can't auto-pause or resume. Rate limits appear in the
 statusline input only on Pro/Max plans.
@@ -284,6 +331,10 @@ To have Claude offer the mode on its own, add a line like this to `~/.claude/CLA
 
 Say "orchestrate this" (or "lite mode" for a small task) and describe the work. Task files go to
 `~/.claude/orchestrations/<repo>/<task>/`.
+
+To watch your tasks, run `orch dashboard --serve` (add `--port N` to change the port, `--open` to open
+a browser). It serves a read-only page on `127.0.0.1:8765` and writes nothing. `orch dashboard --json`
+prints the same data once.
 
 ## Maintaining (for the repo owner)
 

@@ -1,0 +1,373 @@
+{
+ "generated": "2026-03-01T13:00:00Z",
+ "page_version": "85ff58bb4b0d",
+ "tasks": [
+  {
+   "id": "myapp/add-login",
+   "repo": "myapp",
+   "slug": "add-login",
+   "state": "implementing",
+   "state_words": "Building",
+   "mode": "standard",
+   "shape": "single",
+   "milestone": null,
+   "milestones_done": null,
+   "milestones_total": null,
+   "steps_done": 2,
+   "steps_total": 4,
+   "percent": 50,
+   "current": "implementer: working on step 3",
+   "roles": [
+    {
+     "role": "orchestrator",
+     "state": "in_progress",
+     "step": "task dir created",
+     "note": null
+    },
+    {
+     "role": "planner",
+     "state": "done",
+     "step": "plan written",
+     "note": "plan.md ready"
+    },
+    {
+     "role": "implementer",
+     "state": "in_progress",
+     "step": "step 2 (2026-03-01)",
+     "note": "working on step 3"
+    },
+    {
+     "role": "director",
+     "state": "n/a",
+     "step": null,
+     "note": "<pending if the plan has visual steps>"
+    },
+    {
+     "role": "code-reviewer",
+     "state": "pending",
+     "step": null,
+     "note": null
+    }
+   ],
+   "questions_open": 1,
+   "questions": [
+    {
+     "id": "Q1",
+     "text": "Use a session cookie or a token?",
+     "blocks": "3"
+    }
+   ],
+   "last_log": "2026-03-01T11:00Z implementer: step 2 done",
+   "updated": "2026-03-01T12:30Z",
+   "updated_age_min": 30,
+   "tokens_reported": 100000,
+   "usage_first": {
+    "5h": 12,
+    "7d": 40
+   },
+   "usage_last": {
+    "5h": 31,
+    "7d": 44
+   },
+   "paused": false,
+   "worktree": "/home/u/Projects/myapp-wt",
+   "task_dir": "<ROOT>/myapp/add-login"
+  },
+  {
+   "id": "My App/fix-menu",
+   "repo": "My App",
+   "slug": "fix-menu",
+   "state": "implementing",
+   "state_words": "Building",
+   "mode": "standard",
+   "shape": "roadmap",
+   "milestone": "M2 (menu)",
+   "milestones_done": 1,
+   "milestones_total": 3,
+   "steps_done": 1,
+   "steps_total": 3,
+   "percent": 33,
+   "current": "implementer: menu",
+   "roles": [
+    {
+     "role": "orchestrator",
+     "state": "in_progress",
+     "step": null,
+     "note": null
+    },
+    {
+     "role": "planner",
+     "state": "done",
+     "step": "roadmap",
+     "note": null
+    },
+    {
+     "role": "implementer",
+     "state": "in_progress",
+     "step": "step 1 of M2",
+     "note": "menu"
+    }
+   ],
+   "questions_open": 0,
+   "questions": [],
+   "last_log": "2026-03-01T12:00Z implementer: step 1 done",
+   "updated": "2026-03-01T12:00Z",
+   "updated_age_min": 60,
+   "tokens_reported": null,
+   "usage_first": null,
+   "usage_last": null,
+   "paused": false,
+   "worktree": "/home/u/Projects/My App-wt",
+   "task_dir": "<ROOT>/My App/fix-menu"
+  },
+  {
+   "id": "myapp/paused-job",
+   "repo": "myapp",
+   "slug": "paused-job",
+   "state": "paused_usage_limit",
+   "state_words": "Paused: usage limit",
+   "mode": "standard",
+   "shape": "single",
+   "milestone": null,
+   "milestones_done": null,
+   "milestones_total": null,
+   "steps_done": 7,
+   "steps_total": 8,
+   "percent": 88,
+   "current": "implementer: paused",
+   "roles": [
+    {
+     "role": "orchestrator",
+     "state": "in_progress",
+     "step": null,
+     "note": null
+    },
+    {
+     "role": "implementer",
+     "state": "waiting",
+     "step": "step 7",
+     "note": "paused"
+    }
+   ],
+   "questions_open": 0,
+   "questions": [],
+   "last_log": "2026-03-01T07:30Z orchestrator: paused for usage",
+   "updated": "2026-03-01T07:00Z",
+   "updated_age_min": 360,
+   "tokens_reported": null,
+   "usage_first": null,
+   "usage_last": null,
+   "paused": true,
+   "worktree": "/home/u/Projects/myapp-wt",
+   "task_dir": "<ROOT>/myapp/paused-job"
+  },
+  {
+   "id": "myapp/needs-ok",
+   "repo": "myapp",
+   "slug": "needs-ok",
+   "state": "awaiting_approval",
+   "state_words": "Waiting for your approval",
+   "mode": "standard",
+   "shape": "single",
+   "milestone": null,
+   "milestones_done": null,
+   "milestones_total": null,
+   "steps_done": null,
+   "steps_total": 2,
+   "percent": null,
+   "current": null,
+   "roles": [
+    {
+     "role": "orchestrator",
+     "state": "in_progress",
+     "step": null,
+     "note": null
+    },
+    {
+     "role": "planner",
+     "state": "done",
+     "step": "plan written",
+     "note": "<script>alert(1)</script> & \"quotes\" 'x'"
+    }
+   ],
+   "questions_open": 1,
+   "questions": [
+    {
+     "id": "Q1",
+     "text": "<script>alert(2)</script> ok?",
+     "blocks": "all"
+    }
+   ],
+   "last_log": "2026-03-01T06:10Z planner: <script>alert(\"log\")</script> plan ready",
+   "updated": "2026-03-01T06:00Z",
+   "updated_age_min": 420,
+   "tokens_reported": 5000,
+   "usage_first": null,
+   "usage_last": null,
+   "paused": false,
+   "worktree": "/home/u/Projects/myapp-wt",
+   "task_dir": "<ROOT>/myapp/needs-ok"
+  },
+  {
+   "id": "myapp/mystery",
+   "repo": "myapp",
+   "slug": "mystery",
+   "state": "unknown",
+   "state_words": "Unknown state: unknown",
+   "mode": "standard",
+   "shape": "single",
+   "milestone": null,
+   "milestones_done": null,
+   "milestones_total": null,
+   "steps_done": null,
+   "steps_total": null,
+   "percent": null,
+   "current": null,
+   "roles": [
+    {
+     "role": "orchestrator",
+     "state": "in_progress",
+     "step": null,
+     "note": null
+    }
+   ],
+   "questions_open": 0,
+   "questions": [],
+   "last_log": "2026-02-01T00:00Z orchestrator: started",
+   "updated": "2026-02-01T13:00Z",
+   "updated_age_min": 40320,
+   "tokens_reported": null,
+   "usage_first": {
+    "5h": null,
+    "7d": 8
+   },
+   "usage_last": {
+    "5h": null,
+    "7d": 8
+   },
+   "paused": false,
+   "worktree": "/home/u/Projects/myapp-wt",
+   "task_dir": "<ROOT>/myapp/mystery"
+  }
+ ],
+ "events": [
+  {
+   "ts": "2026-03-01T11:22Z",
+   "id": "myapp/add-login",
+   "kind": "checkpoint",
+   "words": "Asked you 2 questions"
+  },
+  {
+   "ts": "2026-03-01T11:21Z",
+   "id": "myapp/add-login",
+   "kind": "review_round",
+   "words": "code review round 1: pass"
+  },
+  {
+   "ts": "2026-03-01T11:20Z",
+   "id": "myapp/add-login",
+   "kind": "return",
+   "words": "implementer finished: blocked"
+  },
+  {
+   "ts": "2026-03-01T11:05Z",
+   "id": "myapp/add-login",
+   "kind": "spawn",
+   "words": "Started implementer (sonnet/high)"
+  },
+  {
+   "ts": "2026-03-01T11:00Z",
+   "id": "myapp/add-login",
+   "kind": "return",
+   "words": "implementer finished: done"
+  },
+  {
+   "ts": "2026-03-01T10:21Z",
+   "id": "myapp/add-login",
+   "kind": "spawn",
+   "words": "Started implementer (sonnet/high)"
+  },
+  {
+   "ts": "2026-03-01T09:51Z",
+   "id": "My App/fix-menu",
+   "kind": "gate",
+   "words": "plan gate: approved"
+  },
+  {
+   "ts": "2026-03-01T09:50Z",
+   "id": "My App/fix-menu",
+   "kind": "auto_merge",
+   "words": "Merged 0123456 into main"
+  },
+  {
+   "ts": "2026-03-01T07:30Z",
+   "id": "myapp/paused-job",
+   "kind": "pause",
+   "words": "Paused for usage (5h 96%)"
+  },
+  {
+   "ts": "2026-03-01T06:10Z",
+   "id": "myapp/needs-ok",
+   "kind": "return",
+   "words": "<b>planner</b> finished: <img src=x onerror=alert(1)>"
+  },
+  {
+   "ts": "2026-02-23T10:00Z",
+   "id": "myapp/declined-job",
+   "kind": "task_end",
+   "words": "Task ended: declined"
+  },
+  {
+   "ts": "2026-02-22T10:00Z",
+   "id": "myapp/dropped",
+   "kind": "task_end",
+   "words": "Task ended: abandoned"
+  },
+  {
+   "ts": "2026-02-21T10:00Z",
+   "id": "myapp/second-merged",
+   "kind": "task_end",
+   "words": "Task ended: merged"
+  },
+  {
+   "ts": "2026-02-20T10:00Z",
+   "id": "myapp/old-merged",
+   "kind": "task_end",
+   "words": "Task ended: merged"
+  },
+  {
+   "ts": "2026-02-01T00:02Z",
+   "id": "myapp/mystery",
+   "kind": "return",
+   "words": "implementer finished: done"
+  },
+  {
+   "ts": "2026-02-01T00:01Z",
+   "id": "myapp/mystery",
+   "kind": "spawn",
+   "words": "Started implementer (sonnet/high)"
+  }
+ ],
+ "finished": {
+  "merged": [
+   {
+    "id": "myapp/second-merged",
+    "ended": "2026-02-21T10:00Z"
+   },
+   {
+    "id": "myapp/old-merged",
+    "ended": "2026-02-20T10:00Z"
+   }
+  ],
+  "abandoned": [
+   {
+    "id": "myapp/declined-job",
+    "ended": "2026-02-23T10:00Z"
+   },
+   {
+    "id": "myapp/dropped",
+    "ended": "2026-02-22T10:00Z"
+   }
+  ]
+ }
+}

@@ -1,0 +1,5 @@
+{"ts":"2026-02-01T00:01Z","event":"spawn","role":"implementer","tier":"sonnet/high","usage_5h":"12","usage_7d":8}
+not json
+[1,2]
+{"ts":"2026-02-01T00:02Z","event":"return","role":"implementer","outcome":"done","tokens":"7"}
+{"ts":5,"kind":"gate","gate":"merge","outcome":"approved"}

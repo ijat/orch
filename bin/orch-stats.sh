@@ -62,6 +62,7 @@ done | jq -rs --arg repo "$repo" --arg since "$since" --argjson retros "$retros"
     | ($e | map(select(.kind == "return" and .tokens != null)) | group_by("\(.repo)/\(.task)")
       | map({key: "\(.[0].repo)/\(.[0].task)", value: (map(.tokens) | add)}) | from_entries) as $tok
     | def rate(xs; ys): if (xs | length) == 0 then "n/a" else "\([xs[] | select(. as $x | ys | index($x))] | length)/\(xs | length)" end;
+    def per(xs): "\(xs | length) (\(if (tasks | length) == 0 then "n/a" else ((xs | length) / (tasks | length) * 100 | round / 100) end) per task)";
   "tasks: \(tasks | length)  events: \($e | length)  ended without retro.md: \(kind("task_end") | map("\(.repo)/\(.task)") | unique | map(select(. as $t | $retros | index($t) | not)) | length)",
   "",
   "outcome (task_end):", (kind("task_end") | by(.outcome)),
@@ -103,5 +104,14 @@ done | jq -rs --arg repo "$repo" --arg since "$since" --argjson retros "$retros"
   (kind("review_point") | if length == 0 then empty else "  review points: \(length)  avg span: \(map(.span | length) | add / length * 10 | round / 10)  avg rounds: \(map(.rounds | numbers) | if length == 0 then "n/a" else (add / length * 10 | round / 10) end)  late findings: \(map(.late | numbers) | add // 0)" end),
   (kind("replan") | if length == 0 then empty else "  re-plan checks: \(length)  with changes: \(map(select((.changed | length) > 0)) | length)" end),
   (kind("checker") | if length == 0 then empty else "  checker runs: \(length)  FAIL: \(map(select(.verdict == "FAIL")) | length)" end),
-  (kind("plan_review") | if length == 0 then empty else "  plan reviews: \(length)  blockers: \(map(.blockers | numbers) | add // 0)  should: \(map(.should | numbers) | add // 0)" end)
+  (kind("plan_review") | if length == 0 then empty else "  plan reviews: \(length)  blockers: \(map(.blockers | numbers) | add // 0)  should: \(map(.should | numbers) | add // 0)" end),
+  "",
+  "stops and automation (counts, and per task over \(tasks | length) tasks):",
+  "  plan gates: \(per(kind("gate") | map(select(.gate == "plan"))))",
+  "  merge gates asked: \(per(kind("gate") | map(select(.gate == "merge"))))",
+  "  checkpoints: \(kind("checkpoint") | length)  asked the user: \(per(kind("checkpoint") | map(select(.asked == true))))",
+  "  blockers resolved at rung 3: \(per(kind("blocker") | map(select((.rung | tostring) == "3"))))",
+  "  auto-merges: \(per(kind("auto_merge")))",
+  "  security by rule: ran \(per(kind("auto_security") | map(select(.ran == true))))  skipped \(per(kind("auto_security") | map(select(.ran == false))))",
+  "  assumed decisions: \(per(kind("assumed_decision")))"
 '
