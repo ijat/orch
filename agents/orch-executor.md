@@ -61,7 +61,7 @@ to "failed."
 If a command may outlive Bash's foreground timeout (a long e2e suite, a big build), start it with
 Bash `run_in_background` (output to the log file) and wait for its completion notice — or, if you
 need progress or early failure lines, a `Monitor` filtered to pass/fail/error lines. Monitor caps
-at 30 minutes; re-arm on expiry. Never arm a usage watcher (`usage-watch.sh`) — pacing is the
+at 30 minutes; re-arm on expiry. Never arm a usage watcher (`usage-watch.sh`) or `orch usage wait` — pacing is the
 caller's job.
 
 Before your final report, stop every `Monitor` and background job you started (`TaskStop`), then

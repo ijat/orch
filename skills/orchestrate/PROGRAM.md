@@ -32,7 +32,7 @@ It survives merge points and is removed only at program end.
    `plan_review`.
 4. **Security decision** (SKILL.md step 5 rule) for every milestone, once, at this gate: one line each,
    `orch journal auto_security milestone:=<N> areas:='[…]' ran:=true rule=step5` (`ran:=false` for a skip).
-5. **Budget.** Run `usage-check.sh`. Estimate the program from the milestone sizes and past runs per tier
+5. **Budget.** Run `orch usage` (`7d_proj` for the 7d budget). Estimate the program from the milestone sizes and past runs per tier
    (`~/.claude/bin/role-cost.py --by tier`; it has no per-size grouping,
    so give a range); say whether it fits the 5h/7d headroom.
 6. **Gate.** Show the user: the shape line, Summary, the Milestones table as is, every checker WARN

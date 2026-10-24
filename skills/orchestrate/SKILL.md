@@ -146,63 +146,65 @@ worktree too: `git -C <worktree> log -3 --stat`) before briefing the next role. 
 
 ## Usage pacing (5h / 7d windows)
 
-Pacing is yours. Tools, in `~/.claude/bin/`:
+Pacing is yours (local files, no tokens):
 
-- `usage-check.sh` — one shot, one line, exit `0=OK 1=WARN 2=STOP 3=STALE 4=UNKNOWN`.
-- `usage-watch.sh` — long-running, prints only on transitions. **Not** the default (below).
+- `orch usage` — one line (`state=… 5h=… est=… line=… 7d_proj=…`), exit `0=OK 1=WARN 2=STOP 3=STALE
+  4=UNKNOWN`; `usage-check.sh` prints the same. `est` = last sample + every session's transcript cost
+  since; `line` is the dynamic stop line (≈ 95–99).
+- `orch -t <task> usage wait` — background, silent; ends only on an event (dispatch step 3).
 
-Never hand-roll the cache parsing.
+Never hand-roll cache parsing or compare a raw % to a fixed number: the line moves.
 
-| 5h window | Action |
+| State | Action |
 |---|---|
-| < 90% | Normal pace. |
-| 90–94% (`WARN`) | Slow down: sequential not parallel implementers (a director + implementer pair counts as one), planner at `opus/high` not `opus/max` unless already earned, batch findings instead of round-tripping small ones. Tell the user, log it. |
-| ≥ 95% (`STOP`) | Pause — procedure below. |
-| `STALE` / `UNKNOWN` | Treat as `WARN` until a fresh sample. A stale low number is the dangerous one. |
+| `OK` | Normal pace. |
+| `WARN` (`est` within 5 of the line, or < 30 min to it) | Slow down: sequential not parallel implementers (a director + implementer pair counts as one), planner at `opus/high` not `opus/max` unless already earned, batch findings instead of round-tripping small ones. Tell the user, log it. |
+| `STOP` (`est` ≥ line) | Pause — procedure below. |
+| `STALE` / `UNKNOWN` | Treat as `WARN`. A stale low number misleads. |
 
-The 7d window is advisory: at ≥ 90%, tell the user and let them choose; never pause on it alone.
-A user can override the thresholds for a run (e.g. "spend the window fully") — record that in
-`status.md` (`usage_override`) and still check usage before each spawn and log the reading
-(`orch spawn` has no override flag: for a `STOP` the user allowed, use `orch journal`).
+7d is advisory: at 7d ≥ 90% or `7d_proj` ≥ 100, tell the user; never pause on it alone. A user override
+(e.g. "spend the window fully"): record `usage_override` in `status.md`, pass `--line N` to the wait, log
+the reading before each spawn (`orch spawn` has no override flag: for a `STOP` the user allowed, use
+`orch journal`).
 
 ### Dispatch protocol — every spawn
 
 1. **Pre-flight and journal, one call:** `orch spawn <role> --agent <agent> --tier <tier> --steps <steps>
-   --reason "<why>" --alt "<alternative>" --tradeoff "<one line>"` runs `usage-check.sh`, then writes the
+   --reason "<why>" --alt "<alternative>" --tradeoff "<one line>"` runs the estimator, then writes the
    `tier_choice`, `escalation` (when raised: add `--escalation proactive|post-failure --from <tier>
    --trigger <trigger>`) and `spawn` lines. `STOP` → exit 2, nothing written: don't spawn, pause.
-   `WARN`/`STALE`/`UNKNOWN` warn once: act on it.
+   `WARN`/`STALE`/`UNKNOWN` warn once: act on it. Last line: `usage wait: armed (pid N)` or `not armed`.
 2. **Spawn** the subagent in the background.
-3. **While it runs, poll with `ScheduleWakeup` ticks**, not a `Monitor`: every 10–15 min (sooner if
-   already ≥ 85%), run `usage-check.sh` once; `noop: true` unless the state changed. Its completion
-   notice ends the wait.
-4. On a `WARN`/`STALE` tick: log, tell the user, apply the slow-down rules — don't stop the
-   subagent. On a `STOP` tick: pause.
-5. **Check-in on silence** (same tick, no extra wakeups): if the running role's last `log.md` line
+3. **Notify, don't poll.** If `not armed`, start `orch -t <task> usage wait` with Bash `run_in_background`
+   in the same turn, then wait; no `ScheduleWakeup` ticks while armed. "failed with exit code N" is its
+   event, not an error (output file: only to name the CHECKIN role): `2` STOP → pause · `10` RESET →
+   resume · `11` CHECKIN → step 5, re-arm · `12` REFRESH → re-arm only (`noop`) · `13` ENDED → re-arm unless
+   the task ended · `0` already armed → nothing · `4`, other codes, `killed` → no monitor: one `ScheduleWakeup`
+   tick ≤ 8 min running `orch usage` with check-in on silence, re-arming the wait once. Two exits < 60 s
+   apart (not 2/10), or the re-armed wait failing again → ticks until the next resume; tell the user once.
+   Never `TaskStop` the wait when a subagent returns; at task end only if `orch end` didn't end it.
+4. On `WARN`/`STALE`: log, tell the user, apply the slow-down rules; don't stop the subagent. `STOP`: pause.
+5. **Check-in on silence** (a CHECKIN exit, or a fallback tick): if the running role's last `log.md` line
    is older than the check-in interval — 30 min, then 60, then 120 after each check-in on that
    spawn — read its last log lines, the tail of `notes.md`, and `git -C <worktree> log -3 --stat`.
-   Progressing (new commits, or new results that differ): log `check-in: ok`, back off. Looping (the
+   Progressing (new commits or differing results): log `check-in: ok`, back off. Looping (the
    same failure or sweep repeating, no commit since the last check-in): `SendMessage` it to checkpoint
    in `notes.md` and return `blocked` with `need: stuck — …` (it reads it at its next tool call); if
    nothing lands within one tick, `TaskStop` it and checkpoint from its files yourself, then work the
-   rung ladder with a sharper brief (a tier raise is allowed as `post-failure`, trigger `blocker`).
-   Journal a `checkin` line either way. A check-in reads files only — never the subagent's transcript.
-
-`Monitor` + `usage-watch.sh --interval 20` is for work that needs sub-minute reaction only. If you arm
-one: `timeout_ms: 1800000` (the 30-min maximum; the default 5 min dies silently), re-arm on every expiry
-notice, exactly one at a time, and `TaskStop` it **in the same turn** the watched subagent returns. Check
-`ps -o ppid,lstart,args` before killing any stray `usage-watch` — other live sessions run their own.
+   rung ladder with a sharper brief (a tier raise: `post-failure`, trigger `blocker`).
+   Journal a `checkin` line either way. Check-ins read files, never the transcript.
 
 ### Pause on STOP
 
 1. `TaskStop` the running subagent (on a visual step, both the director and the implementer).
 2. Checkpoint its progress in `status.md` (`blocked`, why); set `task_state: paused_usage_limit`; log the
-   percentage: `orch journal pause usage_5h:=<N> --set task_state=paused_usage_limit --log "paused at <N>%"`.
-3. Tell the user in one line: what paused, at what %, and that it resumes automatically; they can ask other things meanwhile.
-4. `ScheduleWakeup` for `reset_5h` + a few minutes (delay clamps to 60–3600s — chain wakeups for
-   longer); with no reset epoch, every 15–20 min. Each tick: `usage-check.sh`. A drop of > 5 points
-   since the pause = window rolled over → re-spawn from the `status.md` checkpoint, journal `resume`
-   (restoring `task_state`), `noop: false`. Otherwise reschedule with `noop: true`.
+   estimate: `orch journal pause usage_5h:=<N> --set task_state=paused_usage_limit --log "paused at <N>%"`.
+3. Tell the user in one line: what paused, at what %, that it resumes automatically.
+4. Arm `orch -t <task> usage wait` in the background: seeing `paused_usage_limit` it stays silent and exits
+   `10` once the window has rolled over. Then re-spawn from the `status.md` checkpoint, journal `resume`
+   (restoring `task_state`), re-arm. Other exit: `ScheduleWakeup` at `reset_5h` + a few minutes (clamps to
+   60–3600s — chain; no epoch: every 15–20 min) running `orch usage`; a drop of > 5 points since the pause
+   = rolled over, else `noop: true`.
 
 This self-initiated pause is the **only** automatic resume. A hard crash (API error, closed
 terminal, cutoff before you paused) is not: the user re-invokes, and you resume from the files.
@@ -439,7 +441,7 @@ has no name parameter). They loop by `SendMessage` pointers to `visual-s<S>-<N>.
 role files); you relay only if one returns `blocked` with `need: … unreachable`. Either ends its turn
 while it waits for the other, so completion notices arrive mid-loop. **A return whose `status.md` row
 reads `waiting` is not a finish:** no `orch return` (it refuses a non-final row), don't advance, keep the
-usage ticks. The pair is done when the implementer's row is `done` for the step; then read the batch
+wait armed. The pair is done when the implementer's row is `done` for the step; then read the batch
 files' verdict lines, not the crops. **Whenever you replace the implementer** (after the pilot, three
 strikes, a check-in stop, an escalation, a usage re-spawn), first `SendMessage` the director
 `implementer is now <new id>` and give the new implementer the director's ID. A step not marked
@@ -449,7 +451,7 @@ goes straight to the user (rungs 1–2 can't answer it), any other works the run
 
 **Pilot batches:** a step with `pilot: <items>` runs those items first as their own spawn, at the
 step's tier (`TIERS.md` pilots a gate-passing mechanical step with per-item checks at `haiku/medium`).
-Measure it by the 5h usage it moved: `usage-check.sh` right before the spawn and right after the
+Measure it by the 5h usage it moved: `orch usage` right before the spawn and right after the
 return (the completion notice's token count is the final context size, not spend; note anything else
 that ran meanwhile). Take its redo or review rounds too, and extrapolate to the step's remaining items.
 Park one line (`orch ask`, `--blocks` the rest of the step; options continue / continue at another tier
@@ -564,7 +566,8 @@ worktree and task directory plus the branch name.
 - Run implementers in parallel without `plan.md` declaring disjoint file sets; exceed 3 fix rounds at
   the same tier; rely on live messaging for anything that must survive a crash.
 - Spawn without the pre-flight (`orch spawn`); treat `STALE`/`UNKNOWN` as safe; let a subagent run
-  past `STOP`; leave a `Monitor` armed after the thing it watched returned; claim a crash will auto-resume.
+  past `STOP`; poll usage on a timer while a wait is armed; arm `usage-watch.sh`; leave a `Monitor` armed past
+  its subagent; claim a crash will auto-resume.
 - Let a role spawn anything but `orch-explorer`/`orch-executor`, or guess inside a sensitive area.
 - Assert what could have been verified; go to the user before trying rungs 1 and 2.
 - Let a subagent write to `LESSONS.md`; log non-critical findings as lessons; leave a

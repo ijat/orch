@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # usage-watch.sh — background watchdog for the account's 5h usage window.
 #
+# LEGACY, fixed thresholds: it always passes WARN_PCT / STOP_PCT (default 90 / 95) to
+# usage-check.sh, so the dynamic stop line of `orch usage` does not apply here. The orchestrator
+# uses `orch usage wait` instead; this stays for old callers and for a Monitor-based watch.
+#
 # Designed to be run as the `command` of a Monitor tool call: it prints ONE line
 # per state transition and stays silent otherwise, so it costs nothing in tokens
 # until something actually changes.
