@@ -12,8 +12,8 @@ moves through these steps:
 
 All state lives in Markdown files on disk, so a task survives a crashed session. The orchestrator
 picks each role's model and effort level per spawn, records every choice in a journal, and paces
-itself against your 5h/7d usage limits. It slows down at 90%, pauses at 95%, and resumes on its own
-when the window resets.
+itself against your 5h/7d usage limits. It estimates your live 5h usage, slows down near a dynamic
+stop line (about 95-99%), pauses at it, and resumes on its own when the window resets.
 
 Status: in active use, still changing.
 
@@ -77,7 +77,7 @@ flowchart LR
 | Isolation | your branch | your branch | your branch | its own git worktree until the merge |
 | Model per role | one | one, plus an evaluator | per agent | per role and per spawn, with a written tradeoff |
 | Loop limits | none | a turn cap you write yourself | per script | 3 review rounds, 2 visual redo rounds, three strikes, check-ins |
-| Usage pacing | none | pauses on limits | none | slows at 90%, pauses at 95%, resumes on its own |
+| Usage pacing | none | pauses on limits | none | estimates live usage, slows near a dynamic stop line (about 95-99%), pauses at it, resumes on its own |
 
 Use `/goal` when one agent can reach a checkable end state, like "tests pass". Use dynamic workflows
 for wide fan-out with no human in the loop. Use orch for multi-step engineering work where you want
@@ -210,15 +210,19 @@ sequenceDiagram
 
 ### Usage pacing
 
-It reads your 5h usage window from a local cache. No network calls.
+It reads your 5h usage window from a local cache and the session transcripts, and estimates the
+current figure between cache updates (`orch usage`). The stop line is dynamic, usually 95-99%: lower when
+stopping would cost more (a prompt-cache re-write, live subagents) or the estimate is less certain. A silent
+background command (`orch usage wait`) wakes the orchestrator only on an event: stop, reset, check-in. No
+network calls.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Normal
-    Normal --> Warn: 5h ≥ 90%
-    Warn --> Normal: drops below 90%
-    Warn --> Paused: 5h ≥ 95%
-    Normal --> Paused: 5h ≥ 95%
+    Normal --> Warn: estimate within 5 points of the line
+    Warn --> Normal: drops back
+    Warn --> Paused: estimate ≥ line
+    Normal --> Paused: estimate ≥ line
     Paused --> Normal: window resets (drop > 5 points)
     Normal: Normal pace
     Warn: Slow down (sequential, lower planner tier)
@@ -258,8 +262,8 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `bin/orch-build-agents.py` | Renders `roles/` into `~/.claude/agents/orch-*.md`. Agent files can't import other files at runtime, so shared rules are inlined at build time |
 | `bin/orch-build-hook.sh` | PostToolUse hook: re-runs the build whenever a Write, Edit or Bash call touches `roles/`, and reports a failed build back to Claude |
 | `agents/orch-explorer.md`, `agents/orch-executor.md` | Cheap helpers that any role (or any session) can call: read-only lookups, and builds/tests that report a digest. Named `explorer`/`executor` before 2026-10-22 |
-| `bin/usage-check.sh`, `bin/usage-watch.sh` | Read your usage-limit state from a local cache. No network |
-| `bin/orch-ratelimit-cache.sh` | Writes that cache from the statusline input |
+| `bin/usage-check.sh`, `bin/usage-watch.sh` | One-shot wrapper around `orch usage` (the live estimate and dynamic stop line), and a legacy fixed-threshold watchdog. Local files only, no network |
+| `bin/orch-ratelimit-cache.sh` | Writes that cache, and the shared sample log, from the statusline input |
 | `bin/orch-index.sh`, `bin/orch-index-hook.sh` | Keep `~/.claude/orchestrations/ACTIVE.md`, the list of unfinished tasks |
 | `bin/orch-stats.sh`, `bin/role-cost.py` | Analytics over the journals and transcripts |
 | `bin/orch-program-check.py` | Checks a program roadmap against its rules |
