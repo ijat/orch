@@ -25,6 +25,7 @@
 - needs from user: <sudo, exclusive VM/device, credentials, commands auto mode may deny — or "none">
 - files: <count>; sensitive areas: <list from SKILL.md step 5, or "none">
 - implementer tier: <model>/<effort> (default sonnet/high) — <why>
+- continue: steps <ids> | no — <why>   <!-- steps you would implement yourself: TIERS.md § Planner continuation; the orchestrator decides -->
 - parallelization: sequential | <N> disjoint tracks
 - sketched steps: <step numbers, or "none">
 - visual steps: <step numbers run with a director, or "none">

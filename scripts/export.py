@@ -65,6 +65,10 @@ PRIVATE_EDITS = [
     ("bin/orch-stats.sh", "(e.g. @@PRIVATE_TASK@@'s \"orch-planner\" ran on sonnet)",
      "(e.g. an \"orch-planner\" spawn that ran on sonnet)"),
     ("bin/role-cost.py", " (for the @@AUDIT@@ skill)", ""),
+    ("skills/orchestrate/TIERS.md", " Reasons: @@WHY_DOC@@.md \"Why the planner may continue\".", ""),
+    ("bin/orchlib/tests/test_cont.py",
+     'ROLE_COST = os.path.join(BIN, "..", "skills", "@@AUDIT@@", "scripts", "role-cost.py")',
+     'ROLE_COST = os.path.join(BIN, "role-cost.py")'),
     ("bin/usage-check.sh", "# Reads ONLY local files written by ~/.claude/@@STATUSLINE@@.",
      "# Reads ONLY local files written by orch-ratelimit-cache.sh (from the statusline)."),
 ]

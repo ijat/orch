@@ -16,6 +16,10 @@ Per group: runs, median requests per run, median peak context, median prompt vol
 API-equivalent $ at list prices. Then, over sessions that spawned any orch-* agent: median
 implementer prompt volume and median orch-* $ per session.
 
+An orch-planner run that was continued as the implementer (orch continue-gate) is split at the first user
+message starting `orch: phase 2`: the requests before it stay `orch-planner`, those after it are
+`planner-continued` (same tier column), so the continuation's cost is its own row.
+
 The journal's `return.tokens` is a run's final context size, not this cumulative volume.
 
 usage: role-cost.py [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--root DIR] [--by tier|type]
@@ -63,8 +67,21 @@ def tier_of(models, efforts):
     return f"{model}/{effort}"
 
 
+PHASE2_RE = re.compile(r'\s*(?:The coordinator sent a message while you were working:\s*)?orch: phase 2', re.I)
+
+
+def user_text(e):
+    c = (e.get('message') or {}).get('content')
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return ' '.join(b.get('text', '') for b in c if isinstance(b, dict) and b.get('type') == 'text')
+    return ''
+
+
 def read_run(path, stats):
-    seen, reqs, first = set(), [], None
+    """-> (first date, [(prompt, $)], tier, index in the list where the phase-2 message came, or None)"""
+    seen, reqs, first, split = set(), [], None, None
     models, efforts = Counter(), Counter()
     with open(path, errors='replace') as fh:
         for line in fh:
@@ -74,6 +91,12 @@ def read_run(path, stats):
                 e = json.loads(line)
             except ValueError:
                 stats['bad_lines'] += 1
+                continue
+            if not isinstance(e, dict):
+                continue
+            if e.get('type') == 'user':
+                if split is None and PHASE2_RE.match(user_text(e)):
+                    split = len(reqs)
                 continue
             if e.get('type') != 'assistant':
                 continue
@@ -93,7 +116,7 @@ def read_run(path, stats):
             if cost is None:
                 stats['unpriced_requests'] += 1
             reqs.append((prompt, cost or 0.0))
-    return first, reqs, tier_of(models, efforts)
+    return first, reqs, tier_of(models, efforts), split
 
 
 def main():
@@ -111,17 +134,20 @@ def main():
                 typ = json.load(fh).get('agentType') or 'unknown'
         except (OSError, ValueError):
             typ = 'unknown(no meta)'
-        first, reqs, tier = read_run(path, stats)
+        first, reqs, tier, split = read_run(path, stats)
         if not reqs or (a.since and first < a.since) or (a.until and first > a.until):
             continue
-        vol = sum(p for p, _ in reqs); usd = sum(c for _, c in reqs)
-        key = typ if a.by == 'type' else f"{role_of(typ)} {tier}"
-        by_type[key].append((len(reqs), max(p for p, _ in reqs), vol, usd))
+        parts = [(typ if a.by == 'type' else f"{role_of(typ)} {tier}", reqs)]
+        if split is not None and role_of(typ) == 'orch-planner' and 0 < split < len(reqs):
+            parts = [(parts[0][0], reqs[:split]),
+                     ('planner-continued' if a.by == 'type' else f"planner-continued {tier}", reqs[split:])]
+        for key, rs in parts:
+            by_type[key].append((len(rs), max(p for p, _ in rs), sum(p for p, _ in rs), sum(c for _, c in rs)))
         if typ.startswith('orch-'):
             s = by_session[os.path.dirname(os.path.dirname(path))]
-            s['orch_usd'] += usd
+            s['orch_usd'] += sum(c for _, c in reqs)
             if typ.startswith('orch-implementer'):
-                s['impl_volume'] += vol
+                s['impl_volume'] += sum(p for p, _ in reqs)
     if stats['bad_lines']:
         print(f"note: skipped {stats['bad_lines']} unparseable line(s)", file=sys.stderr)
     if stats['unpriced_requests']:
