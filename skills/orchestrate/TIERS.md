@@ -23,8 +23,8 @@ v2.1.293+ (confirmed on 2.1.294, 2026-10-08), and sessions on older versions got
 | Notes | refuses in cyber, bio, frontier_llm, general_harms, with no server-side fallback | everyday coding/agent work; refuses in 5 categories (cyber, bio, frontier_llm, reasoning_extraction, general_harms) | the default model; medium ≈ Opus 5 at high on multistep coding; refuses in cyber, bio, reasoning_extraction | most capable; single turns on hard tasks can run **many minutes** |
 
 **Cost here is usage-limit headroom, not dollars:** this account runs on the 5h/7d limits
-(`usage-check.sh`). The API prices are the best available proxy for how hard each model draws on
-them (not verified for the subscription; a pilot's `usage-check.sh` delta is the real measure).
+(`orch usage`). The API prices are the best available proxy for how hard each model draws on
+them (not verified for the subscription; a pilot's `orch usage` delta is the real measure).
 Long agentic runs are mostly cache reads, which Opus prices like Sonnet: on recorded implementer
 runs, the same tokens cost ~1.25–1.3× Sonnet at Opus prices, ~2.1–2.3× at Fable prices and ~0.22×
 at Haiku prices, not the 2× / 5× / 0.05× of output (transcripts under-record output, so the Opus and
@@ -77,7 +77,7 @@ Weigh these for every non-default choice:
   already failed or is likely to.
 - **Performance / urgency:** is the user waiting? Fable turns can run for minutes, and `max` effort
   is slower than `high`. If the user said it's urgent, prefer a faster tier and say what that risks.
-- **Cost:** check `usage-check.sh` first. At `WARN` (≥90%) stay on or below the default tier
+- **Cost:** check `orch usage` first. At `WARN` stay on or below the default tier
   unless a higher one is already earned. Fable always needs the user told first (`SKILL.md`).
 - **Limitations:** safety classifiers can refuse security-adjacent work (Sonnet 5.5 has the widest
   set of categories), and Haiku has no fallback when it refuses. Opus 5.5 refuses in fewer
@@ -133,7 +133,7 @@ run, plus a fix pass). So Haiku gets only the steps its gate admits.
 | `extras` | the step has `sketch:` or `visual:`, or adds flaky-prone tests (async, timer, concurrency, browser) | the step |
 | `urgent` | the user is waiting on this step or said it is urgent | conversation |
 | `caps` | user caps (no Haiku / no Opus / Sonnet only / no Fable / an effort ceiling), and repo-lesson caps such as "no cheaper tiers" | conversation, `LESSONS.md` |
-| `usage` | `usage-check.sh` state and the 7d % | pre-flight |
+| `usage` | `orch usage` state and the 7d % | pre-flight |
 
 Not used: repo size (Haiku was clean on the 1,260-file R3 repo and skipped items on 187–284-file
 ones), or brief length on its own (clean up to 1,104 words when every item was checked; skips on

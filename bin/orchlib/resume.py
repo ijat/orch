@@ -22,7 +22,8 @@ NEXT = {
     "implementing": "read the implementer row and notes.md; no live session -> `orch brief implement <next step>`, `orch spawn implementer`",
     "reviewing": "read review.md and review_round: no review yet -> `orch brief review`, spawn the reviewer; findings open -> fix round",
     "awaiting_merge": "check reviews and the final gate are current for the branch tip, then `orch merge`; ask only if it refuses",
-    "paused_usage_limit": "run usage-check.sh; below the stop line -> `orch journal resume`, `orch set task_state=...`, continue the paused step",
+    "paused_usage_limit": "arm `orch -t <task> usage wait --until-reset` in the background (RESET = exit 10), or check `orch usage`; "
+                          "below the line -> `orch journal resume`, `orch set task_state=...`, continue the paused step",
     "done": "finished: nothing to resume (retro.md, `orch end` already run or not needed)",
     "abandoned": "finished: nothing to resume",
 }

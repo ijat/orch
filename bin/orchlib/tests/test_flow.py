@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import unittest
 from unittest import mock
 
@@ -87,10 +88,14 @@ class TestSpawn(FlowBase):
         err = self.refuse(2, "spawn", "implementer", "--agent", "orch-implementer", "--tier", "sonnet/high",
                           "--reason", "r", "--tradeoff", "t",
                           env=self.fake_usage(2, "state=STOP 5h=96 5h_age=2 7d=70 7d_age=2"))
-        self.assertIn("spawn refused: usage STOP (5h 96%)", err)
+        self.assertIn("spawn refused: usage STOP (5h 96%) est=? line=?", err)
         self.assertEqual(self.read(self.d, "journal.jsonl"), journal_before)
         self.assertEqual(self.read(self.d, "status.md"), status_before)
-        self.assertTrue(self.log_lines()[-1].endswith("orchestrator: spawn refused: usage STOP (5h 96%)"))
+        self.assertTrue(self.log_lines()[-1].endswith("orchestrator: spawn refused: usage STOP (5h 96%) est=? line=?"))
+        err = self.refuse(2, "spawn", "implementer", "--agent", "orch-implementer", "--tier", "sonnet/high",
+                          env=self.fake_usage(2, "state=STOP 5h=96 5h_age=2 7d=70 7d_age=2 reset_5h=1 "
+                                                 "reset_in=1h0m est=97.2 line=96.5"))
+        self.assertIn("spawn refused: usage STOP (5h 96%) est=97.2 line=96.5 — state=STOP", err)
 
     def test_usage_command_that_cannot_run_is_unknown_not_fatal(self):
         out, err = self.spawn("planner", "--agent", "orch-planner", "--tier", "opus/high",
@@ -99,16 +104,25 @@ class TestSpawn(FlowBase):
         self.assertIn("warning: usage UNKNOWN", err)
         self.assertIsNone(self.journal()[-1]["usage_5h"])
 
-    def test_default_usage_check_is_the_launcher_sibling(self):
-        fake = os.path.join(self.tmp, "fakebin")
-        os.makedirs(fake)
-        with open(os.path.join(fake, "usage-check.sh"), "w") as fh:
-            fh.write("#!/bin/sh\necho 'state=OK 5h=12 5h_age=1 7d=34 7d_age=1'\nexit 0\n")
-        os.chmod(os.path.join(fake, "usage-check.sh"), 0o755)
-        with mock.patch.object(flow, "BIN_DIR", fake):
-            self.ok("spawn", "planner", "--agent", "orch-planner", "--tier", "opus/high")
+    def test_default_usage_check_is_the_in_process_estimator(self):
+        home = os.path.join(self.tmp, "usage-home")
+        os.makedirs(home)
+        now = int(time.time())
+        with open(os.path.join(home, ".statusline-usage-log"), "w") as fh:
+            fh.write("%d 12 %d 34 %d sess-x\n" % (now - 5, now + 3600, now + 86400))
+        env = {"ORCH_USAGE_HOME": home, "ORCH_USAGE_STATE": os.path.join(self.tmp, "usage-state")}
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ORCH_USAGE_CMD", None)
+            out, _ = self.ok("spawn", "planner", "--agent", "orch-planner", "--tier", "opus/high", env=env)
         rec = self.journal()[-1]
         self.assertEqual((rec["usage_5h"], rec["usage_7d"]), (12, 34))
+        self.assertIn("usage: state=OK 5h=12 ", out)
+        self.assertIn("usage wait: not armed — run in background: orch -t myapp/add-login usage wait", out)
+        from orchlib import usage
+        with mock.patch.dict(os.environ, {}, clear=False), \
+                mock.patch.object(usage, "safe_estimate", side_effect=RuntimeError("boom")):
+            os.environ.pop("ORCH_USAGE_CMD", None)
+            self.assertEqual(flow.run_usage(), (4, None, None, "state=UNKNOWN reason=RuntimeError"))
 
     def test_tier_choice_escalation_spawn_in_that_order(self):
         out, _ = self.spawn("implementer", "--agent", "orch-implementer", "--tier", "opus/high", "--steps", "3,4",
@@ -510,7 +524,7 @@ class TestResume(FlowBase):
 
     def test_every_state_has_a_suggestion_and_unknown_falls_back(self):
         want = {"planning": "spawn planner", "awaiting_approval": "plan gate", "implementing": "orch brief implement",
-                "reviewing": "review", "awaiting_merge": "orch merge", "paused_usage_limit": "usage-check.sh",
+                "reviewing": "review", "awaiting_merge": "orch merge", "paused_usage_limit": "usage wait --until-reset",
                 "done": "nothing to resume", "abandoned": "nothing to resume"}
         for state, text in want.items():
             self.ok("set", "task_state=%s" % state, "-t", T)
