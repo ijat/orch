@@ -413,12 +413,13 @@ def build_parser():
     sp.add_argument("--as", dest="as_role", default=None)
 
     sp = add("show", cmd_show, "one-screen task view (no -t: active tasks)")
-    from . import brief, dashboard, flow, merge, migrate, questions, resume  # here, not at the top: they import this module
+    from . import brief, cont, dashboard, flow, merge, migrate, questions, resume  # here, not at the top: they import this module
     flow.register(add)
     merge.register(add)
     questions.register(add)
     resume.register(add)
     brief.register(add)
+    cont.register(add)
     migrate.register(add)
     dashboard.register(add)
     sp = add("commands", cmd_commands, "list subcommands")
