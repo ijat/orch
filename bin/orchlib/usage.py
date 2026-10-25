@@ -35,7 +35,7 @@ LEGACY_LINE, LEGACY_WARN = 95.0, 90.0   # no k at all
 WINDOW = 18000
 WEEK = 7 * 86400
 GROUP = 120            # reset epochs within 120 s are one window
-IDLE_MAX = 3600        # a transcript idle longer than this is not live
+IDLE_MAX = 3600        # a transcript idle longer than this is not live, unless its liveness is confirmed
 K_MIN_HW, K_MIN_COST = 5.0, 0.05        # below either: k from this window is meaningless
 K_PERSIST_HW = 20.0    # persist a window's k only from hw >= 20 (and the guard satisfied)
 GUARD_VALUES = 3       # k guard: >= 3 distinct sample values in the window ...
@@ -43,6 +43,7 @@ GUARD_SPAN = 10.0      # ... spanning >= 10 points ...
 GUARD_COST = 5.0       # ... and >= $5 of window cost up to the anchor; else k <= trailing p90
 K_TRAIL = 10           # windows kept for the trailing k distribution
 BURN_SPAN = 600
+PROJ7_SPAN = 20 * 3600  # 7d_proj only from >= 20 h of same-window 7d samples (a day's average, not a busy hour's slope)
 
 # $/MTok input, output, cache-read multiplier (TIERS.md rows; older ids for history). Longest id prefix wins.
 PRICES = {
@@ -57,7 +58,11 @@ TOP_PRICE = max(PRICES.values())   # unknown model: never $0
 STATES = {'OK': 0, 'WARN': 1, 'STOP': 2, 'STALE': 3, 'UNKNOWN': 4}
 
 Req = collections.namedtuple('Req', 't model i w5 w1 rd o key')
-KeyInfo = collections.namedtuple('KeyInfo', 'sub sid alive')   # alive: registry / meta.json says so (idle not applied)
+# alive: registry / meta.json says so (idle not applied); confirmed: positively known to be running, so going quiet never
+# drops it from R -- a main session the registry (or $CLAUDE_PID) shows running, or a subagent without `finished: true`
+# whose parent session the registry shows running. Without a registry nothing is confirmed and IDLE_MAX applies.
+KeyInfo = collections.namedtuple('KeyInfo', 'sub sid alive confirmed')
+KeyInfo.__new__.__defaults__ = (False,)
 
 
 # -- pure helpers --------------------------------------------------------------------------------
@@ -149,7 +154,7 @@ def _seven(s7, now):
     ta = max(s[0] for s in win if s[1] >= hw - 0.5)
     recent = sorted((s for s in win if s[0] >= now - 86400), key=lambda s: s[0])
     proj = None
-    if recent and recent[-1][0] - recent[0][0] >= 3600:
+    if recent and recent[-1][0] - recent[0][0] >= PROJ7_SPAN:
         slope = max(0.0, (hw - recent[0][1]) / max(1.0, recent[-1][0] - recent[0][0]))
         proj = hw + slope * (r7 - now)
     return hw, ta, r7, proj
@@ -272,7 +277,9 @@ def compute(s5, s7, reqs, keys, now, k_hist=None, line_override=None, warn_overr
         rs.sort(key=lambda r: r.t)
         last = rs[-1]
         idle = now - last.t
-        if idle > IDLE_MAX:
+        # a confirmed-live session or agent idle past its TTL wakes with a full context re-write: it stays in R for as
+        # long as it has a request in this window; only unconfirmed transcripts are cut at IDLE_MAX
+        if idle > IDLE_MAX and not (info.confirmed and last.t > ws):
             continue
         if info.sub:
             n_agents += 1
@@ -413,6 +420,30 @@ def load_legacy(home, now):
     return s5, s7
 
 
+LEGACY_MATCH = (120, 10)   # a log line within [t - 120, t + 10] of a legacy sample can be the same render
+
+
+def drop_stale_legacy(log5, legacy5):
+    """Legacy samples (5h and 7d) carry the reset file's value at read time, not their own. Drop one when the log has a line
+    with the same p5 from the same render span (the log's heartbeat dedup is <= 60 s, and the statusline can write the
+    log before a slow token walk and the legacy cache after it) whose own reset is a different window: that render was
+    a stale view of another window, so it must not set this window's high-water. A log line from the same window, or
+    no log line at all, keeps the legacy sample (the R1.4 union)."""
+    if not log5 or not legacy5:
+        return legacy5
+    lt = sorted(log5, key=lambda s: s[0])
+    ts = [s[0] for s in lt]
+    out = []
+    for s in legacy5:
+        t, p, r = s[0], s[1], s[2]
+        lo = bisect.bisect_left(ts, t - LEGACY_MATCH[0])
+        hi = bisect.bisect_right(ts, t + LEGACY_MATCH[1])
+        if any(abs(x[1] - p) < 0.01 and abs(x[2] - r) > GROUP for x in lt[lo:hi]):
+            continue
+        out.append(s)
+    return out
+
+
 def _ep(ts):
     try:
         return datetime.datetime.fromisoformat(ts.replace('Z', '+00:00')).timestamp()
@@ -510,7 +541,7 @@ def scan(home, since):
         sub = os.sep + 'subagents' + os.sep in p
         sid = p.split(os.sep)[-3] if sub else os.path.basename(p)[:-len('.jsonl')]
         alive = (not _meta_finished(p)) if sub else (reg is None or sid in reg)
-        keys[p] = KeyInfo(sub, sid, alive)
+        keys[p] = KeyInfo(sub, sid, alive, alive and reg is not None and sid in reg)
         try:
             reqs.update(parse_transcript(p, since, p))
         except OSError:
@@ -556,7 +587,7 @@ class Scanner:
             sub = os.sep + 'subagents' + os.sep in p
             sid = p.split(os.sep)[-3] if sub else os.path.basename(p)[:-len('.jsonl')]
             alive = (not _meta_finished(p)) if sub else (reg is None or sid in reg)
-            keys[p] = KeyInfo(sub, sid, alive)
+            keys[p] = KeyInfo(sub, sid, alive, alive and reg is not None and sid in reg)
             f = self.files.get(p)
             for attempt in (0, 1):
                 if f is None or attempt or f['ino'] != stt.st_ino or stt.st_size < f['off'] \
@@ -620,7 +651,7 @@ def estimate(home=None, state=None, now=None, line=None, warn=None, session=None
     now = time.time() if now is None else now
     a5, a7 = load_log(home)
     b5, b7 = load_legacy(home, now)
-    s5, s7 = a5 + b5, a7 + b7
+    s5, s7 = a5 + drop_stale_legacy(a5, b5), a7 + drop_stale_legacy(a7, b7)
     r5, rolled = _window(s5, now)
     ws = (max(r5, now - WINDOW) if rolled else r5 - WINDOW) if r5 else now
     since = min(ws, now - IDLE_MAX) - 60
@@ -628,6 +659,9 @@ def estimate(home=None, state=None, now=None, line=None, warn=None, session=None
     k_hist = load_k(state)
     if session is None:
         session = os.environ.get('CLAUDE_CODE_SESSION_ID') or None
+    if session and os.environ.get('CLAUDE_PID') and pid_alive(os.environ['CLAUDE_PID']):
+        keys = dict((p, KeyInfo(False, v.sid, True, True) if (not v.sub and v.sid == session) else v)
+                    for p, v in keys.items())
     e = compute(s5, s7, reqs, keys, now, k_hist, line, warn, session)
     if e.persist:
         save_k(state, k_hist, e.persist)

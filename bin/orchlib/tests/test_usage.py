@@ -131,6 +131,26 @@ class TestAnchor(Home):
         self.assertEqual(int(e.p5), 62)
         self.assertEqual(int(e.age5), 120)
 
+    def test_legacy_stale_old_window_view_does_not_set_high_water(self):
+        # F2: B's render is a stale view of the window that ended (its log line carries the old reset); the legacy
+        # cache has the same 97 but is stamped with the reset file's (new) value -> it must not become this window's hw
+        r_old = int(self.now) - 600
+        self.sample(self.now - 90, 3, sid='sidA')
+        self.sample(self.now - 75, 97, r5=r_old, sid='sidB')   # B's last log line (dedup: <= 60 s heartbeat)
+        self.legacy('5h', self.r5, [(self.now - 90, 3), (self.now - 70, 97), (self.now - 20, 97)])
+        e = self.est()
+        self.assertEqual((int(e.p5), e.state), (3, 'OK'))
+        rc, out, _ = self.cli()
+        self.assertEqual(rc, 0)
+        self.assertIn(' 5h=3 ', out)
+
+    def test_legacy_kept_when_log_line_is_same_window_or_absent(self):
+        self.sample(self.now - 60, 40)
+        self.legacy('5h', self.r5, [(self.now - 50, 40), (self.now - 30, 62)])   # same window / no log line
+        self.assertEqual(int(self.est().p5), 62)
+        os.remove(os.path.join(self.home, '.statusline-usage-log'))
+        self.assertEqual(int(self.est().p5), 62)   # no log at all: legacy only (as before the log existed)
+
     def test_legacy_sample_older_than_window_ignored(self):
         self.sample(self.now - 60, 40)
         self.legacy('5h', self.r5, [(self.r5 - 18000 - 10, 90)])
@@ -154,15 +174,21 @@ class TestAnchor(Home):
 
     def test_seven_day_fields_and_projection(self):
         r7 = int(self.now) + 2 * 86400
-        self.sample(self.now - 7200, 10, p7=40, r7=r7)
-        self.sample(self.now - 60, 12, p7=42, r7=r7)
+        self.sample(self.now - 23 * 3600, 10, p7=40, r7=r7, sid='s0')
+        self.sample(self.now - 60, 12, p7=52, r7=r7)
         e = self.est()
-        self.assertEqual(int(e.p7), 42)
-        slope = 2.0 / (7200 - 60)
-        self.assertAlmostEqual(e.proj7, 42 + slope * (r7 - self.now), places=6)
+        self.assertEqual(int(e.p7), 52)
+        slope = 12.0 / (23 * 3600 - 60)
+        self.assertAlmostEqual(e.proj7, 52 + slope * (r7 - self.now), places=6)
         os.remove(os.path.join(self.home, '.statusline-usage-log'))
-        self.sample(self.now - 30, 12, p7=42, r7=r7)
-        self.assertIsNone(self.est().proj7)   # < 1 h of 7d samples
+        # a 6 h busy-period slope (the legacy 7d cache's whole retention) is not projected: < 20 h of samples
+        self.sample(self.now - 6 * 3600, 48, p7=48, r7=r7, sid='s0')
+        self.sample(self.now - 30, 12, p7=59, r7=r7)
+        e = self.est()
+        self.assertEqual((int(e.p7), e.proj7), (59, None))
+        self.assertIn(' 7d_proj=?', e.text())
+        self.sample(self.now - 20 * 3600 - 30, 40, p7=40, r7=r7, sid='s1')   # span exactly 20 h -> projected
+        self.assertIsNotNone(self.est().proj7)
 
 
 class TestCompute(unittest.TestCase):
@@ -261,6 +287,41 @@ class TestCompute(unittest.TestCase):
                  c=usage.KeyInfo(True, SID, True), d=usage.KeyInfo(False, 'x', True))
         e = usage.compute(s5, [], reqs + r, k, T0)
         self.assertEqual((e.agents, e.sessions), (1, 1))
+
+    def test_confirmed_main_never_drops_out_of_r_when_idle(self):
+        # F3: a live (registry-confirmed) main session idle past its 1 h TTL keeps TURNS x read turns + the full
+        # re-write in R; the line must not rise when its cache expires (idle 3550 s -> 3700 s -> 3 h)
+        r5 = T0 + 3600                     # window started 4 h ago, so a 3 h idle request is in this window
+        s5 = [(T0 - 240, 10, r5, SID), (T0 - 180, 30, r5, SID), (T0 - 120, 50, r5, SID)]
+        base = [req(r5 - 18000 + 60, 10.0)]
+        ctx = 150000
+        rd_cost = ctx * 4 * 0.05 / 1e6
+        wr_cost = ctx * 4 * 2 / 1e6
+        live = keys(m=usage.KeyInfo(False, 'orch', True, True))
+        out = {}
+        for idle in (3500, 3550, 3700, 3 * 3600):
+            out[idle] = usage.compute(s5, [], base + [req(T0 - idle, key='m', i=0, rd=ctx)], live, T0)
+        self.assertAlmostEqual(out[3500].R, out[3500].k * 4 * rd_cost)
+        for idle in (3550, 3700, 3 * 3600):
+            e = out[idle]
+            self.assertAlmostEqual(e.R, e.k * (4 * rd_cost + wr_cost), msg=idle)
+            self.assertEqual(e.sessions, 1, idle)
+            self.assertLessEqual(e.line, out[3550].line + 1e-9, idle)
+        # registry-less main (alive, not confirmed): the IDLE_MAX cut stays
+        e = usage.compute(s5, [], base + [req(T0 - 3700, key='m', i=0, rd=ctx)],
+                          keys(m=usage.KeyInfo(False, 'orch', True)), T0)
+        self.assertEqual((e.sessions, e.R), (0, 0.0))
+        # confirmed, but no request in this window: not counted (bounds R for sessions left open for days)
+        e = usage.compute(s5, [], base + [req(r5 - 18000 - 10, key='m', i=0, rd=ctx)], live, T0)
+        self.assertEqual(e.sessions, 0)
+        # subagents: confirmed (unfinished, parent live) -> kept with its re-write; unconfirmed -> the cut stays
+        e = usage.compute(s5, [], base + [req(T0 - 3700, key='a', i=0, rd=ctx)],
+                          keys(a=usage.KeyInfo(True, SID, True, True)), T0)
+        self.assertEqual(e.agents, 1)
+        self.assertAlmostEqual(e.R, e.k * (rd_cost + ctx * 4 * 1.25 / 1e6))   # no writes seen: 5 m TTL assumed
+        e = usage.compute(s5, [], base + [req(T0 - 3700, key='a', i=0, rd=ctx)],
+                          keys(a=usage.KeyInfo(True, SID, True)), T0)
+        self.assertEqual(e.agents, 0)
 
     def test_states(self):
         s5, reqs = self.base()
@@ -401,6 +462,25 @@ class TestScan(Home):
         self.registry('sess-gone', 2 ** 22 + 12345)
         _, k = usage.scan(self.home, self.now - 3600)
         self.assertEqual(sorted(v.sid for v in k.values() if v.alive), ['sess-live'])
+        self.assertEqual(sorted(v.sid for v in k.values() if v.confirmed), ['sess-live'])
+        self.transcript([('c', t, OPUS, 10, 0)], sid='sess-live', agent='agent-run')
+        self.transcript([('d', t, OPUS, 10, 0)], sid='sess-live', agent='agent-end', meta={'finished': True})
+        self.transcript([('e', t, OPUS, 10, 0)], sid='sess-gone', agent='agent-orphan')
+        _, k = usage.scan(self.home, self.now - 3600)
+        self.assertEqual(sorted(os.path.basename(p) for p, v in k.items() if v.sub and v.confirmed), ['agent-run.jsonl'])
+        _, k2 = usage.Scanner().scan(self.home, self.now - 3600)
+        self.assertEqual(k2, k)
+
+    def test_own_session_confirmed_by_claude_pid(self):
+        self.sample(self.now - 60, 30)
+        self.transcript([('w', self.r5 - 18000 + 60, OPUS, 2500000, 0)], sid='sess-other')
+        self.transcript([('a', self.now - 3700, OPUS, 10, 0)], sid='sess-own')   # no registry at all
+        with mock.patch.dict(os.environ, {'CLAUDE_PID': ''}):
+            self.assertEqual(self.est(session='sess-own').sessions, 0)
+        with mock.patch.dict(os.environ, {'CLAUDE_PID': str(os.getpid())}):
+            self.assertEqual(self.est(session='sess-own').sessions, 1)
+        with mock.patch.dict(os.environ, {'CLAUDE_PID': str(2 ** 22 + 12345)}):
+            self.assertEqual(self.est(session='sess-own').sessions, 0)
 
     def test_k_persisted_atomically(self):
         for j, p in enumerate((5, 15, 25)):
