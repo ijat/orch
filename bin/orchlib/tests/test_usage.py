@@ -48,6 +48,15 @@ def spawn_child(argv):
     return c
 
 
+def ps_failures():
+    """Each way `ps` can be unusable: missing from PATH, timing out, failing to fork, listing nothing."""
+    empty = subprocess.CompletedProcess(['ps'], 1, stdout='')
+    return (('missing', mock.patch.dict(os.environ, {'PATH': '/nonexistent'})),
+            ('timeout', mock.patch.object(usage.subprocess, 'run', side_effect=subprocess.TimeoutExpired('ps', 5))),
+            ('oserror', mock.patch.object(usage.subprocess, 'run', side_effect=OSError(11, 'fork failed'))),
+            ('no-rows', mock.patch.object(usage.subprocess, 'run', return_value=empty)))
+
+
 _CHILDREN = []
 
 
@@ -508,7 +517,7 @@ class TestScan(Home):
         # resolution of a young test process, so its start is reported a minute later)
         child = spawn_child(['sleep', '30'])
         real_all = usage.proc_starts
-        later = lambda pids: dict((p, t + (60 if p == child.pid else 0)) for p, t in real_all(pids).items())
+        later = lambda pids: dict((p, t + (60 if p == child.pid else 0)) for p, t in (real_all(pids) or {}).items())
         with mock.patch.dict(os.environ, {'CLAUDE_PID': str(child.pid)}), \
                 mock.patch.object(usage, 'proc_starts', side_effect=later):
             self.assertEqual(self.est(session='sess-own').sessions, 0)
@@ -529,6 +538,38 @@ class TestScan(Home):
         self.assertEqual(usage.live_sessions(self.home), {'sess-live'})
         _, k = usage.scan(self.home, self.now - 3600)
         self.assertEqual(sorted(v.sid for v in k.values() if v.confirmed), ['sess-live'])
+
+    def test_ps_unusable_falls_back_to_pid_alive(self):
+        # F7: a `ps` failure is "unknown", not "dead": every start-time check degrades to pid liveness, so a degraded
+        # reader keeps live sessions in R (more conservative), never drops them
+        t = self.now - 100
+        self.transcript([('a', t, OPUS, 10, 0)], sid='sess-live')
+        self.transcript([('b', t, OPUS, 10, 0)], sid='sess-reused')
+        self.transcript([('c', t, OPUS, 10, 0)], sid='sess-dead')
+        me = usage.proc_start(os.getpid())
+        child = spawn_child(['sleep', '30'])
+        wait = spawn_child([sys.executable, '-c', 'import time; time.sleep(30)', 'usage', 'wait'])
+        dead = spawn_child(['true'])
+        dead.wait()
+        self.registry('sess-live', os.getpid(), started=me + 1)
+        self.registry('sess-reused', child.pid, started=me - 3600)
+        self.registry('sess-dead', dead.pid, started=me)
+        self.assertEqual(usage.live_sessions(self.home), {'sess-live'})   # ps works: start times apply
+        confirmed = lambda: sorted(v.sid for v in usage.scan(self.home, self.now - 3600)[1].values() if v.confirmed)
+        self.assertEqual(confirmed(), ['sess-live'])
+        for name, broken in ps_failures():
+            with self.subTest(name), broken:
+                self.assertIsNone(usage.proc_starts([os.getpid()]))
+                self.assertEqual(usage.proc_starts([dead.pid]), {})
+                self.assertIs(usage.proc_start(os.getpid()), usage.PS_UNKNOWN)
+                self.assertIsNone(usage.proc_start(dead.pid))
+                self.assertEqual(usage.live_sessions(self.home), {'sess-live', 'sess-reused'})   # the pid-only set
+                self.assertTrue(usage.claude_pid_live(self.home, os.getpid()))
+                self.assertFalse(usage.claude_pid_live(self.home, dead.pid))
+                self.assertEqual(confirmed(), ['sess-live', 'sess-reused'])   # stays in R; the dead one doesn't
+                self.assertTrue(usage.is_wait_proc(wait.pid))
+                self.assertTrue(usage.is_wait_proc(wait.pid, '%d' % (me - 600)))
+                self.assertFalse(usage.is_wait_proc(dead.pid))
 
     def test_k_persisted_atomically(self):
         for j, p in enumerate((5, 15, 25)):
