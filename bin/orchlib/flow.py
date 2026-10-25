@@ -12,7 +12,7 @@ from . import cli
 from . import journal as jr
 from . import questions as qs
 from . import status as st
-from .paths import BIN_DIR, OrchError, TEMPLATES_DIR, TaskLock, now, refresh_index, task_names, warn_stderr, write_atomic
+from .paths import OrchError, TEMPLATES_DIR, TaskLock, now, refresh_index, task_names, warn_stderr, write_atomic
 
 ROLE_RE = re.compile(r"^[a-z][a-z0-9:_.-]*$")
 AGENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:_.-]*$")
@@ -71,10 +71,19 @@ def program_of(status):
 # -- spawn ---------------------------------------------------------------------------------------
 
 def run_usage():
-    """-> (code, 5h, 7d, line). Code 0 OK, 1 WARN, 2 STOP, 3 STALE, 4 UNKNOWN (also: the check could not run)."""
+    """-> (code, 5h, 7d, line). Code 0 OK, 1 WARN, 2 STOP, 3 STALE, 4 UNKNOWN (also: the check could not run).
+    Default: the in-process estimator (`orch usage`); ORCH_USAGE_CMD replaces it with a command."""
     override = os.environ.get("ORCH_USAGE_CMD")
+    if override is None:
+        from . import usage
+        try:
+            e = usage.safe_estimate()
+            line, code = e.text(), e.code
+        except Exception as exc:
+            line, code = "state=UNKNOWN reason=%s" % type(exc).__name__, 4
+        return (code,) + usage_values(line) + (line,)
     try:
-        argv = shlex.split(override) if override else [os.path.join(BIN_DIR, "usage-check.sh")]
+        argv = shlex.split(override)
         if not argv:
             raise OSError("ORCH_USAGE_CMD is empty")
         res = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30,
@@ -83,12 +92,34 @@ def run_usage():
         return 4, None, None, "state=UNKNOWN reason=usage check could not run (%s)" % exc
     lines = [l.strip() for l in res.stdout.splitlines() if l.strip()]
     line = lines[-1] if lines else "state=UNKNOWN reason=no output"
+    code = res.returncode if res.returncode in USAGE_STATES else 4
+    return (code,) + usage_values(line) + (line,)
+
+
+def usage_values(line):
+    """-> (5h, 7d) ints from a usage line (None when absent or not an integer)."""
     values = {}
     for key in ("5h", "7d"):
         m = re.search(r"(?:^|\s)%s=(\S+)" % key, line)
         values[key] = int(m.group(1)) if m and re.match(r"^\d+$", m.group(1)) else None
-    code = res.returncode if res.returncode in USAGE_STATES else 4
-    return code, values["5h"], values["7d"], line
+    return values["5h"], values["7d"]
+
+
+def usage_field(line, key):
+    m = re.search(r"(?:^|\s)%s=(\S+)" % re.escape(key), line)
+    return m.group(1) if m else "?"
+
+
+def wait_status(task_dir):
+    """The spawn's `usage wait:` line."""
+    from . import usage
+    try:
+        pid = usage.wait_armed(usage.state_dir(), usage.wait_key(*task_names(task_dir)))
+    except Exception:
+        pid = None
+    if pid:
+        return "usage wait: armed (pid %d)" % pid
+    return "usage wait: not armed — run in background: orch -t %s/%s usage wait" % task_names(task_dir)
 
 
 def cmd_spawn(ns, extra):
@@ -126,9 +157,10 @@ def cmd_spawn(ns, extra):
         status = status_or_none(task_dir)
         program, auto_ms = program_of(status)
         if code == 2:
-            cli.append_log(task_dir, cli.log_line(ts, "orchestrator", "spawn refused: usage STOP (5h %s%%)"
-                                                  % ("?" if u5 is None else u5)))
-            raise OrchError("spawn refused: usage STOP (5h %s%%) — %s" % ("?" if u5 is None else u5, usage_line), 2)
+            refused = "spawn refused: usage STOP (5h %s%%) est=%s line=%s" % (
+                "?" if u5 is None else u5, usage_field(usage_line, "est"), usage_field(usage_line, "line"))
+            cli.append_log(task_dir, cli.log_line(ts, "orchestrator", refused))
+            raise OrchError("%s — %s" % (refused, usage_line), 2)
 
         def rec(kind, pairs):
             r, _ = jr.build_record(schema, kind, pairs, ts, repo, slug, program, auto_ms)
@@ -155,6 +187,7 @@ def cmd_spawn(ns, extra):
     if code != 0:
         warn_stderr("usage %s: %s" % (USAGE_STATES[code], usage_line))
     print("usage: %s" % usage_line)
+    print(wait_status(task_dir))
     print("journal %s" % ", ".join(k for k, _ in out))
     return 0
 
@@ -414,3 +447,6 @@ def register(add):
     sp = add("end", cmd_end, "task_end line, final state, digest")
     sp.add_argument("outcome")
     sp.add_argument("--force", action="store_true")
+
+    from . import usage  # here, not at the top: usage's handler imports cli lazily too
+    usage.register(add)

@@ -12,8 +12,28 @@
 # Exit code: 0=OK 1=WARN 2=STOP 3=STALE 4=UNKNOWN  (so callers can branch on $?)
 #
 # Env overrides: WARN_PCT (90) STOP_PCT (95) STALE_SEC (600)
+#
+# Delegates to `orch usage` (the estimator: dynamic stop line, all sessions' spend) and prints its
+# line and exit code unchanged. WARN_PCT / STOP_PCT, when set by the caller, become fixed
+# thresholds (`--warn` / `--line`). If `orch` is missing or crashes, the legacy logic below runs
+# on the cache files, with its fixed 90 / 95 thresholds. STALE_SEC only applies to that fallback.
 
 set -uo pipefail
+
+# Delegate. Test the caller's own values (non-empty) before the defaults below fill them in.
+_orch="$(dirname "$0")/orch"
+if [ -x "$_orch" ]; then
+  _args=()
+  [ -n "${STOP_PCT:+x}" ] && _args+=(--line "$STOP_PCT")
+  [ -n "${WARN_PCT:+x}" ] && _args+=(--warn "$WARN_PCT")
+  _out=$("$_orch" usage ${_args[@]+"${_args[@]}"} 2>/dev/null)
+  _code=$?
+  _last=$(printf '%s\n' "$_out" | tail -n 1)
+  if [[ "$_last" == state=* ]]; then
+    printf '%s\n' "$_last"
+    exit "$_code"
+  fi
+fi
 
 WARN_PCT="${WARN_PCT:-90}"
 STOP_PCT="${STOP_PCT:-95}"
