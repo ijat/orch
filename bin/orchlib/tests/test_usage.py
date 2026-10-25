@@ -5,6 +5,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -40,6 +41,24 @@ def keys(**kw):
     return out
 
 
+def spawn_child(argv):
+    """A child process, killed by the Home cleanup."""
+    c = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _CHILDREN.append(c)
+    return c
+
+
+_CHILDREN = []
+
+
+def _reap():
+    while _CHILDREN:
+        c = _CHILDREN.pop()
+        if c.poll() is None:
+            c.kill()
+        c.wait()
+
+
 class Home(unittest.TestCase):
     """A temp ~/.claude-like home with writers for the log, legacy caches, transcripts and the registry."""
 
@@ -48,6 +67,7 @@ class Home(unittest.TestCase):
         self.state = tempfile.mkdtemp(prefix='usage-state-')
         self.addCleanup(shutil.rmtree, self.home, True)
         self.addCleanup(shutil.rmtree, self.state, True)
+        self.addCleanup(_reap)
         self.now = time.time()
         self.r5 = int(self.now) + 3 * 3600
 
@@ -86,11 +106,14 @@ class Home(unittest.TestCase):
                 json.dump(meta, fh)
         return path
 
-    def registry(self, sid, pid):
+    def registry(self, sid, pid, started=None):
         d = os.path.join(self.home, 'sessions')
         os.makedirs(d, exist_ok=True)
+        rec = {'pid': pid, 'sessionId': sid, 'status': 'busy'}
+        if started is not None:
+            rec['startedAt'] = int(started * 1000)
         with open(os.path.join(d, '%d.json' % pid), 'w') as fh:
-            json.dump({'pid': pid, 'sessionId': sid, 'status': 'busy'}, fh)
+            json.dump(rec, fh)
 
     def est(self, **kw):
         kw.setdefault('session', '-none-')
@@ -481,6 +504,31 @@ class TestScan(Home):
             self.assertEqual(self.est(session='sess-own').sessions, 1)
         with mock.patch.dict(os.environ, {'CLAUDE_PID': str(2 ** 22 + 12345)}):
             self.assertEqual(self.est(session='sess-own').sessions, 0)
+        # pid reuse: a live CLAUDE_PID that started after us is not our session (a child starts within the 1 s ps
+        # resolution of a young test process, so its start is reported a minute later)
+        child = spawn_child(['sleep', '30'])
+        real_all = usage.proc_starts
+        later = lambda pids: dict((p, t + (60 if p == child.pid else 0)) for p, t in real_all(pids).items())
+        with mock.patch.dict(os.environ, {'CLAUDE_PID': str(child.pid)}), \
+                mock.patch.object(usage, 'proc_starts', side_effect=later):
+            self.assertEqual(self.est(session='sess-own').sessions, 0)
+        # ... nor one whose registry entry was recorded before the process started
+        self.registry('sess-own', os.getpid(), started=usage.proc_start(os.getpid()) - 3600)
+        with mock.patch.dict(os.environ, {'CLAUDE_PID': str(os.getpid())}):
+            self.assertEqual(self.est(session='sess-own').sessions, 0)
+
+    def test_registry_pid_reuse(self):
+        t = self.now - 100
+        self.transcript([('a', t, OPUS, 10, 0)], sid='sess-live')
+        self.transcript([('b', t, OPUS, 10, 0)], sid='sess-reused')
+        me = usage.proc_start(os.getpid())
+        self.assertIsNotNone(me)
+        self.registry('sess-live', os.getpid(), started=me + 1)       # written just after start: live
+        child = spawn_child(['sleep', '30'])
+        self.registry('sess-reused', child.pid, started=me - 3600)    # pid now held by a later process
+        self.assertEqual(usage.live_sessions(self.home), {'sess-live'})
+        _, k = usage.scan(self.home, self.now - 3600)
+        self.assertEqual(sorted(v.sid for v in k.values() if v.confirmed), ['sess-live'])
 
     def test_k_persisted_atomically(self):
         for j, p in enumerate((5, 15, 25)):
@@ -538,9 +586,37 @@ class TestCli(Home):
         rc, out, _ = self.cli('-t', os.path.join(self.home, 'no-such', 'task'))
         self.assertTrue(out.endswith(' wait=none'), out)
         os.makedirs(self.state, exist_ok=True)
-        with open(os.path.join(self.state, 'wait-no-such__task.pid'), 'w') as fh:
-            fh.write('%d - - 0\n' % os.getpid())   # alive, but not a `usage wait` process
-        self.assertEqual(usage.wait_armed(self.state, 'no-such__task'), None)
+        child = spawn_child(['sleep', '30'])   # alive, but not a `usage wait` (not our own pid: the runner's argv varies)
+        for launch in ('-', '%d' % time.time()):
+            with open(os.path.join(self.state, 'wait-no-such__task.pid'), 'w') as fh:
+                fh.write('%d - - %s\n' % (child.pid, launch))
+            self.assertEqual(usage.wait_armed(self.state, 'no-such__task'), None)
+
+    def test_is_wait_proc_argv_tokens_and_pid_reuse(self):
+        def py(*tail):
+            return spawn_child([sys.executable, '-c', 'import time; time.sleep(30)'] + list(tail))
+        a = py('usage', 'wait', '--refresh')
+        for c in (py('wait', 'usage'), py('usage', 'x', 'wait'), py('usage-wait'), py('usage_check', 'waiting')):
+            self.assertFalse(usage.is_wait_proc(c.pid), c.args)
+        deadline = time.time() + 5
+        while usage.proc_start(a.pid) is None and time.time() < deadline:
+            time.sleep(0.02)
+        start = usage.proc_start(a.pid)
+        self.assertTrue(usage.is_wait_proc(a.pid))                        # bare-pid file: argv only
+        self.assertTrue(usage.is_wait_proc(a.pid, '%d' % (start + 1)))    # launched just after start
+        self.assertFalse(usage.is_wait_proc(a.pid, '%d' % (start - 600)))  # pidfile older than the process: reused
+        self.assertFalse(usage.is_wait_proc(a.pid, 'junk'))
+        os.makedirs(self.state, exist_ok=True)
+        path = usage.pidfile_path(self.state, 'k')
+        for launch, want in (('%d' % (start + 1), a.pid), ('%d' % (start - 600), None)):
+            with open(path, 'w') as fh:
+                fh.write('%d 1 - %s\n' % (a.pid, launch))
+            self.assertEqual(usage.wait_armed(self.state, 'k'), want)
+
+    def test_etime_parse(self):
+        for v, want in (('00:05', 5), ('12:34', 754), ('01:00:00', 3600), ('2-03:04:05', 2 * 86400 + 11045),
+                        ('', None), ('x', None), ('1:2:3:4', None)):
+            self.assertEqual(usage._etime_sec(v), want, v)
 
     def test_5h_round_trip_through_run_usage(self):
         # reset_5h= must never be read as 5h=

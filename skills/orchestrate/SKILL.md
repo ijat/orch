@@ -173,7 +173,7 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
    --reason "<why>" --alt "<alternative>" --tradeoff "<one line>"` runs the estimator, then writes the
    `tier_choice`, `escalation` (when raised: add `--escalation proactive|post-failure --from <tier>
    --trigger <trigger>`) and `spawn` lines. `STOP` → exit 2, nothing written: don't spawn, pause.
-   `WARN`/`STALE`/`UNKNOWN` warn once: act on it. Last line: `usage wait: armed (pid N)` or `not armed`.
+   `WARN`/`STALE`/`UNKNOWN` warn once: act on it. It also prints `usage wait: armed (pid N)` or `not armed`.
 2. **Spawn** the subagent in the background.
 3. **Notify, don't poll.** If `not armed`, start `orch -t <task> usage wait` with Bash `run_in_background`
    in the same turn, then wait; no `ScheduleWakeup` ticks while armed. "failed with exit code N" is its

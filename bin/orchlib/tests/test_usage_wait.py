@@ -64,7 +64,7 @@ class Base(unittest.TestCase):
     def wait(self, est_fn, **kw):
         kw.setdefault('interval', 30)
         kw.setdefault('max_sec', 6 * 3600)
-        kw.setdefault('is_wait', lambda pid: True)
+        kw.setdefault('is_wait', lambda pid, launch='-': True)
         return usage.Wait(self.state, kw.pop('key', KEY), est_fn, clock=self.clock, sleep=self.clock.sleep, **kw)
 
     def run_wait(self, est_fn, **kw):
@@ -138,6 +138,32 @@ class TestExitTable(Base):
         self.assertFalse(os.path.exists(self.pidfile()))
         code, line = self.run_wait(lambda: est(), owner=4242, alive=lambda p: self.clock.t < BASE + 120)
         self.assertEqual((code, self.clock.t), (13, BASE + 120))
+        self.assertIn('ENDED reason=parent-dead', line)
+        self.assertFalse(os.path.exists(self.pidfile()))
+
+    def test_owner_liveness_survives_pid_reuse(self):
+        # the real check (no injected alive): an owner that started before us is the live parent
+        code, line = self.run_wait(lambda: est(), owner=os.getppid(), max_sec=60)
+        self.assertEqual(code, 13)
+        self.assertIn('reason=max', line)
+        # a live pid that started after us is not our parent (its pid was reused): dead at launch. A child starts
+        # within the 1 s ps resolution of a young test process, so its start is reported a minute later.
+        c = subprocess.Popen(['sleep', '30'])
+        self.addCleanup(c.wait)
+        self.addCleanup(c.kill)
+        real_all = usage.proc_starts
+        later = lambda pids: dict((p, t + (60 if p == c.pid else 0)) for p, t in real_all(pids).items())
+        with mock.patch.object(usage, 'proc_starts', side_effect=later):
+            code, line = self.run_wait(lambda: est(), owner=c.pid, max_sec=60)
+        self.assertEqual(code, 4)
+        self.assertIn('reason=parent-dead', line)
+        # the owner's pid taken by a new process mid-wait: its start time changes -> ended
+        real = usage.proc_start
+        self.clock = Clock(BASE)
+        with mock.patch.object(usage, 'proc_start',
+                               side_effect=lambda pid: real(pid) + (3600 if self.clock.t >= BASE + 90 else 0)):
+            code, line = self.run_wait(lambda: est(), owner=os.getppid(), max_sec=600)
+        self.assertEqual((code, self.clock.t), (13, BASE + 90))
         self.assertIn('ENDED reason=parent-dead', line)
         self.assertFalse(os.path.exists(self.pidfile()))
 
@@ -327,7 +353,7 @@ class TestPidfile(Base):
             self.write_pid(777, owner=owner, sid=sid)
             self.clock = Clock(BASE)
             code, _ = self.run_wait(lambda: est(), owner=4242 if owner != '-' else None, alive=lambda p: True,
-                                    is_wait=lambda p: is_wait, max_sec=60)
+                                    is_wait=lambda p, launch='-': is_wait, max_sec=60)
             self.assertEqual(code, 13)
             self.assertFalse(os.path.exists(self.pidfile()))   # replaced by ours, then ours removed
 
