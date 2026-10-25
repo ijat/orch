@@ -522,8 +522,13 @@ def _etime_sec(v):
         return None
 
 
+PS_UNKNOWN = object()   # proc_start(): `ps` could not be read -- not the same as "not running"
+
+
 def proc_starts(pids):
-    """{pid: start epoch} for the live pids among `pids` (from `ps -o etime=`, locale-free, 1 s resolution)."""
+    """{pid: start epoch} for the live pids among `pids` (from `ps -o etime=`, locale-free, 1 s resolution).
+    {} when none of them is alive; None when `ps` is unusable (missing, fails, times out, or lists none of the live
+    pids) -- callers then fall back to `pid_alive`, so a degraded reader never reads a live pid as dead."""
     live = sorted(set(int(p) for p in pids if pid_alive(p)))
     if not live:
         return {}
@@ -532,7 +537,7 @@ def proc_starts(pids):
                              stderr=subprocess.DEVNULL, universal_newlines=True, timeout=5,
                              env=dict(os.environ, LC_ALL='C')).stdout
     except (OSError, subprocess.SubprocessError):
-        return {}
+        return None
     now, res = time.time(), {}
     for row in out.splitlines():
         f = row.split()
@@ -540,12 +545,14 @@ def proc_starts(pids):
             sec = _etime_sec(f[1])
             if sec is not None:
                 res[int(f[0])] = now - sec
-    return res
+    return res or None
 
 
 def proc_start(pid):
+    """Start epoch of a live pid; None when it is not running; PS_UNKNOWN when `ps` could not be read."""
     try:
-        return proc_starts([pid]).get(int(pid))
+        starts = proc_starts([pid])
+        return PS_UNKNOWN if starts is None else starts.get(int(pid))
     except (ValueError, TypeError, OverflowError):
         return None
 
@@ -580,7 +587,7 @@ def live_sessions(home):
             continue
     starts = proc_starts([pid for _, pid, ep in ents if ep is not None])
     ids = set(sid for sid, pid, ep in ents
-              if (started_by(starts.get(pid), ep) if ep is not None else pid_alive(pid)))
+              if (started_by(starts.get(pid), ep) if ep is not None and starts is not None else pid_alive(pid)))
     return ids if parsed else None
 
 
@@ -598,6 +605,8 @@ def claude_pid_live(home, pid):
     """$CLAUDE_PID is our own (ancestor) session only if it started by our own start, and by its registry
     startedAt when there is one: a reused pid starts after the session it replaced."""
     starts = proc_starts([pid, os.getpid()])
+    if starts is None:
+        return pid_alive(pid)   # `ps` unusable: pid liveness only (keeps the session in R)
     try:
         s = starts.get(int(pid))
     except (ValueError, TypeError, OverflowError):
@@ -810,8 +819,12 @@ def is_wait_proc(pid, launch='-'):
         cmd = subprocess.run(['ps', '-o', 'command=', '-p', str(int(pid))], stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, universal_newlines=True, timeout=5,
                              env=dict(os.environ, LC_ALL='C')).stdout
-    except (OSError, subprocess.SubprocessError, ValueError, TypeError, OverflowError):
+    except (OSError, subprocess.SubprocessError):
+        return True   # `ps` unusable: pid liveness only
+    except (ValueError, TypeError, OverflowError):
         return False
+    if not cmd.strip():
+        return pid_alive(pid)   # a live pid `ps` doesn't list: `ps` unusable (or it just exited)
     if not _argv_is_wait(cmd):
         return False
     if launch in (None, '-'):
@@ -820,7 +833,8 @@ def is_wait_proc(pid, launch='-'):
         epoch = float(launch)
     except ValueError:
         return False
-    return started_by(proc_start(pid), epoch)
+    s = proc_start(pid)
+    return True if s is PS_UNKNOWN else started_by(s, epoch)
 
 
 def wait_armed(state, key):
@@ -990,6 +1004,8 @@ class Wait:
         start (an ancestor does; a reused pid doesn't), later its start time must be unchanged (pid reuse)."""
         if self._owner_start is None:
             starts = proc_starts([pid, self.pid])
+            if starts is None:
+                return pid_alive(pid)   # `ps` unusable: pid liveness; the next good read records the start
             s = starts.get(int(pid))
             me = starts.get(self.pid)
             if not started_by(s, me if me is not None else time.time()):
@@ -997,6 +1013,8 @@ class Wait:
             self._owner_start = s
             return True
         s = proc_start(pid)
+        if s is PS_UNKNOWN:
+            return pid_alive(pid)
         return s is not None and abs(s - self._owner_start) <= START_SLACK
 
     # -- pidfile

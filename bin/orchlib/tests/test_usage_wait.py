@@ -38,6 +38,15 @@ def est(state='OK', p5=50.0, e=None, line=95.0, window=R5, rolled=False, k_src='
                           window=window, rolled=rolled, own_last=own_last, t_sample=t_sample, persist=None)
 
 
+def ps_failures():
+    """Each way `ps` can be unusable: missing from PATH, timing out, failing to fork, listing nothing."""
+    empty = subprocess.CompletedProcess(['ps'], 1, stdout='')
+    return (('missing', mock.patch.dict(os.environ, {'PATH': '/nonexistent'})),
+            ('timeout', mock.patch.object(usage.subprocess, 'run', side_effect=subprocess.TimeoutExpired('ps', 5))),
+            ('oserror', mock.patch.object(usage.subprocess, 'run', side_effect=OSError(11, 'fork failed'))),
+            ('no-rows', mock.patch.object(usage.subprocess, 'run', return_value=empty)))
+
+
 class Clock(object):
     def __init__(self, t):
         self.t = float(t)
@@ -152,7 +161,7 @@ class TestExitTable(Base):
         self.addCleanup(c.wait)
         self.addCleanup(c.kill)
         real_all = usage.proc_starts
-        later = lambda pids: dict((p, t + (60 if p == c.pid else 0)) for p, t in real_all(pids).items())
+        later = lambda pids: dict((p, t + (60 if p == c.pid else 0)) for p, t in (real_all(pids) or {}).items())
         with mock.patch.object(usage, 'proc_starts', side_effect=later):
             code, line = self.run_wait(lambda: est(), owner=c.pid, max_sec=60)
         self.assertEqual(code, 4)
@@ -166,6 +175,27 @@ class TestExitTable(Base):
         self.assertEqual((code, self.clock.t), (13, BASE + 90))
         self.assertIn('ENDED reason=parent-dead', line)
         self.assertFalse(os.path.exists(self.pidfile()))
+
+    def test_owner_alive_when_ps_unusable(self):
+        # F7: `ps` failing at launch or mid-wait leaves a live owner alive (pid liveness), never parent-dead
+        for name, broken in ps_failures():
+            with self.subTest(name):
+                self.clock = Clock(BASE)
+                with broken:
+                    code, line = self.run_wait(lambda: est(), owner=os.getppid(), max_sec=60)
+                self.assertEqual(code, 13)
+                self.assertIn('reason=max', line)
+                # unknown at launch: the start stays unrecorded, the next good read records it
+                w = self.wait(lambda: est(), owner=os.getppid())
+                with broken:
+                    self.assertTrue(w._owner_alive(os.getppid()))
+                self.assertIsNone(w._owner_start)
+                self.assertTrue(w._owner_alive(os.getppid()))
+                self.assertIsNotNone(w._owner_start)
+                # recorded, then ps fails mid-wait: still alive
+                with broken:
+                    self.assertTrue(w._owner_alive(os.getppid()))
+                    self.assertFalse(w._owner_alive(2 ** 22 + 12345))
 
     def test_task_terminal_ends_13(self):
         d = self.task()
