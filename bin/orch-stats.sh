@@ -96,6 +96,18 @@ done | jq -rs --arg repo "$repo" --arg since "$since" --argjson retros "$retros"
   (kind("return") | map(select(.tokens != null)) | if length == 0 then "  none" else group_by(.agent)
      | map("  \(.[0].agent): n=\(length) total=\(map(.tokens) | add) avg=\((map(.tokens) | add) / length | floor)") | join("\n") end),
   "",
+  "planner continuation:",
+  (kind("continue_gate") as $g
+    | ($e | map(select(.kind == "spawn" and .role == "implementer" and .agent == "orch-planner"))) as $cs
+    | def med: sort | if length == 0 then "n/a" elif length % 2 == 1 then .[(length - 1) / 2] else ((.[length / 2 - 1] + .[length / 2]) / 2 | floor) end;
+      if ($g | length) == 0 and ($cs | length) == 0 then "  none" else
+        "  gates: \($g | length) (continue \($g | map(select(.decision == "continue")) | length), split \($g | map(select(.decision == "split")) | length))",
+        "  reasons:",
+        ($g | map(.reasons // [] | .[]) | if length == 0 then "    none" else group_by(.) | sort_by(-length) | map("    \(.[0]): \(length)") | join("\n") end),
+        "  median ctx: continue \($g | map(select(.decision == "continue") | .ctx | numbers) | med)  split \($g | map(select(.decision == "split") | .ctx | numbers) | med)",
+        "  continued spawns: \($cs | length)"
+      end),
+  "",
   "low-confidence judgements: \(kind("judgement") | map(select(.confidence == "low")) | length) of \(kind("judgement") | length)",
   "",
   "plan shape (plan_shape):", (kind("plan_shape") | map(.k = "\(.shape) overridden=\(.overridden)") | by(.k)),

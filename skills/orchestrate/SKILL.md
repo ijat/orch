@@ -380,12 +380,12 @@ Journal `plan_shape`; show the shape line at the gate, and if the user overrules
 
 Read `plan.md` yourself and `orch plan-check <plan.md>` it (a FAIL goes back to the planner), then **present it to the user and get approval before any code is
 written.** Show its Summary, every decision marked `needs user`, and the implementer tier
-`TIERS.md` gives each step (one line each), and give the file path for the rest; if the Summary can't stand alone, send it back to the planner before the gate. If they want changes, send their feedback to the same planner tier to append a
+`TIERS.md` gives each step (one line each) with the `orch continue-gate --dry-run` verdict, and give the file path for the rest; if the Summary can't stand alone, send it back to the planner before the gate. If they want changes, send their feedback to the same planner tier to append a
 `## Revision N` section, and return to this gate — don't rewrite the plan yourself.
 
 Before asking: `orch set task_state=awaiting_approval --log "plan ready"`. Add one line to the question:
 if they answer more than about an hour later, a fresh session (`/clear`, then "resume <repo>/<slug>") is
-cheaper than replying here (the prompt cache has expired).
+cheaper than replying here (the prompt cache has expired; the planner can't continue then).
 
 ### 5. Security check — by rule, no question
 
@@ -418,6 +418,12 @@ Give every subagent the **absolute worktree path** and state that it is the work
 repo. Never pass `isolation: "worktree"` to the `Agent` tool.
 
 ### 7. Implement
+
+**Continue or split.** First `orch continue-gate --agent-id <planner id> --planner-tier <tier>
+--routed <step>=<tier>,… [--signals <step>=boundary|sensitive|parallel,…]` (rules: `TIERS.md` § Planner
+continuation). `continue` → `orch spawn implementer --agent orch-planner --tier <planner tier> --steps <ids>`,
+then `SendMessage` the planner `orch: phase 2 — implement steps <ids>; worktree <path>` (no brief). `split`,
+or the send fails → fresh implementers as below.
 
 **Sequential by default:** `orch brief implement <steps>` (director: `orch brief director <step>`) writes
 `briefs/…md`, that role's whole context: worktree, steps, the Decisions and revisions touching them,
@@ -490,7 +496,7 @@ should-fix (security: and 0 nits):
 
 1. Route findings to an implementer as concrete fixes (`orch brief fix <round> --findings F1,F2`; `S<n>` for
    security findings), at the tier `TIERS.md` § Fix rounds gives
-   (never below the tier that wrote the code, except an exact-edit list; a class raised again in
+   (never below the tier that wrote the code, its routed tier for a continued step, except an exact-edit list; a class raised again in
    round 2 moves up a rung). When a finding is one instance of a class
    (state reset, validation, cleanup), name the whole class and the invariant the fix must keep, in
    the implementer's brief (`--extra`) and the reviewer's re-review scope. Code-review findings that are `nit`
@@ -565,6 +571,7 @@ worktree and task directory plus the branch name.
 - Hand-edit `status.md` or `journal.jsonl` while `orch` works; give a role the whole plan when a brief exists.
 - Run implementers in parallel without `plan.md` declaring disjoint file sets; exceed 3 fix rounds at
   the same tier; rely on live messaging for anything that must survive a crash.
+- Continue a planner without `orch continue-gate`, more than once per plan, or for fixes.
 - Spawn without the pre-flight (`orch spawn`); treat `STALE`/`UNKNOWN` as safe; let a subagent run
   past `STOP`; poll usage on a timer while a wait is armed; arm `usage-watch.sh`; leave a `Monitor` armed past
   its subagent; claim a crash will auto-resume.

@@ -56,7 +56,8 @@ reason — every time (`orch merge` reads the row, so last milestone's value mus
    - **You approve it** against the roadmap row and contracts. It goes to the user only when the row's
      `you` column says so, or when it changes a contract, the scope, or a user decision — that's a
      roadmap revision (§3), not a detail-plan approval.
-2. **Implement** as SKILL.md step 7, on the program worktree.
+2. **Implement** as SKILL.md step 7, on the program worktree. That includes the continue gate: you approve a detail
+   plan yourself, so the planner is still warm and the gate wait is short.
 3. **Tests after every milestone**, review point or not: `orch-executor` runs the plan's verification
    command(s); a failure is fixed before the next milestone starts.
 4. **If the row is a review point:** (a `skip` row is not one — no reviewer runs) code review (plus security review where the step 5 rule scheduled it)
