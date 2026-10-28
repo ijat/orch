@@ -59,9 +59,12 @@ flowchart LR
 - **Bookkeeping is one command.** `orch` does each state change in a single call, writes each role's
   brief (just its context), checks the plan, and runs the merge guard. `orch dashboard --serve` shows
   your tasks on a local page.
-- **It spends usage deliberately.** A cheap Sonnet implementer does most of the work. Opus plans and
-  reviews, and a step escalates to a stronger tier only for a stated reason, which goes in the journal.
-  It paces itself against your 5h/7d limits, so a long task pauses instead of hitting the wall.
+- **It spends usage deliberately.** Opus plans and reviews. Implementers start cheap: when the repo
+  already has a pattern a step can copy, the planner writes a short guide and Haiku does the step;
+  otherwise Sonnet does it. Opus implements only steps the planner flags as hard (complex logic, an
+  unclear cause, a refusal) or after a cheaper tier fails. Security-bound code stays on Sonnet, because
+  the security reviewer is the check there. Every tier choice and escalation goes in the journal with
+  its reason. It paces itself against your 5h/7d limits, so a long task pauses instead of hitting the wall.
 - **Runs are bounded.** Pilot batches measure cost before a big step. Check-ins catch a silent agent
   that's looping, and three strikes stop retry spirals.
 - **It learns.** Mistakes go into a `LESSONS.md`. Lessons that change behaviour get promoted into the
@@ -112,19 +115,35 @@ are counted from the review files themselves.
   Escalations went from barely logged to logged every time.
 - **Batching implementers into ≤ 2 steps** was tried and reverted (2026-10-03). Measured volume went
   up, not down.
-- **Planner sketches** are kept under watch. 10 of 48 were judged wrong, so they stay an experiment
-  rather than a rule.
+- **Planner sketches** were watched as an experiment and kept on 2026-10-28: 19% judged wrong
+  over 27 tasks, under the 25% bar for removing them.
 - **A full audit on 2026-10-15** found duplicated and drifted role rules and fixed them. The same
   scenarios were run against the old and new role files: existing behaviour scored the same (20/21
   each), and the fixes passed 42/42.
+
+### Since then (2026-10-28 and 2026-10-29)
+
+- **Implementer routing moved down a tier.** Before, about 70% of implementer runs were Opus, and
+  Opus was most of the implementer spend. Now Sonnet is the default, security-bound steps included,
+  and Opus is kept for flagged hard steps and failures.
+- **Guided Haiku.** In a 12-task benchmark with hidden tests and blinded review, Haiku at high effort
+  following a planner-written guide scored 9.46/10 (all hidden tests passed) against Sonnet's 9.29, at
+  about a fifth of the cost. It trailed only on refactors. A guide is written only when the repo has a
+  pattern to copy, and `orch plan-check` rejects a guide that cites no existing file.
+- Both routing changes passed a routing benchmark (47 scenarios, the old and new rules side by side)
+  before going live.
 
 ### Not proven yet
 
 - The `orch` command, the stop policy, the automatic merge and the security rule (2026-10-22) have
   unit tests but no old-versus-new measurement of cost or behaviour yet.
-- The visual director loop, pilot batches, check-ins and three strikes were added on 2026-10-15.
-  None has run in a real task yet.
-- Program mode (roadmaps of milestones) has been used once.
+- Sonnet-first routing and guided Haiku have no real-task results yet. They are judged on review
+  rounds and findings against the old routing.
+- The visual director loop, pilot batches and check-ins (2026-10-15) have run in real tasks, but
+  too few to measure.
+- Program mode (roadmaps of milestones) has run twice.
+- Planner continuation, where the planner implements the first steps itself, has been checked 4
+  times and hasn't fired yet (the planner's context was always too full).
 - The numbers above come from one person's projects. Your mileage will vary with codebase and model
   versions.
 
@@ -139,7 +158,7 @@ flowchart TD
     A([You: orchestrate this]) --> B[Resume check:<br/>unfinished task for this repo?]
     B -->|yes| R[Resume from status.md + log.md]
     B -->|no| C[Create task dir<br/>~/.claude/orchestrations/repo/task/]
-    C --> P[Planner writes plan.md<br/>shape: single plan or roadmap]
+    C --> P[Planner writes plan.md<br/>shape: single plan or roadmap<br/>+ guides for steps that copy a pattern]
     P --> PR{Roadmap or<br/>opus/max plan?}
     PR -->|yes| PRV[Plan reviewer] --> G1
     PR -->|no| G1{{Gate: you approve the plan}}
@@ -255,8 +274,8 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 |---|---|
 | `skills/orchestrate/SKILL.md` | The procedure the orchestrator follows |
 | `skills/orchestrate/PROGRAM.md` | Program mode: a roadmap of milestones for big features |
-| `skills/orchestrate/TIERS.md` | Guide for choosing each role's model and effort |
-| `skills/orchestrate/templates/` | One template per task file: plan, status, log, review, journal, … |
+| `skills/orchestrate/TIERS.md` | Guide for choosing each role's model and effort, including the implementer routing procedure (guided Haiku, Sonnet default, when Opus) |
+| `skills/orchestrate/templates/` | One template per task file: plan, status, log, review, journal, sketch, guide, … |
 | `agents/orch-*.md` | Roles: planner, implementer, code reviewer, security reviewer, plan reviewer, director (visual judgement), explorer, executor. **Generated**, do not edit |
 | `skills/orchestrate/roles/` | Role sources; `_shared/` holds blocks every role includes |
 | `bin/orch-build-agents.py` | Renders `roles/` into `~/.claude/agents/orch-*.md`. Agent files can't import other files at runtime, so shared rules are inlined at build time |
@@ -267,7 +286,7 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `bin/orch-index.sh`, `bin/orch-index-hook.sh` | Keep `~/.claude/orchestrations/ACTIVE.md`, the list of unfinished tasks |
 | `bin/orch-stats.sh`, `bin/role-cost.py` | Analytics over the journals and transcripts |
 | `bin/orch-program-check.py` | Checks a program roadmap against its rules |
-| `bin/orch`, `bin/orchlib/` | The `orch` command: one call per state change (`spawn`, `return`, `role`, `journal`, `ask`), role briefs, plan checks, the guarded `merge`, and `migrate` for old task directories. Python 3.9+ standard library only; `orchlib/tests/` holds its tests |
+| `bin/orch`, `bin/orchlib/` | The `orch` command: one call per state change (`spawn`, `return`, `role`, `journal`, `ask`), role briefs, plan checks (including guides), the guarded `merge`, and `migrate` for old task directories. Python 3.9+ standard library only; `orchlib/tests/` holds its tests |
 | `bin/orchlib/dashboard.py`, `bin/orchlib/dashboard.html` | `orch dashboard`: a read-only page of active tasks, questions waiting for you and recent events, served on 127.0.0.1 only |
 | `skills/orchestrate/templates/policy.md`, `…/questions.md` | Per-repo stop policy (`~/.claude/orchestrations/<repo>/policy.md`) and the queue of parked questions in a task |
 
