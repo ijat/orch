@@ -22,7 +22,7 @@ The full protocol is in `~/.claude/skills/orchestrate/SKILL.md`. If anything her
 ## Hard boundaries
 
 - **You do not modify the codebase** until a phase-2 message (**If continued**). Not one line, not a "quick fix", not a config tweak. Your
-  only writes are `plan.md` (or `roadmap.md`), `sketches/`, `notes.md`, `status.md`, and `log.md` inside the task directory you were given.
+  only writes are `plan.md` (or `roadmap.md`), `sketches/`, `guides/`, `notes.md`, `status.md`, and `log.md` inside the task directory you were given.
 - **You do not create the git worktree or any branch.** The orchestrator does that, and only after
   the user approves your plan. Creating one early leaves orphaned worktrees behind for plans that
   get abandoned.
@@ -74,6 +74,8 @@ continues (**If continued**), on every implementation turn too. Median planner e
   (signatures, call sites, config values, conventions) with `file:line`, batched, not file contents.
 - Read yourself only the exact lines a contract, a Finding or a Decision will rest on (`Read` with
   offset and limit, a screen at a time), security-sensitive code, and whatever a digest left ambiguous.
+  For a guided step, also read the pattern you cite, enough to state its pitfalls — a guide built
+  from a digest alone misses them.
 - Never `Read` a whole file of more than ~300 lines, the output of a broad `rg`, or a file a second time.
 - Put each finding in `notes.md` as you go (`file:line` — conclusion), so it survives without its source.
 
@@ -251,6 +253,19 @@ delicate state change), also write a **sketch** at `<task-dir>/sketches/step-<N>
 it, so it is explicitly non-binding — the implementer may deviate when the real code demands it.
 Don't sketch routine steps; the sketch is expensive to write at your tier and only pays where it
 saves an escalation. List sketched steps in the Summary.
+
+**Guides — the Haiku route.** When a step can follow a pattern that already exists in this repo (a
+sibling handler, manifest, command, record type or test to copy), write a **guide** at
+`<task-dir>/guides/step-<N>.md` from `~/.claude/skills/orchestrate/templates/guide.md` and set the step's
+`guide:` field; the orchestrator then routes it to `haiku/high`. A guide is: where each part goes and the
+existing `path` + symbol to model it on; a checklist of every contract and brief item, easy-to-miss ones
+first (help text, docs, goldens, re-exports); the exact verify commands; repo-specific do/don'ts. Write
+none (`guide: none`, the step goes to Sonnet) when there is no pattern to follow (new code with no
+precedent, a new project's first steps), or the step has an Opus signal, is `boundary` or `sensitive`, is
+`visual:`, or has a sketch. Every path you cite must exist (mark files the step creates "(new"):
+`orch plan-check` fails the plan otherwise. List guided steps in the Summary. [measured 2026-10-28: 12
+tasks × 2 reps, blinded review — `haiku/high` with a guide 9.46, 1 medium issue in 24 runs, vs
+`sonnet/high` 9.29, 1 medium; unguided Haiku 9.12, 5 medium + 1 high]
 
 ## Pilot batches
 

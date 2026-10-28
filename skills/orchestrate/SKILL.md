@@ -31,7 +31,7 @@ per their templates (then `~/.claude/bin/orch-index.sh` refreshes `ACTIVE.md`) a
 **Old-format tasks** (no `briefs/` or `questions.md`, journal lines keyed `event`, status.md missing
 newer fields) work as they are. A row `orch` can't parse (exit 1) is fixed by hand per the template; if
 `orch brief` fails, give the role the worktree path (step 6), the plan path, its step text, each step's sketch
-path, the checkpointing contract and the lessons (step 4); a reviewer the base (`git diff <base>...orch/<task-slug>`),
+and guide path, the checkpointing contract and the lessons (step 4); a reviewer the base (`git diff <base>...orch/<task-slug>`),
 the plan path and the review-file path. Reviews or a gate recorded
 without a sha can't satisfy `orch merge`: it refuses and the merge goes to the user (step 10). Never
 `orch migrate` a task another session may be working on (`--dry-run` is safe).
@@ -110,6 +110,7 @@ agent, tell the user and say why** — it's the most expensive rung.
   visual-s<S>-<N>.md  # director/implementer batch file, step S batch N; visual steps only
   artifacts/          # images, builds, patches, scripts too big for prose
   sketches/           # planner's non-binding step-<N>.md sketches, hard steps only
+  guides/             # planner's step-<N>.md guides for Haiku-routed steps (a pattern to copy; TIERS.md)
   journal.jsonl       # orchestrator's structured decision record
   retro.md            # orchestrator's end-of-task retrospective
 ```
@@ -371,7 +372,7 @@ Read both lessons files (`~/.claude/orchestrations/LESSONS.md`, `~/.claude/orche
 Spawn the chosen planner tier with: the user's request verbatim; absolute repo path and branch;
 absolute task dir and `plan.md` path; the tier and one-line reason for the header; anything relevant
 from the lessons files; and that it's read-only on the codebase (writes only `plan.md` or `roadmap.md`, `sketches/`,
-`notes.md`, `status.md`, `log.md`).
+`guides/`, `notes.md`, `status.md`, `log.md`).
 
 **Shape.** Every plan states `shape: single | roadmap` (first Summary line of `plan.md`, header of
 `roadmap.md`). A `roadmap` (or a planner

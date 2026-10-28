@@ -215,6 +215,13 @@ def where_text(c, role, tier, escalation, steps, extra_lines=()):
             if not os.path.isabs(path):
                 path = os.path.join(c.task_dir, path)
             out.append("- sketch for step %s (non-binding): %s%s" % (s.id, path, "" if os.path.exists(path) else " (missing)"))
+        gd = s.field_text("guide")
+        if gd and not re.match(r"^none\b", gd, re.I):
+            path = gd.split()[0].strip("`")
+            if not os.path.isabs(path):
+                path = os.path.join(os.path.dirname(c.plan_path), path)
+            out.append("- guide for step %s (the planner's map of the pattern to copy; read it first, work its Checklist): %s%s"
+                       % (s.id, path, "" if os.path.exists(path) else " (missing)"))
     out.append("- role row: %s" % role)
     out.append("- tier: %s" % (tier or "not stated here (the spawn message names it)"))
     out.append("- escalation: %s" % (escalation or "none"))

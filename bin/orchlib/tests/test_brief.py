@@ -151,6 +151,19 @@ class TestImplementBrief(BriefBase):
         self.assertIn("main-repo paths; the same file in your worktree is under %s" % self.wt, w)
         self.assertNotIn("(missing)", w)
 
+    def test_guide_path_in_brief(self):
+        self.put_plan(self.plan_text.replace("- sketch: none", "- sketch: none\n- guide: guides/step-1.md", 1))
+        _, text = self.brief("implement", "1")
+        w = sec(text, "Where you work")
+        self.assertIn("- guide for step 1 (the planner's map of the pattern to copy; read it first, work its Checklist): %s (missing)"
+                      % os.path.join(self.d, "guides", "step-1.md"), w)
+        os.makedirs(os.path.join(self.d, "guides"), exist_ok=True)
+        open(os.path.join(self.d, "guides", "step-1.md"), "w").close()
+        _, text = self.brief("implement", "1")
+        self.assertNotIn("(missing)", sec(text, "Where you work"))
+        _, text = self.brief("implement", "2")
+        self.assertNotIn("guide for", sec(text, "Where you work"))
+
     def test_sketch_none_and_missing_sketch(self):
         _, text = self.brief("implement", "2")
         self.assertNotIn("sketch for", sec(text, "Where you work"))

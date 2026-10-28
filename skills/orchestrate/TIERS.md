@@ -125,6 +125,7 @@ run, plus a fix pass). So Haiku gets only the steps its gate admits.
 | `sensitive` | the step's files are in a sensitive area, boundary or not | plan `sensitive areas:`, Files touched |
 | `unknown_cause` | the step has to find a cause (investigate, profile, bisect, "why does X"), not apply a stated fix | the step's `do:` |
 | `refusal` | the work is in a classifier domain: exploit, malware or offensive tooling; training or distilling AI models; dual-use bio | the step |
+| `guide` | the step's `guide:` names a file and `orch plan-check` reported no guide failure (it exists, has its four sections, and every path it cites exists) | the step, plan-check output |
 | `size`, `mechanical` | the step's `S/M/L`; mechanical = rename, move, wire or boilerplate after a pattern the plan names, no new behaviour | the step |
 | `files` | paths in the step's `files:` | the step |
 | `unchecked` | contract items and `done when` lines that map to no command in the step's targeted verification (tests, goldens, validators, typecheck, a grep) and to no test case the contract lists with inputs and expected output | contract + Verification |
@@ -145,9 +146,10 @@ ones), or brief length on its own (clean up to 1,104 words when every item was c
 2. `history` → § Escalation ladder.
 3. `ceiling` → `fable/high`; tell the user first. [current rule]
 4. `flag`, `unknown_cause` or `refusal` → `opus/medium` (`proactive`). `boundary` alone → `sonnet/high`: the security review is due on it (SKILL.md step 5), and that review, not the writer's tier, is the security check. `boundary` when the user declined a due security review → `opus/high`. [judgment since 2026-10-28; was `opus/medium`]
-5. The Haiku gate passes → `haiku/medium`. [measured]
-6. Otherwise → `sonnet/high`. [measured]
-7. Apply § Caps and pressure, then journal the `tier_choice` with the deciding signals in `tradeoff`.
+5. `guide`, with G1 and G6 holding → `haiku/high`. The guide replaces G2–G5: size, unchecked items, prose and brief length don't bar a guided step. [measured 2026-10-28, see § Guided Haiku]
+6. The Haiku gate passes → `haiku/medium`. [measured]
+7. Otherwise → `sonnet/high`. [measured]
+8. Apply § Caps and pressure, then journal the `tier_choice` with the deciding signals in `tradeoff`.
 
 At the plan gate, show the tier this gives each step, one line per step (step → tier → deciding
 signal). Spawn-time facts (history, caps, usage) can still change it.
@@ -168,9 +170,22 @@ concurrency tests, R1–R3 for unchecked items and prose) include both replays w
 items; across the 4, 8.25 vs 8.67.
 G2's and G5's bounds are the largest admitted tasks (15 files, 1,104 words), not known failure points.
 
+### Guided Haiku
+
+A planner-written guide (`templates/guide.md`: where each part goes and the existing pattern to model it
+on, a checklist of every brief item, the verify commands, repo pitfalls) is what Haiku lacked on long and
+real-repo steps. Benchmark 2026-10-28 (`~/.claude/benchmarks/implementer-tiers/baselines/2026-10-28-guided-full`,
+12 tasks × 2 reps, all on the same role, one blinded Opus review round): `haiku/high` + guide 9.46 (1 medium,
+0 high, 24/24 hidden tests), unguided `haiku/high` 9.12 (5 medium, 1 high, 23/24), `sonnet/high` 9.29
+(1 medium) and `sonnet/high` + guide 9.25 — the guide doesn't help Sonnet. Guided Haiku was weakest on the
+real-replay band (8.50 vs Sonnet's 8.67–8.83; its one issue a skipped brief item), ran 0.22× Sonnet's bench
+cost and 1.75× its wall time. Real spawns are 7–10× the bench's requests, so the real price edge is smaller.
+No pattern (a new project's first steps, code with no precedent) → no guide → Sonnet; this split is
+judgment, not measured (every benchmark task was an existing repo). [measured; judgment for the split]
+
 When a Haiku spawn returns `done`, read its `contract-check` in `notes.md` before anything else: a
 `[ ]`, or fewer lines than the step has contract items, re-routes the step to `sonnet/high`
-(`post-failure`) before review. A Haiku return of `blocked` with `need: retier` re-routes it to
+(`post-failure`) before review. A `haiku/*` return of `blocked` with `need: retier` re-routes it to
 `sonnet/high` as `proactive`, not `post-failure`: it is not a failure, so there is no prior pass to name; journal it as a `blocker` with `need: retier`.
 
 ### Fix rounds, pilots, visual and parallel steps
@@ -223,13 +238,13 @@ user's: 200K, raised to 230K on 2026-10-28 after 4/4 real gates split at 212–2
 
 ### Escalation ladder
 
-`haiku/medium → sonnet/high → opus/medium → opus/high → fable/high` — at most one rung per failure
+`haiku/medium | haiku/high (guided) → sonnet/high → opus/medium → opus/high → fable/high` — at most one rung per failure
 (except an Opus ability failure, which goes from `opus/medium` straight to `fable/high`; see the table),
 never sideways or down for the same work (one exception: an exact-edit fix list, above).
 
 | Failing tier | Failure | Next | Why |
 |---|---|---|---|
-| `haiku/medium` | any routed finding; a check still failing after its three strikes; a `[ ]` in `contract-check` | `sonnet/high` | Don't raise Haiku's effort: at `high` it skipped the same items on replays (4 medium issues, as at medium); `max` fixed that at 1.9× `sonnet/high`'s cost and 3.8× its wall time [measured] |
+| `haiku/medium`, `haiku/high` (guided) | any routed finding; a check still failing after its three strikes; a `[ ]` in `contract-check` | `sonnet/high` | Don't raise Haiku's effort: at `high` it skipped the same items on replays (4 medium issues, as at medium); `max` fixed that at 1.9× `sonnet/high`'s cost and 3.8× its wall time [measured] |
 | `sonnet/medium` (caps, pressure, saver) | any routed finding | `sonnet/high` | escalate on the first review failure [current rule] |
 | `sonnet/high` | round-1 findings | fix at `sonnet/high` | [current rule] |
 | `sonnet/high` | the same class again in round 2; `stuck` where the check is right and the approach keeps failing | `opus/medium` | change model, not effort: Opus costs ~1.25–1.3× Sonnet per token here [observed]; `sonnet/xhigh` is for the no-Opus cap [judgment] |
@@ -252,7 +267,7 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 |---|---|---|---|---|
 | `haiku/low` | dominated by `haiku/medium` | — | always | [measured] the only hidden-test failure in 216 runs, a README cut short mid-rename, a self-added deadlocking test |
 | `haiku/medium` | gated | the Haiku gate holds; exact-edit fix lists; mechanical pilots | the gate fails; as an escalation target | [measured] |
-| `haiku/high` | dominated | — | always: 9.42 vs medium's 9.58 on admitted tasks at 1.2× the cost; on replays the same skips at 3× | [measured] |
+| `haiku/high` | guided | steps with a `guide` (procedure step 5) | unguided steps: 9.42 vs medium's 9.58 on admitted tasks at 1.2× the cost; on replays the same skips at 3× | [measured: 2026-10-21 unguided, 2026-10-28 guided] |
 | `haiku/xhigh` | dominated (expected) by `sonnet/high` | — | always | [judgment] lies between measured high and max |
 | `haiku/max` | dominated by `sonnet/high` | — | always: no skips, but 1.2–1.9× `sonnet/high`'s cost and 3.8–5.8× its wall time | [measured] |
 | `sonnet/low` | excluded | — | always: early stops and skipped verification on long agentic tasks | [judgment, reference] |
