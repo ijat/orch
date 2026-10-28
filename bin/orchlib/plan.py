@@ -6,6 +6,7 @@ a brief can print them byte for byte. Python 3.9 compatible, standard library on
 import importlib.util
 import os
 import re
+import subprocess
 import sys
 
 from .paths import BIN_DIR, OrchError, resolve_task
@@ -20,7 +21,7 @@ LIST = ID + r"(?:" + SEP + r"(?:steps?\s+)?" + ID + r")*"
 STEP_REF_RE = re.compile(r"\bsteps?[\s_-]*(" + LIST + r")", re.I)
 ID_RE = re.compile(ID, re.I)
 FIELD_LINE_RE = re.compile(r"^- ([A-Za-z][A-Za-z ]*?):[ \t]*(.*)$")
-KNOWN = ("size", "files", "depends", "context", "do", "contract", "sketch", "pilot", "visual", "done when",
+KNOWN = ("size", "files", "depends", "context", "do", "contract", "sketch", "guide", "pilot", "visual", "done when",
          "tier", "effort", "tier rationale", "effort rationale", "escalation", "tradeoff")
 REQUIRED = ("size", "files", "do", "contract", "done when")
 BULLET_RE = re.compile(r"^(?:[-*+]|\d+[.)])[ \t]+")
@@ -527,6 +528,123 @@ def check_plan(plan, lite=False):
     return out
 
 
+GUIDE_SECTIONS = ("approach", "checklist", "verify", "do / don't")
+GUIDE_WORDS_MAX = 600
+BACKTICK_RE = re.compile(r"`([^`\n]+)`")
+NEW_MARK_RE = re.compile(r"\b(?:new|add|adds|create[sd]?)\b", re.I)
+
+
+def _repo_files(root):
+    """Tracked (and untracked, unignored) paths under a git root, or a bounded walk; None when root is unusable."""
+    if not root or not os.path.isdir(root):
+        return None
+    try:
+        out = subprocess.run(["git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard"],
+                             capture_output=True, text=True, timeout=60)
+        if out.returncode == 0:
+            return set(l for l in out.stdout.splitlines() if l)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    found = set()
+    for dp, dns, fns in os.walk(root):
+        dns[:] = [d for d in dns if not d.startswith(".") and d not in ("node_modules", "target", "build", "dist")]
+        for fn in fns:
+            found.add(os.path.relpath(os.path.join(dp, fn), root))
+            if len(found) > 200000:
+                return found
+    return found
+
+
+FILE_EXTS = frozenset("""go mod sum rs toml py pyi ts tsx mts cts js jsx mjs cjs json jsonc md mdx rst txt yaml yml ini cfg
+    conf env cs csproj sln fs kt kts java gradle c h cc cpp hpp m mm swift rb erb php sh bash zsh fish ps1 sql proto
+    graphql html htm css scss less vue svelte xml plist lock golden snap tmpl tpl j2 dockerfile make mk cmake
+    ipynb""".split())
+
+
+def _cited_path(tok):
+    """The file path a backticked token names, or None when it isn't one (commands, flags, symbols, routes, globs)."""
+    t = tok.strip()
+    if not t or " " in t or "..." in t or t.startswith(("-", "$", "http://", "https://", ".")) \
+            or any(c in t for c in "*<>{}|=\"'^$[]()\\"):
+        return None
+    t = re.sub(r"(?::\d+(?:-\d+)?|::?[A-Za-z_][\w.]*)$", "", t).rstrip(",.;:")
+    last = t.rstrip("/").split("/")[-1]
+    if t.endswith("/") and "/" in t[:-1].lstrip("/") + "/" and not t.startswith("/"):
+        return t
+    m = re.search(r"\.([A-Za-z0-9]{1,10})$", last)
+    if not m or m.group(1).lower() not in FILE_EXTS or last.startswith("."):
+        return None
+    if t.startswith("/") and not os.path.isdir("/" + t.lstrip("/").split("/")[0]):
+        return None  # a route like /api/v1/users.json, not a file on this machine
+    return t
+
+
+def _path_known(path, files):
+    if os.path.isabs(path) or path.startswith("~"):
+        return os.path.exists(os.path.expanduser(path))
+    p = path.lstrip("./")
+    if p.endswith("/"):
+        p = p.rstrip("/")
+        return any(f == p or f.startswith(p + "/") or ("/" + p + "/") in ("/" + f) for f in files)
+    if "/" in p:
+        return any(f == p or f.endswith("/" + p) or f.startswith(p + "/") or ("/" + p + "/") in ("/" + f) for f in files)
+    return any(os.path.basename(f) == p for f in files)
+
+
+def check_guides(plan, plan_dir, task_dir=None, roots=()):
+    """[(level, message)] for every step with a `guide:` file: exists, four sections, size, cited paths exist."""
+    out = []
+    files = None
+    for r in roots:
+        files = _repo_files(r)
+        if files is not None:
+            break
+    for st in plan.steps:
+        g = st.field_text("guide")
+        if not g or re.match(r"^(?:none|n/a|-)\b", g.strip(), re.I):
+            continue
+        rel = g.split()[0].strip("`")
+        cands = [rel] if os.path.isabs(rel) else [os.path.join(d, rel) for d in (plan_dir, task_dir) if d]
+        gp = next((c for c in cands if os.path.isfile(c)), None)
+        if gp is None:
+            out.append(("FAIL", "step %s: guide %s does not exist" % (st.id, rel)))
+            continue
+        text = open(gp, encoding="utf-8", errors="replace").read()
+        heads = [h.strip().lower() for h in re.findall(r"^##\s+(.+?)\s*$", text, re.M)]
+        missing = [h for h in GUIDE_SECTIONS if not any(x.startswith(h) for x in heads)]
+        if missing:
+            out.append(("FAIL", "step %s: guide lacks section(s): %s" % (st.id, ", ".join(missing))))
+        words = len(re.sub(r"<!--.*?-->", "", text, flags=re.S).split())
+        if words > GUIDE_WORDS_MAX:
+            out.append(("WARN", "step %s: guide is %d words (aim for ≤ ~500)" % (st.id, words)))
+        if files is None:
+            out.append(("WARN", "step %s: guide paths not checked (no worktree or repo to check against)" % st.id))
+            continue
+        bad, known_in_approach, section = [], 0, ""
+        for line in text.splitlines():
+            m = re.match(r"^##\s+(.+?)\s*$", line)
+            if m:
+                section = m.group(1).strip().lower()
+                continue
+            if section.startswith("verify"):
+                continue
+            for tok in BACKTICK_RE.findall(line):
+                path = _cited_path(tok)
+                if not path:
+                    continue
+                if _path_known(path, files):
+                    known_in_approach += section.startswith("approach")
+                elif not NEW_MARK_RE.search(line) and path not in bad:
+                    bad.append(path)
+        if not known_in_approach:
+            out.append(("FAIL", "step %s: guide's Approach cites no existing file in the repo — no pattern to follow"
+                        " (route the step to Sonnet: `guide: none`)" % st.id))
+        if bad:
+            out.append(("WARN", "step %s: guide cites path(s) not in the repo (fine if the step creates them): %s"
+                        % (st.id, ", ".join(bad[:5]) + (" …" if len(bad) > 5 else ""))))
+    return out
+
+
 def _summary_index(plan, summary):
     """Count of numbered step lines under the Summary's `- steps:` bullet; None when it has none to count."""
     lines = plan.lines[summary.start + 1:summary.end]
@@ -587,6 +705,24 @@ def cmd_plan_check(ns, extra):
     if is_roadmap(path, plan):
         return program_check_main(path)
     findings = check_plan(plan, ns.lite)
+    task_dir, roots = None, []
+    if ns.repo:
+        roots.append(ns.repo)
+    arg = getattr(ns, "task_sub", None) or ns.task
+    if arg:
+        try:
+            task_dir = cli.get_task(ns)
+            stt = cli.load_status(task_dir)
+            from . import status as st
+            for key in ("worktree", "repo"):
+                v = st.clean_value(key, stt.get(key)).value
+                if v and os.path.isdir(v):
+                    roots.append(v)
+        except OrchError:
+            pass
+    if plan.header.get("repo"):
+        roots.append(plan.header.get("repo").strip())
+    findings += check_guides(plan, os.path.dirname(os.path.abspath(path)), task_dir, roots)
     for level, msg in findings:
         print("%s: %s" % (level, msg))
     fails = sum(1 for l, _ in findings if l == "FAIL")
@@ -599,3 +735,4 @@ def register(add):
     sp = add("plan-check", cmd_plan_check, "check a plan's structure (roadmaps go to orch-program-check.py)")
     sp.add_argument("path", nargs="?", default=None, metavar="PATH")
     sp.add_argument("--lite", action="store_true")
+    sp.add_argument("--repo", default=None, help="checkout to resolve guide paths against (default: the task's worktree, then repo)")

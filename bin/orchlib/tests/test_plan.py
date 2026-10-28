@@ -427,5 +427,102 @@ class TestPlanCheckCommand(core.Base):
         self.assertEqual(sys.argv, saved)
 
 
+GUIDE_OK = """# Guide: demo — step 1
+
+## Approach
+- login handler → `src/auth/login.py` (new): model it on `src/auth/logout.py` `handle` (copy its error mapping)
+
+## Checklist
+- [ ] help text in `docs/usage.md`
+
+## Verify
+- `pytest tests/test_login.py` → all pass
+
+## Do / Don't
+- Don't touch `src/session/store.py`
+"""
+
+
+class TestGuides(core.Base):
+    """`orch plan-check` on steps with a `guide:` file."""
+
+    def setUp(self):
+        core.Base.setUp(self)
+        self.repo = os.path.join(self.tmp, "repo")
+        for f in ("src/auth/logout.py", "docs/usage.md", "src/session/store.py"):
+            os.makedirs(os.path.dirname(os.path.join(self.repo, f)), exist_ok=True)
+            open(os.path.join(self.repo, f), "w").close()
+        subprocess.run(["git", "init", "-q", self.repo], check=True)
+        self.pdir = os.path.join(self.tmp, "task")
+        os.makedirs(os.path.join(self.pdir, "guides"))
+        self.plan = os.path.join(self.pdir, "plan.md")
+        with open(self.plan, "w", encoding="utf-8") as fh:
+            fh.write(fixture("standard.md").replace("### Step 1 — Auth module\n\n", "### Step 1 — Auth module\n\n- guide: guides/step-1.md\n", 1))
+
+    def guide(self, text):
+        with open(os.path.join(self.pdir, "guides", "step-1.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def check(self, *extra):
+        rc, out, err = self.run_orch("plan-check", self.plan, *extra)
+        return rc, [l for l in out.splitlines() if "guide" in l]
+
+    def test_a_guide_with_a_real_pattern_passes(self):
+        self.guide(GUIDE_OK)
+        rc, lines = self.check("--repo", self.repo)
+        self.assertEqual(rc, 0, lines)
+        self.assertEqual(lines, [])
+
+    def test_missing_guide_file_fails(self):
+        rc, lines = self.check("--repo", self.repo)
+        self.assertEqual(rc, 1)
+        self.assertEqual(lines, ["FAIL: step 1: guide guides/step-1.md does not exist"])
+
+    def test_missing_sections_fail(self):
+        self.guide(GUIDE_OK.replace("## Verify", "## Testing").replace("## Do / Don't", "## Notes"))
+        rc, lines = self.check("--repo", self.repo)
+        self.assertEqual(rc, 1)
+        self.assertIn("FAIL: step 1: guide lacks section(s): verify, do / don't", lines)
+
+    def test_no_existing_pattern_fails_and_unknown_paths_warn(self):
+        # signout.py on its own line (a line saying "new" is exempt: the step may create what it names)
+        self.guide(GUIDE_OK.replace(": model it on `src/auth/logout.py` `handle`", "\n- model it on `src/auth/signout.py` `handle`")
+                   .replace("`src/session/store.py`", "`src/session/cache.py`"))
+        rc, lines = self.check("--repo", self.repo)
+        self.assertEqual(rc, 1)
+        self.assertTrue(any(l.startswith("FAIL: step 1: guide's Approach cites no existing file") for l in lines), lines)
+        self.assertTrue(any(l.startswith("WARN") and "src/auth/signout.py" in l and "src/session/cache.py" in l
+                            and "src/auth/login.py" not in l for l in lines), lines)
+
+    def test_symbols_commands_and_routes_are_not_paths(self):
+        self.guide(GUIDE_OK.replace("(copy its error mapping)", "(`config.Config`, `s.Items`, `/v1/accounts`, `^[0-9]+$`, `Desktop/...Tests.cs`)"))
+        rc, lines = self.check("--repo", self.repo)
+        self.assertEqual((rc, lines), (0, []))
+
+    def test_suffix_and_bare_names_resolve(self):
+        self.guide(GUIDE_OK.replace("`src/auth/logout.py` `handle`", "`auth/logout.py` `handle`, beside `store.py`"))
+        rc, lines = self.check("--repo", self.repo)
+        self.assertEqual((rc, lines), (0, []))
+
+    def test_no_repo_warns_instead_of_checking(self):
+        self.guide(GUIDE_OK)
+        rc, lines = self.check()
+        self.assertEqual(rc, 0)
+        self.assertEqual(lines, ["WARN: step 1: guide paths not checked (no worktree or repo to check against)"])
+
+    def test_guide_none_is_ignored_and_long_guides_warn(self):
+        with open(self.plan, encoding="utf-8") as fh:
+            text = fh.read()
+        with open(self.plan, "w", encoding="utf-8") as fh:
+            fh.write(text.replace("- guide: guides/step-1.md", "- guide: none"))
+        self.assertEqual(self.check("--repo", self.repo), (0, []))
+        with open(self.plan, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        self.guide(GUIDE_OK + "\n" + " word" * 700)
+        rc, lines = self.check("--repo", self.repo)
+        self.assertEqual(rc, 0)
+        self.assertTrue(any(l.startswith("WARN: step 1: guide is ") for l in lines), lines)
+
+
 if __name__ == "__main__":
     unittest.main()

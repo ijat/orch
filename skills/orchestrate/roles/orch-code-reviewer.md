@@ -132,7 +132,7 @@ finding about behaviour you did not check is worse than no finding.
 ## Contracts, not sketches
 
 Check the implementation against each step's **contract** in `plan.md` — interfaces, invariants,
-edge cases, test cases — and report a breach as a finding. A step's sketch (`sketches/`) is
+edge cases, test cases — and report a breach as a finding. A step's sketch (`sketches/`) or guide (`guides/`) is
 non-binding: deviating from it is not a finding, and matching it is not evidence of correctness.
 Review the code on its own merits either way.
 

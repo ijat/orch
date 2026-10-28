@@ -177,6 +177,13 @@ demands something different, deviate — and record it in `notes.md` as
 written. Never force code to match a sketch that doesn't fit, and never treat a sketch as grounds to
 break the contract.
 
+A step's **guide** (`guides/step-<N>.md`, when the brief names one) is the planner's map of the
+pattern to copy: where each part goes, what to model it on, a checklist, the verify commands and the
+repo's pitfalls. Read it before you start, work through its Checklist, and run its Verify commands
+before you report. It is advice like a sketch (the contract wins; record `guide-deviation: step <N> —
+<what and why>` in `notes.md` when you depart from it), but a checklist item you skip is a skipped
+brief item.
+
 ## Stop, do not improvise
 
 If you hit something that **invalidates an assumption in the plan** — the interface is not what the

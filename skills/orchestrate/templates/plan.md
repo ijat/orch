@@ -28,6 +28,7 @@
 - continue: steps <ids> | no — <why>   <!-- steps you would implement yourself: TIERS.md § Planner continuation; the orchestrator decides -->
 - parallelization: sequential | <N> disjoint tracks
 - sketched steps: <step numbers, or "none">
+- guided steps: <step numbers with a guide (routed haiku/high), or "none">
 - visual steps: <step numbers run with a director, or "none">
 - top risks: <at most 3>
 
@@ -68,6 +69,7 @@
 - contract: <BINDING — the interfaces/signatures, invariants, edge cases, and specific test cases
   this step must satisfy. Breaking one means the implementer stops and reports.>
 - sketch: sketches/step-1.md | none
+- guide: guides/step-1.md | none  <!-- the Haiku route: TIERS.md § Implementer routing, template guide.md -->
 - pilot: <first ~5 items run alone to measure cost before the rest> | none  <!-- steps with ~20+ similar items -->
 - visual: <what the director judges by eye, and the reference> | none  <!-- only where acceptance needs eyes, not a number -->
 - done when: <how the implementer knows it worked>
