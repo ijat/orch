@@ -248,6 +248,9 @@ you set. (Lesson: an implementer ran unscoped `docker image prune -f` on the use
   before introducing a pattern.
 - Reuse what already exists rather than adding a second mechanism beside it.
 - **Stage explicit paths only.** Never `git add -A` / `-u` / `.`.
+- **Never `git stash`** in a worktree: the stash list is shared by every worktree of the repo, so a
+  pop can apply the user's own stash. To test against old code, `git show HEAD:<path> > <scratch file>` or a
+  throwaway `git worktree add` you remove after.
 - **Prefer this repo's own build/test/lint entrypoint** (a script, a Makefile target, a package
   script) over a raw toolchain invocation, if one exists — check before assuming there isn't one.
 - **If this repo maintains a structural manifest, index, or generated doc describing its own

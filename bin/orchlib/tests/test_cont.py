@@ -148,11 +148,11 @@ class TestBoundary(GateBase):
         self.assertTrue(above.startswith("continue-gate: split"))
 
     def test_literal_limits(self):
-        # a guard against the constant drifting: these are the values the user set (Revision 1)
-        self.assertEqual(cont.CTX_MAX, 200000)
+        # a guard against the constant drifting: the user set 200K (Revision 1), raised to 230K by the 2026-10-28 audit
+        self.assertEqual(cont.CTX_MAX, 230000)
         self.plan()
-        self.assertEqual(self.reasons(self.gate(tokens=199999)), [])
-        self.assertEqual(self.reasons(self.gate(tokens=200000)), ["ctx_high"])
+        self.assertEqual(self.reasons(self.gate(tokens=229999)), [])
+        self.assertEqual(self.reasons(self.gate(tokens=230000)), ["ctx_high"])
         self.assertEqual(self.reasons(self.gate(tokens=250000)), ["ctx_high"])
 
     def test_help_names_the_limit(self):
@@ -198,8 +198,28 @@ class TestReasons(GateBase):
         self.check(["not_first"], cont="steps 9", routed="9=opus/medium")
 
     def test_done_steps_come_from_the_implementer_row(self):
-        self.ok("role", "implementer", "in_progress", "--step", "1", "-t", T)
+        # stamped after the plan was written (the base env pins ORCH_NOW to an older minute)
+        self.ok("role", "implementer", "in_progress", "--step", "1", "-t", T, now="2099-01-01T00:00Z")
         self.check([], cont="steps 2, 3", routed="2=opus/medium,3=opus/medium")
+        self.check(["not_first"], cont="steps 1, 2", routed="1=opus/medium,2=opus/medium")
+
+    def test_rows_older_than_the_plan_are_skipped(self):
+        # a program's next milestone: the row still names the last milestone's work ("fix round 2", "step 9")
+        for step in ("fix round 2", "step 9", "2"):
+            self.ok("role", "implementer", "done", "--step", step, "-t", T, now="2026-10-01T00:00Z")
+            self.check([], cont="steps 1, 2", routed="1=opus/medium,2=opus/medium")
+
+    def test_a_row_without_a_timestamp_still_counts(self):
+        self.ok("role", "implementer", "in_progress", "--step", "1", "-t", T, now="2099-01-01T00:00Z")
+        path = os.path.join(self.d, "status.md")
+        with open(path) as fh:
+            text = fh.read()
+        lines = [l for l in text.split("\n") if l.startswith("| implementer ")]
+        self.assertEqual(len(lines), 1)
+        cells = lines[0].split("|")
+        cells[3] = " "
+        with open(path, "w") as fh:
+            fh.write(text.replace(lines[0], "|".join(cells)))
         self.check(["not_first"], cont="steps 1, 2", routed="1=opus/medium,2=opus/medium")
 
     def test_too_many(self):

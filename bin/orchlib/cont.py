@@ -5,6 +5,7 @@ context from its transcript (the last request's prompt + output, which equals th
 count), compares tiers, and journals a `continue_gate` line. Any failed or unknown condition is a split, which
 is the ordinary path. The rules live in TIERS.md § Planner continuation. Python 3.9 compatible, standard library
 only."""
+import datetime
 import glob
 import json
 import os
@@ -18,7 +19,7 @@ from . import status as st
 from . import usage
 from .paths import OrchError, TaskLock, now, require_write_allowed, task_names
 
-CTX_MAX = 200_000   # tokens: a planner context at or above this splits (the only place the number lives)
+CTX_MAX = 230_000   # tokens: a planner context at or above this splits (the only place the number lives)
 STEP_MAX = 3        # most steps one continuation may run
 EFFORT_GAP = 1      # the planner's effort may exceed the routed effort by 0..EFFORT_GAP levels
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -115,12 +116,17 @@ def parse_run(says, ids):
     return out
 
 
-def done_ids(status, ids):
-    """Plan ids up to and including the furthest one an implementer row's `last completed step` names."""
+def done_ids(status, ids, plan_ts=None):
+    """Plan ids up to and including the furthest one an implementer row's `last completed step` names.
+    A row stamped before the minute the plan was written belongs to an earlier plan (a program's previous
+    milestone) and is skipped; a row with no usable stamp still counts."""
     best = -1
     byname = dict((i.lower(), k) for k, i in enumerate(ids))
     for role, row in status.roles():
         if not role.lower().startswith("implementer"):
+            continue
+        ts = DATE_RE.match((row.get("ts") or "").strip())
+        if plan_ts and ts and len(ts.group(0)) >= 16 and ts.group(0)[:16] < plan_ts[:16]:
             continue
         for tok in ITEM_RE.findall(DATE_RE.sub(" ", row.get("step") or "")):
             best = max(best, byname.get(tok.lower(), -1))
@@ -146,8 +152,9 @@ def parse_pairs(text, what, value_re=None):
     return out
 
 
-def evaluate(plan, status, ctx, planner_tier, routed, signals):
-    """-> dict(decision, steps, reasons, says, routed). `routed`: {step: tier}; `signals`: {step: [name]}."""
+def evaluate(plan, status, ctx, planner_tier, routed, signals, plan_ts=None):
+    """-> dict(decision, steps, reasons, says, routed). `routed`: {step: tier}; `signals`: {step: [name]};
+    `plan_ts`: when plan.md was written (UTC, 2026-01-02T03:04), to skip older implementer rows."""
     ids = plan.ids()
     byname = dict((i.lower(), i) for i in ids)
     says = plan_says(plan)
@@ -157,7 +164,7 @@ def evaluate(plan, status, ctx, planner_tier, routed, signals):
         reasons.append("plan_no")
         run = []
     else:
-        remaining = [i for i in ids if i not in done_ids(status, ids)]
+        remaining = [i for i in ids if i not in done_ids(status, ids, plan_ts)]
         if run != remaining[:len(run)]:
             reasons.append("not_first")
         if len(run) > STEP_MAX:
@@ -221,11 +228,13 @@ def cmd_continue_gate(ns, extra):
     if not ns.dry_run:
         require_write_allowed()
     status = cli.load_status(task_dir)
-    plan = pl.parse_file(ns.plan or os.path.join(task_dir, "plan.md"))
+    plan_path = ns.plan or os.path.join(task_dir, "plan.md")
+    plan = pl.parse_file(plan_path)
+    plan_ts = datetime.datetime.fromtimestamp(os.path.getmtime(plan_path), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M")
     ctx, src = transcript_ctx(ns.agent_id, usage.home_dir()), "transcript"
     if ctx is None:
         ctx, src = (ns.tokens, "notice") if ns.tokens is not None else (None, "none")
-    res = evaluate(plan, status, ctx, ns.planner_tier, routed, signals)
+    res = evaluate(plan, status, ctx, ns.planner_tier, routed, signals, plan_ts)
     ids = [int(x) if x.isdigit() else x for x in res["steps"]]
     line = "continue-gate: %s steps=%s ctx=%s (%s) reasons=%s" % (
         res["decision"], ",".join(res["steps"]) or "-", "unknown" if ctx is None else ctx, src,

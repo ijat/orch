@@ -197,7 +197,7 @@ of a fresh implementer, only when every line holds. `orch continue-gate` checks 
 `continue_gate`; a missing, unknown or failed line is a split, which is the ordinary path.
 
 - C1. The plan's Summary says `continue: steps <ids>`: the first not-done steps, contiguous, at most 3, none `L`.
-- C2. Planner context < 200K tokens (`CTX_MAX` in `orchlib/cont.py`), measured from its transcript (the last
+- C2. Planner context < 230K tokens (`CTX_MAX` in `orchlib/cont.py`), measured from its transcript (the last
   request's prompt + output; the completion notice's token count is the same number and the fallback).
   Unknown → split.
 - C3. Each step routes (§ Procedure, with caps and pressure applied) to the planner's model, at its effort
@@ -212,8 +212,8 @@ run is a fresh implementer routed as usual: later steps, every fix round, every 
 check-in stop, three strikes), so the writer floor of a continued step is its routed tier. A blocker in phase 2
 goes back to the same planner to append a revision; its remaining steps then go fresh. The planner skips
 sketches for the steps it names. [measured 2026-10-25: `measure.py` over 64 segments; continuing lost
-overall and won in 22, at median planner end context ≈ 216K against ≈ 490K for the losers; the 200K limit
-is the user's]
+overall and won in 22, at median planner end context ≈ 216K against ≈ 490K for the losers; the limit is the
+user's: 200K, raised to 230K on 2026-10-28 after 4/4 real gates split at 212–219K]
 
 ### Escalation ladder
 

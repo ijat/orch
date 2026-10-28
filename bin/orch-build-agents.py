@@ -27,6 +27,9 @@ def render(path, roles):
     return ''.join(out)
 
 def main():
+    unknown = [a for a in sys.argv[1:] if a.startswith('-') and a != '--check']
+    if unknown:
+        sys.exit(__doc__)  # an unknown flag (e.g. --help) must never fall through to a write
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     check = '--check' in sys.argv
     if len(args) not in (0, 2):
