@@ -498,8 +498,8 @@ should-fix (security: and 0 nits):
 
 1. Route findings to an implementer as concrete fixes (`orch brief fix <round> --findings F1,F2`; `S<n>` for
    security findings), at the tier `TIERS.md` § Fix rounds gives
-   (never below the tier that wrote the code, its routed tier for a continued step, except an exact-edit list; a class raised again in
-   round 2 moves up a rung). When a finding is one instance of a class
+   (`sonnet/high` whoever wrote the code, unless the fix itself carries an Opus signal; an exact-edit list may go to Haiku; a
+   class raised again in round 2 moves up a rung). When a finding is one instance of a class
    (state reset, validation, cleanup), name the whole class and the invariant the fix must keep, in
    the implementer's brief (`--extra`) and the reviewer's re-review scope. Code-review findings that are `nit`
    or `origin: pre-existing` are not routed and never start or extend a round; they go to the digest
