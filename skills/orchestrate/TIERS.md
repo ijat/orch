@@ -83,7 +83,7 @@ Weigh these for every non-default choice:
   set of categories), and Haiku has no fallback when it refuses. Opus 5.5 refuses in fewer
   categories than Sonnet 5.5, so it is the safer choice for security tooling. Context is 1M on every model, so it never
   decides the choice.
-- **Escalation history:** a `post-failure` escalation moves up a rung, never sideways (implementer exception: an exact-edit fix list, § Fix rounds). Never jump
+- **Escalation history:** a `post-failure` escalation moves up a rung, never sideways (implementer exceptions: an exact-edit fix list, and fix rounds, which are routed fresh — § Fix rounds). Never jump
   from the default straight to Fable (`SKILL.md`; implementer ladder below).
 
 ## Typical choices
@@ -120,7 +120,7 @@ run, plus a fix pass). So Haiku gets only the steps its gate admits.
 | `lite` | the brief says `mode: lite` | `status.md` |
 | `history` | this work (the step, or the code a fix touches) already ran and failed: a routed review finding, `blocked: stuck`, a looping check-in, a `[ ]` in its `contract-check` | `review.md`, `status.md`, `notes.md` |
 | `ceiling` | the planner names `fable/*` for the step, with a reason | plan Summary `implementer tier:`, the step |
-| `flag` | the planner flags the step as a concurrency protocol, a complex or performance-sensitive algorithm, or a delicate state change (persisted format, migration, irreversible op), or names `opus/*` for it; a roadmap row naming Opus counts for its milestone's steps (a row's tier is the planner's budgeting estimate; each step is still routed from the milestone's `plan.md`) | plan Summary, the step, Risks |
+| `flag` | the planner flags the step as a concurrency protocol, a complex or performance-sensitive algorithm, or a delicate state change (persisted format, migration, irreversible op), or names `opus/*` for it **with one of those reasons**; a roadmap row's tier is the planner's budgeting estimate and never a flag (each step is routed from the milestone's `plan.md`), and "sensitive" or "security" alone is not a flag reason | plan Summary, the step, Risks |
 | `boundary` | the step implements security-bound logic: an authn/authz decision, crypto/key/token handling, parsing or deserializing untrusted input, a sandbox or permission check, credential-bearing deploy config | step 5 list + the step's `do:` |
 | `sensitive` | the step's files are in a sensitive area, boundary or not | plan `sensitive areas:`, Files touched |
 | `unknown_cause` | the step has to find a cause (investigate, profile, bisect, "why does X"), not apply a stated fix | the step's `do:` |
@@ -144,7 +144,7 @@ ones), or brief length on its own (clean up to 1,104 words when every item was c
 1. `lite` → `opus/medium` (it must plan as well as code); `opus/high` at the edge of lite eligibility (the eligibility check passed but you recorded a caveat: an open design choice, a borderline file count, or a near-sensitive area). Never Haiku (unmeasured at planning) or Fable (that need means standard mode). [observed: 12 lite tasks, 0.5 review rounds on average]
 2. `history` → § Escalation ladder.
 3. `ceiling` → `fable/high`; tell the user first. [current rule]
-4. `flag`, `boundary`, `unknown_cause` or `refusal` → `opus/medium` (`proactive`); `boundary` when the user declined a due security review → `opus/high`. [observed, judgment]
+4. `flag`, `unknown_cause` or `refusal` → `opus/medium` (`proactive`). `boundary` alone → `sonnet/high`: the security review is due on it (SKILL.md step 5), and that review, not the writer's tier, is the security check. `boundary` when the user declined a due security review → `opus/high`. [judgment since 2026-10-28; was `opus/medium`]
 5. The Haiku gate passes → `haiku/medium`. [measured]
 6. Otherwise → `sonnet/high`. [measured]
 7. Apply § Caps and pressure, then journal the `tier_choice` with the deciding signals in `tradeoff`.
@@ -154,7 +154,7 @@ signal). Spawn-time facts (history, caps, usage) can still change it.
 
 ### Haiku gate — every line must hold
 
-- G1. Procedure steps 1, 3 and 4 didn't fire (on a fix round, judge the step's own signals; `history` alone doesn't fail G1); not `sensitive`; no `extras`.
+- G1. Procedure steps 1, 3 and 4 didn't fire (on a fix round, judge the step's own signals; `history` alone doesn't fail G1); not `boundary`; not `sensitive`; no `extras`.
 - G2. One plan step per spawn; `size` S, or M when `mechanical`; `files` ≤ 5, or ≤ 15 when `mechanical`.
 - G3. `unchecked` = 0.
 - G4. No `prose`.
@@ -175,8 +175,14 @@ When a Haiku spawn returns `done`, read its `contract-check` in `notes.md` befor
 
 ### Fix rounds, pilots, visual and parallel steps
 
-- **Fix rounds** are routed like steps, with a writer floor: never below the tier that wrote the
-  code (for a step a continuing planner wrote, its **routed** tier, not the planner's effort). One exception: an **exact-edit list** — at most 5 routed findings, each with `file:line` and
+- **Fix rounds** start at `sonnet/high` whatever tier wrote the code — no writer floor. They go to
+  `opus/medium` only when the fix itself carries a `flag` (it changes the concurrency protocol, the
+  algorithm or the state change the step was flagged for, not a rename or a log line beside it),
+  `unknown_cause` (the finding's cause must be found), or `refusal`, or by the ladder: a class already
+  raised in an earlier round of this task (`post-failure`, `review_pattern`). A step that already climbed
+  the ladder after a failure in this task (a `post-failure` escalation, not a proactive signal) keeps the rung it
+  reached for its later fix rounds and climbs from there (Sonnet already had trouble with it). Security-reviewer findings
+  follow the same rule; the security reviewer re-reviews the fix. One exception downward: an **exact-edit list** — at most 5 routed findings, each with `file:line` and
   a literal suggested change, none naming a class or invariant, none from the security reviewer,
   on code Haiku didn't write, with G1 and G6 holding — may go to `haiku/medium`. [judgment]
 - Code Haiku wrote that gets any routed finding → `sonnet/high` (`post-failure`).
@@ -209,7 +215,7 @@ of a fresh implementer, only when every line holds. `orch continue-gate` checks 
 
 Once per plan. A continuation is a spawn for the dispatch protocol (pre-flight, usage wait). Everything after the
 run is a fresh implementer routed as usual: later steps, every fix round, every replacement (usage re-spawn,
-check-in stop, three strikes), so the writer floor of a continued step is its routed tier. A blocker in phase 2
+check-in stop, three strikes); fix rounds on a continued step follow § Fix rounds like any other. A blocker in phase 2
 goes back to the same planner to append a revision; its remaining steps then go fresh. The planner skips
 sketches for the steps it names. [measured 2026-10-25: `measure.py` over 64 segments; continuing lost
 overall and won in 22, at median planner end context ≈ 216K against ≈ 490K for the losers; the limit is the
@@ -251,11 +257,11 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 | `haiku/max` | dominated by `sonnet/high` | — | always: no skips, but 1.2–1.9× `sonnet/high`'s cost and 3.8–5.8× its wall time | [measured] |
 | `sonnet/low` | excluded | — | always: early stops and skipped verification on long agentic tasks | [judgment, reference] |
 | `sonnet/medium` | caps and pressure only | a cap excludes Haiku and the step passes the gate, at 5h WARN; a user effort ceiling; 7d saver routing | otherwise: 9.00 vs 9.54 on admitted tasks, about equal on replays, for 0.74–0.83× the cost | [measured] |
-| `sonnet/high` | **default** | everything the procedure doesn't route elsewhere | `flag`, `boundary`, `unknown_cause`, `refusal`; lite | [measured, observed] |
+| `sonnet/high` | **default** | everything the procedure doesn't route elsewhere, `boundary` steps (with their security review) and fix rounds included | `flag`, `unknown_cause`, `refusal`; `boundary` with the security review declined; lite | [measured, observed; judgment for `boundary`] |
 | `sonnet/xhigh` | cap only | no-Opus cap: Opus-signal steps, first escalation | Opus is allowed (`opus/medium` is the better buy) | [judgment] |
 | `sonnet/max` | cap only | no-Opus cap: second escalation | Opus is allowed | [judgment] |
 | `opus/low` | excluded until benchmarked | — | — | [judgment] first candidate for the next benchmark |
-| `opus/medium` | signal tier, rung 3 of the ladder | Opus signals; lite; post-failure from `sonnet/high` | gate-passing or plain steps | [observed, reference] |
+| `opus/medium` | signal tier, rung 3 of the ladder | Opus signals (`flag`, `unknown_cause`, `refusal`); lite; post-failure from `sonnet/high` | gate-passing or plain steps; `boundary` alone; routine fix rounds | [observed, reference] |
 | `opus/high` | rung 4 | diligence failure at `opus/medium`; `boundary` when the user declined a due security review; lite at the edge | before `opus/medium` has tried non-boundary work | [judgment, observed] |
 | `opus/xhigh` | cap only | no-Fable cap: one fresh pass after `opus/high` | Fable is allowed | [judgment] |
 | `opus/max` | never | — | — | [judgment] past `xhigh`, re-plan |
@@ -275,7 +281,7 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 | Effort ceiling, e.g. ≤ medium | `haiku/medium` gated, `sonnet/medium` otherwise, `opus/medium` for signals; escalate by model only | [observed] |
 | 5h WARN, STALE or UNKNOWN | no proactive `opus/high`, except a `boundary` step whose due security review the user declined (it keeps `opus/high`; if that can't run, pause); signal steps keep `opus/medium` (the plan earned it); Fable only with the user's OK; batch fix findings; never send a step that fails the gate to Haiku for budget — pause instead | [judgment] |
 | 5h STOP | pause (SKILL.md) | [current rule] |
-| 7d ≥ 90% | ask with `AskUserQuestion` (recommended option first, plus **Hold on**; recommend continue-as-routed when the remaining work is flagged or sensitive, otherwise saver routing): continue as routed; **saver routing** — unflagged, non-`sensitive` steps that fail the gate → `sonnet/medium`, the gate admits any M step, `algorithm`/`state` flags → `sonnet/high` with the sketch and escalation on the first failure, Opus kept for concurrency, `boundary`, `unknown_cause`, `refusal`; or hold until the reset | [measured for `sonnet/medium`; judgment for the rest] |
+| 7d ≥ 90% | ask with `AskUserQuestion` (recommended option first, plus **Hold on**; recommend continue-as-routed when the remaining work is flagged or sensitive, otherwise saver routing): continue as routed; **saver routing** — unflagged, non-`sensitive` steps that fail the gate → `sonnet/medium`, the gate admits any M step, `algorithm`/`state` flags → `sonnet/high` with the sketch and escalation on the first failure, Opus kept for concurrency, `unknown_cause`, `refusal`, `boundary` stays `sonnet/high`; or hold until the reset | [measured for `sonnet/medium`; judgment for the rest] |
 | User waiting / urgent | no Haiku; gate-passing steps → `sonnet/high`; Opus signal steps keep Opus, and say it is slower; no `opus/high` or Fable unless earned | [measured wall time; judgment] |
 
 When a cap blocks a needed escalation, tell the user what it is costing; don't quietly break it.
