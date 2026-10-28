@@ -151,7 +151,8 @@ are counted from the review files themselves.
 
 ### The main flow
 
-You approve at two gates, the plan and the merge. Everything between them runs on its own.
+You approve the plan. Between that and the merge it runs on its own; you see the merge only if
+`orch merge` refuses it.
 
 ```mermaid
 flowchart TD
@@ -170,10 +171,12 @@ flowchart TD
     W --> I[Implement<br/>see the next chart]
     I --> CR[Code review<br/>+ security review if scheduled]
     CR --> F{Findings?}
-    F -->|none| GT[Final gate:<br/>the plan's verification commands]
+    F -->|none| LS{Diff reaches a sensitive<br/>area not yet reviewed?}
+    LS -->|yes| LSR[Late security review] --> F
+    LS -->|no| GT[Final gate:<br/>the plan's verification commands]
     F -->|yes, round ≤ 3| FX[Implementer fixes] --> CR
-    F -->|still open after round 3| ESC[Escalate tier once,<br/>or hand dispute to you]
-    ESC --> G2
+    F -->|still open after round 3,<br/>same class| ESC[Escalate tier:<br/>one fresh pass] --> CR
+    F -->|disputed after round 3| G2
     GT --> MG{orch merge:<br/>every condition holds<br/>and policy is merge: auto?}
     MG -->|yes| M[git merge --no-ff<br/>local, never pushed,<br/>notify with revert command]
     MG -->|no| G2{{You approve the merge}}
