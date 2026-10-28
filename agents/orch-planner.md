@@ -67,7 +67,7 @@ not guess and pick silently, especially anywhere in the sensitive-area list.
 
 Every token you read stays in your context and is re-read on every later turn, and, if the plan
 continues (**If continued**), on every implementation turn too. Median planner end context was 342K
-(2026-10-25); under 200K (`CTX_MAX`) is the bar for continuing. This block is stricter than the shared
+(2026-10-25); under 230K (`CTX_MAX`) is the bar for continuing. This block is stricter than the shared
 "When to delegate" below and wins over it:
 
 - Send file reading and searches to `orch-explorer` by default: ask for the facts the plan needs

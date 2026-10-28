@@ -298,7 +298,9 @@ it's tied to this repo (prefer repo when unsure).
 ```
 
 **Promote, don't just log.** If the lesson changes a role's standing behaviour, edit it into that
-role's agent file (or this skill, for orchestrator behaviour) in the same change, and in
+role's source, `~/.claude/skills/orchestrate/roles/<role>.md` (or this skill, for orchestrator behaviour), and run
+`~/.claude/bin/orch-build-agents.py` in the same change — never `agents/orch-*.md`, which are generated and
+overwritten by the next build; and in
 `LESSONS.md` replace the entry with a one-line row in the *Promoted* table pointing at where it now
 lives. `LESSONS.md` should only hold lessons not yet promoted anywhere; if it grows past about a
 screen, consolidate.
