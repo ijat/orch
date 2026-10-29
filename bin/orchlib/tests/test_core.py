@@ -222,6 +222,14 @@ class TestInit(Base):
         self.assertEqual(roles["planner"]["state"], "n/a (lite)")
         self.assertEqual(self.journal_lines(d)[0]["mode"], "lite")
 
+    def test_interactive_mode(self):
+        d = self.init(mode="interactive")
+        roles = dict(st.Status.load(os.path.join(d, "status.md")).roles())
+        self.assertNotEqual(roles["planner"]["state"], "n/a (lite)")
+        self.assertIn("- mode: interactive\n", self.read(d, "status.md").decode())
+        self.assertEqual(self.journal_lines(d)[0]["mode"], "interactive")
+        self.ok("set", "planner_tier=session opus/high", "-t", "myapp/add-login")
+
     def test_repo_with_space_and_task_arg_forms(self):
         d = self.init(repo="My App", slug="fix-menu")
         self.assertEqual(d, os.path.join(self.root, "My App", "fix-menu"))

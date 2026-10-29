@@ -25,7 +25,7 @@ DEFAULT_ORDER = ("task_state", "mode", "shape", "milestone", "reviewed_through",
                  "base_branch", "task_branch", "worktree", "planner_tier", "implementer_tier", "review_round",
                  "usage_override")
 STRIP_CHARS = "*`_~\"' \t.,;:!()[]<>"
-MODES = ("standard", "lite")
+MODES = ("standard", "lite", "interactive")
 
 
 def template_fields():

@@ -13,7 +13,7 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 
 | kind | when | extra fields |
 |---|---|---|
-| `task_start` | task dir created | `mode` (standard/lite), `request` (≤ 1 line) |
+| `task_start` | task dir created | `mode` (standard/lite/interactive), `request` (≤ 1 line) |
 | `tier_choice` **choice** | before each planner/implementer/director spawn, and any non-default reviewer | `role`, `tier` (`<model>/<effort>`), `tradeoff` (≤ 1 line, see `TIERS.md`) |
 | `spawn` | each subagent spawn | `role`, `agent`, `tier`, `steps` (array or null), `usage_5h`, `usage_7d` |
 | `return` | each subagent returns | `role`, `agent`, `outcome` (done/blocked/failed/stopped), `tokens`, `tool_uses`, `duration_ms` (from the completion notice if it reports them, else null) |
@@ -30,7 +30,7 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 | `override` | the user overrides a default | `what` |
 | `direct_edit` | direct-edit allowance used | `what` |
 | `lesson` | LESSONS entry written or promoted | `file`, `title`, `promoted_to` (or null) |
-| `mode_switch` | lite task moved to standard | `from`, `to`, `reason` (scope_exceeded/ineligible/review_rounds/user), `phase` (plan/implement/review) |
+| `mode_switch` | lite or interactive task moved to standard | `from`, `to`, `reason` (scope_exceeded/ineligible/review_rounds/user), `phase` (plan/implement/review) |
 | `judgement` **choice** | any other non-obvious decision you made | `decision`, `confidence` (low/medium/high) |
 | `task_end` | task ends, any outcome | `outcome` (merged/declined/failed_merge/abandoned/handed_to_user), `rounds` |
 | `plan_shape` **choice** | every planner return | `shape` (single/roadmap), `criteria` (array of the planner's criterion numbers hit), `tier`, `overridden` (bool) |

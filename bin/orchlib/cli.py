@@ -111,8 +111,8 @@ def cmd_init(ns, extra):
         raise OrchError("bad repo name %r (no '/', no leading '.', no '|')" % repo, 1)
     if not SLUG_RE.match(slug):
         raise OrchError("bad slug %r (letters, digits, . _ -; must start with a letter or digit)" % slug, 1)
-    if ns.mode not in ("standard", "lite"):
-        raise OrchError("--mode must be standard or lite", 1)
+    if ns.mode not in ("standard", "lite", "interactive"):
+        raise OrchError("--mode must be standard, lite or interactive", 1)
     for name, val in (("--repo-path", ns.repo_path), ("--base", ns.base)):
         st.single_line(val, name)
         if not val.strip():

@@ -3,7 +3,7 @@
 orch is a multi-agent orchestration skill for [Claude Code](https://code.claude.com). The work
 moves through these steps:
 
-1. A **planner** writes a plan, and you approve it.
+1. A **planner** writes a plan, and you approve it. In interactive mode your own session is the planner.
 2. An **implementer** carries out the plan in its own git worktree.
 3. A **code reviewer** checks the diff, for up to 3 fix rounds. A **security reviewer** also runs
    when a rule says so: a step implements security-bound logic, or the change adds network exposure.
@@ -265,8 +265,18 @@ flowchart TB
         P3 --> P4[Review points and merge points<br/>where the roadmap puts them]
         P4 --> P3
     end
-    Lite ~~~ Program
+    subgraph Interactive["Interactive mode: you plan with the session"]
+        direction LR
+        I1[Your session plans with you,<br/>never writes code] --> I2{{You approve}} --> I3[Implementers, reviewers<br/>and merge as in the main flow]
+    end
+    Lite ~~~ Program ~~~ Interactive
 ```
+
+In **interactive mode** the session you started is the planner: you talk the design through with it
+directly instead of through a spawned planner, and it then hands the work to implementers and reviewers
+on cheaper models. It never writes product code itself. It plans at your session's model, so start the
+session on the model you want planning (say Opus). At the plan gate it offers a fresh session for the
+implement/review loop, since the planning conversation makes every later turn more expensive.
 
 Every decision (tier choice, escalation, gate, pilot, check-in) is appended to `journal.jsonl`,
 and `bin/orch-stats.sh` aggregates the journals across tasks.
@@ -348,14 +358,32 @@ Without the cache, `usage-check.sh` reports `UNKNOWN`. The skill treats `UNKNOWN
 it runs slowed down the whole time and can't auto-pause or resume. Rate limits appear in the
 statusline input only on Pro/Max plans.
 
-To have Claude offer the mode on its own, add a line like this to `~/.claude/CLAUDE.md`:
+### Make Claude use it without being asked
 
-> Before a new feature, or a bugfix or refactor that spans several files, offer the orchestration
-> mode (standard, or lite for small low-risk tasks) alongside normal single-session mode.
+Installing the skill isn't enough on its own: Claude loads a skill only when your request matches its
+description, so in practice it runs when you say "orchestrate". To have Claude raise it itself, add this
+to `~/.claude/CLAUDE.md` (loaded in every session):
+
+```markdown
+## Orchestration mode — offer it before non-trivial work
+
+- Before a new feature, a bugfix or refactor spanning several files, or anything that would warrant a
+  written plan: offer me orchestration mode (standard; lite for small, low-risk tasks; interactive to
+  plan it with me in this session) or normal single-session mode. Recommend one, let me pick, ask
+  once, then get on with it.
+- Don't offer it for questions, read-only research, trivial edits, or when I already chose the approach.
+- If I pick it, load the `orchestrate` skill and follow it. Orchestration tasks run in a git worktree
+  by default: choosing the mode is the request.
+```
+
+To skip the question, replace the first bullet with "When a task would warrant orchestration mode, use
+it without asking first." To make planning together the default, end it with "Recommend interactive
+mode when the task needs a real plan."
 
 ## Use
 
-Say "orchestrate this" (or "lite mode" for a small task) and describe the work. Task files go to
+Say "orchestrate this" (or "lite mode" for a small task, or "orchestrate interactive" to plan it with
+the session) and describe the work. Task files go to
 `~/.claude/orchestrations/<repo>/<task>/`.
 
 To watch your tasks, run `orch dashboard --serve` (add `--port N` to change the port, `--open` to open
