@@ -4,7 +4,7 @@
      task_state holds EXACTLY one enum value, nothing after it (orch-index.sh parses it). -->
 
 - task_state: planning | awaiting_approval | implementing | reviewing | awaiting_merge | paused_usage_limit | done | abandoned
-- mode: standard | lite
+- mode: standard | lite | interactive
 - shape: single | roadmap
 - milestone: n/a | M<n> — <detail-plan | implementing | testing | reviewing | awaiting_merge>   (roadmap only)
 - reviewed_through: none | <sha>   (roadmap only)
@@ -32,4 +32,4 @@
 <!-- Row states: pending | in_progress | waiting | blocked | failed | done. `waiting` = idle inside the
      director loop until a message arrives; not a return. Roles set only their own row; task_state is
      the orchestrator's. Security reviewer also:
-     not_offered | declined. Any role also: skipped (e.g. `code-reviewer: skipped (<reason>)`, with an `override` journal line). Lite mode: planner is n/a (the implementer plans). Director is n/a unless the plan has visual steps. Parallel parts get their own row: implementer:<part>. -->
+     not_offered | declined. Any role also: skipped (e.g. `code-reviewer: skipped (<reason>)`, with an `override` journal line). Lite mode: planner is n/a (the implementer plans). Interactive mode: the planner row is this session (planner_tier `session <model>/<effort>`). Director is n/a unless the plan has visual steps. Parallel parts get their own row: implementer:<part>. -->

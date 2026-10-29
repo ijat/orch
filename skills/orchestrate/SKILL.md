@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run a multi-agent orchestration workflow (planner → implementer → code review → security review by rule → merge) for non-trivial, multi-step engineering work. Use when the user picks "orchestration mode", says "orchestrate this", "run this with subagents", "plan then implement then review", or accepts the orchestration offer for a feature, refactor, or multi-file bugfix. State lives in per-task Markdown files (via the `orch` CLI); usage-paced; merges automatically when clean; works in a git worktree. Also has a **lite mode** (one agent plans and implements) for small, low-risk tasks — use when the user picks "lite mode" / "orchestrate lite" — and **program mode** (a roadmap of milestones, `PROGRAM.md`) — use when the user asks to "plan this in milestones", "roadmap this", or resumes a multi-milestone program.
+description: Run a multi-agent orchestration workflow (planner → implementer → code review → security review by rule → merge) for non-trivial, multi-step engineering work. Use when the user picks "orchestration mode", says "orchestrate this", "run this with subagents", "plan then implement then review", or accepts the orchestration offer for a feature, refactor, or multi-file bugfix. State lives in per-task Markdown files (via the `orch` CLI); usage-paced; merges automatically when clean; works in a git worktree. Also has a **lite mode** (one agent plans and implements) for small, low-risk tasks — use when the user picks "lite mode" / "orchestrate lite" — and **program mode** (a roadmap of milestones, `PROGRAM.md`) — use when the user asks to "plan this in milestones", "roadmap this", or resumes a multi-milestone program — and **interactive mode** (this session plans with the user, subagents implement and review) — use when the user picks "interactive mode", "orchestrate interactive" or "plan it with me".
 ---
 
 # Orchestration mode
@@ -340,16 +340,60 @@ fails eligibility, or round 2 ends with findings open: journal a `mode_switch` (
 switch at planning spawns a real planner that is given the lite `plan.md` as its starting findings.
 Don't argue an agent out of `scope_exceeded`.
 
+## Interactive mode
+
+**You** are the planner as well as the orchestrator: the user talks to you while the plan takes shape,
+and implementers, reviewers and the merge run exactly as in standard mode. Use it when the user picks
+"interactive mode" / "orchestrate interactive" / "plan it with me". Any size of task, including a roadmap.
+
+**The boundary is the point of the mode: you never write product code.** Not while planning, not after
+the gate, not in fix rounds. Your writes are the task directory (the planner's files plus your
+bookkeeping); every code change goes to an `orch-implementer` (steps 7 and 9). *Direct edits* still
+applies after the gate and nowhere else. Your plan's `continue:` line is always
+`no — interactive (the session never implements)`, and step 7 skips `orch continue-gate`.
+
+**Tier.** You plan at the session's own model and effort (write `unknown` for an effort you can't
+see); never switch your own. Run **Tier selection** first: if it calls for a planner above the
+session's tier, say so and let the user pick — restart the session at that tier, switch to standard
+mode (a spawned planner at that tier), or go on here (journal `override`). Record
+`planner_tier=session <model>/<effort>` and a `tier_choice` (`role=planner`, `tradeoff`
+`interactive: session plans`).
+
+**Flow** — the standard procedure with these differences:
+
+- **Step 3:** `orch init … --mode interactive`.
+- **Step 4:** you do the planner's job. Read `~/.claude/agents/orch-planner.md` once and follow it as
+  the planner, except: the user's conversation is your brief; skip **If continued**; a question it
+  would return `blocked` with goes straight to the user after rungs 1–2 of the escalation ladder;
+  `need: shape_roadmap` below `opus/max` → tell the user and continue only if they agree (else
+  standard mode at `opus/max`). Its **Your context is the cost** rules bind you harder than a
+  planner: your context also carries the implement and review loop. Talk the design through with the
+  user before writing; until the first gate, edit the draft freely; after it, revisions are
+  `## Revision N` sections you append yourself. The gate itself, `orch plan-check`, the plan
+  reviewer (roadmaps, `opus/max` plans) and the approval are unchanged.
+- **At the gate**, add one line: the implement/review loop is cheaper in a fresh session (`/clear`,
+  then "resume <repo>/<slug>") since this one carries the whole planning conversation; staying keeps
+  it at hand. Their choice. A resumed session stays in interactive mode and under the same boundary.
+- **Program mode:** you write `roadmap.md`; milestone `plan.md`s are spawned per `PROGRAM.md` unless
+  the user asks you to write one.
+- **Later plan revisions** (an implementer's `plan_flag`, a blocker, user feedback): you append them.
+  A plan whose own design kept failing escalates as in standard: spawn an `orch-planner` at the ladder
+  tier (`escalation: post-failure`).
+
+**Switching to standard:** the user asks for it, or the tier check above sends it there. Journal a
+`mode_switch` (`from interactive`), set `mode: standard`, and spawn the planner with your `notes.md`
+and any draft `plan.md` as starting findings.
+
 ## Procedure
 
 Every spawn below follows the **Dispatch protocol**. In lite mode, apply the **Lite mode**
-differences at steps 3, 4, 5, 7 and 9.
+differences at steps 3, 4, 5, 7 and 9; in interactive mode, the **Interactive mode** differences.
 
 ### 1. Confirm the mode
 
 If the user hasn't chosen orchestration mode, confirm it's warranted (`~/.claude/CLAUDE.md`,
 "Orchestration mode"). Trivial or read-only work: say so and just do it. If the user didn't say
-standard or lite, recommend one against the lite eligibility rules and let them pick.
+standard, lite or interactive, recommend one against the lite eligibility rules and let them pick.
 
 ### 2. Resume check — always first
 
@@ -588,3 +632,4 @@ worktree and task directory plus the branch name.
   treat a sketch as binding, or a sketch deviation as a review finding.
 - Run lite mode on an ineligible task without the user forcing it; skip its plan gate or review;
   run a lite task past 2 fix rounds without switching to standard.
+- Write product code yourself in interactive mode beyond *Direct edits*, or continue yourself as the implementer.
