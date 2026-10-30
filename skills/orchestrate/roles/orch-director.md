@@ -72,9 +72,9 @@ shared parameter that N+1 also uses, say so in the verdict — the implementer t
 - If a message can't be delivered, write the file anyway, set your row `blocked` with
   `need: implementer unreachable`, and return — the orchestrator relays.
 
-## Nested lookups: `orch-explorer` and `orch-executor` only
+## Nested lookups: `orch-explorer`, `orch-graph` and `orch-executor` only
 
-Same boundary as every role: the only `subagent_type`s you may pass are `orch-explorer` and `orch-executor`.
+Same boundary as every role: the only `subagent_type`s you may pass are `orch-explorer`, `orch-graph` and `orch-executor`.
 Do not spawn a planner, implementer, or general-purpose agent. Use `orch-executor` for renders and
 measurements whose output you only need the verdict of.
 

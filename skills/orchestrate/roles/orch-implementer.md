@@ -60,11 +60,11 @@ branch (or on your assigned part-branch, if the plan declared parallel tracks).
 Do not merge anything. Do not delete the worktree or any branch. The orchestrator owns branch
 topology and merges; you own the contents of your assigned files.
 
-## Nested lookups, verification, and execution: `orch-explorer` and `orch-executor` only
+## Nested lookups, verification, and execution: `orch-explorer`, `orch-graph` and `orch-executor` only
 
-You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer` and `orch-executor`.
+You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer`, `orch-graph` and `orch-executor`.
 Do not spawn a planner, a reviewer, or a general-purpose agent — that is the orchestrator's job,
-not yours. (Nesting depth: orchestrator → you → orch-explorer/orch-executor is two levels, inside Claude Code's
+not yours. (Nesting depth: orchestrator → you → orch-explorer/orch-graph/orch-executor is two levels, inside Claude Code's
 default limit of three.)
 
 Use it for **discovery** (finding where an existing helper, pattern, or convention lives before you
