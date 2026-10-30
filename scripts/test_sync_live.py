@@ -10,12 +10,14 @@ from its own files, and a private overlay, private file and denylist. Every run 
 Run: python3 scripts/test_sync_live.py
 """
 import contextlib
+import fcntl
 import hashlib
 import importlib.util
 import io
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -104,6 +106,16 @@ def write(path, data, exe=False):
     os.chmod(path, 0o755 if exe else 0o644)
 
 
+def rb(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def rt(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
 def listing(root):
     out = {}
     for cur, _dirs, names in os.walk(root):
@@ -171,10 +183,12 @@ class World(unittest.TestCase):
             m[r] = r
         return m
 
-    def build_live(self, manifest=True):
+    def build_live(self, manifest=True, root=None, managed=None):
         """Live = overlay applied to the repo's files, written independently of sync-live; then a
-        manifest of exactly those files at HEAD (unless manifest=False)."""
-        for live_rel, repo_rel in self.managed().items():
+        manifest of exactly those files at HEAD (unless manifest=False). With `root`, the image is
+        written there instead (the expected result of a sync) and no manifest is written."""
+        root = root or self.live
+        for live_rel, repo_rel in (managed or self.managed()).items():
             src = os.path.join(self.repo, repo_rel)
             with open(src, encoding="utf-8") as f:
                 text = f.read()
@@ -182,8 +196,8 @@ class World(unittest.TestCase):
                 if e["path"] == repo_rel:
                     self.assertEqual(text.count(e["public"]), 1)
                     text = text.replace(e["public"], e["live"])
-            write(os.path.join(self.live, live_rel), text, bool(os.stat(src).st_mode & 0o100))
-        if manifest:
+            write(os.path.join(root, live_rel), text, bool(os.stat(src).st_mode & 0o100))
+        if manifest and root == self.live:
             self.write_manifest()
 
     def head(self):
@@ -729,6 +743,394 @@ class StateTests(World):
         rc, out = self.run_sync("--dry-run")
         self.assertEqual(rc, 1, out)
         self.assertIn("REFUSE: interrupted sync 20260304T000000Z: run --rollback", out)
+
+
+# An overlay check for the write phase. On live (ORCH_HOME == live), once the new content is there
+# (MARKER in bin/orchlib/a.py), it records the inode of that file and acts per MODE.
+WRITE_CHECK = """import os, sys, time
+live, marker, out, mode = sys.argv[1:5]
+root = os.environ["ORCH_HOME"]
+if root == live:
+    p = os.path.join(live, "bin/orchlib/a.py")
+    with open(out + ".inode", "w") as f:
+        f.write(str(os.stat(p).st_ino))
+    if mode == "drift":
+        with open(os.path.join(live, "bin/x.sh"), "w") as f:
+            f.write("#!/bin/bash\\necho raced\\n")
+    with open(p) as f:
+        has = marker in f.read()
+    if has:
+        if mode == "tamper":
+            with open(p + ".t", "w") as f:
+                f.write("A = 'tampered'\\n")
+            os.replace(p + ".t", p)
+        if mode == "sleep":
+            open(out + ".reached", "w").close()
+            time.sleep(60)
+        print("WARN marker present")
+print("ok")
+"""
+
+MARK = "MARK"
+OLD_SH = "#!/bin/bash\necho old\n"
+
+
+class WriteTests(World):
+    def state(self):
+        return os.path.join(self.live, ".orch-sync")
+
+    def records(self):
+        d = os.path.join(self.state(), "syncs")
+        out = []
+        for stamp in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            with open(os.path.join(d, stamp, "record.json"), encoding="utf-8") as f:
+                out.append((stamp, json.load(f)))
+        return out
+
+    def image(self, root=None):
+        """{rel: (sha256, mode)} of every file under root (default live) except the state dir."""
+        root = root or self.live
+        return {k: v for k, v in listing(root).items() if not k.startswith(".orch-sync")}
+
+    def dirs(self):
+        return sorted(os.path.relpath(os.path.join(c, d), self.live) for c, ds, _ in os.walk(self.live)
+                      for d in ds if not os.path.relpath(os.path.join(c, d), self.live).startswith(".orch-sync"))
+
+    def set_write_check(self, mode):
+        script = os.path.join(self.tmp, "wcheck.py")
+        write(script, WRITE_CHECK)
+        self.out = os.path.join(self.tmp, "wcheck-out")
+        self.ov["checks"] = [{"name": "w", "argv": [sys.executable, "-I", "-B", script, "{live}", MARK,
+                                                    self.out, mode]}]
+        self.write_overlay()
+
+    def old_file_world(self):
+        """Live and manifest also hold bin/old.sh (exec) and bin/orchlib/old.py, both in the repo's
+        tables; then HEAD drops them, adds bin/new.sh (exec) and bin/orchlib/sub/z.py (a new dir), and
+        changes a.py (with MARK) and x.sh. Returns the managed dict of the pre-sync live."""
+        self.set_tables(', "bin/old.sh"')
+        write(os.path.join(self.repo, "bin/old.sh"), OLD_SH, True)
+        write(os.path.join(self.repo, "bin/orchlib/old.py"), "OLD = 1\n")
+        self.commit("with old files")
+        files = dict(self.managed(), **{"bin/old.sh": "bin/old.sh", "bin/orchlib/old.py": "bin/orchlib/old.py"})
+        self.build_live(manifest=False, managed=files)
+        self.write_manifest(files)
+        self.set_tables(', "bin/new.sh"')
+        os.remove(os.path.join(self.repo, "bin/old.sh"))
+        os.remove(os.path.join(self.repo, "bin/orchlib/old.py"))
+        write(os.path.join(self.repo, "bin/new.sh"), "#!/bin/bash\necho new\n", True)
+        write(os.path.join(self.repo, "bin/orchlib/sub/z.py"), "Z = 1\n")
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 2  # %s\n" % MARK)
+        write(os.path.join(self.repo, "bin/x.sh"), "#!/bin/bash\n# public comment\necho bye\n", True)
+        self.commit("sync target")
+        return files
+
+    def after_managed(self):
+        m = self.managed()
+        m["bin/new.sh"] = "bin/new.sh"
+        m["bin/orchlib/sub/z.py"] = "bin/orchlib/sub/z.py"
+        return m
+
+    def test_T4_1_init_sync_end_to_end(self):
+        pre = {rel: rb(os.path.join(self.live, rel)) for rel in self.managed()}
+        self.drop_state()
+        base = self.head()
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 2\n")
+        write(os.path.join(self.repo, "bin/x.sh"), "#!/bin/bash\n# public comment\necho bye\n", True)
+        self.commit("change")
+        expect = os.path.join(self.tmp, "expect")
+        self.build_live(manifest=False, root=expect)
+        rc, out = self.run_sync("--init", base)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("synced rev", out)
+        self.assertIn("0 created, 2 updated, 0 deleted, 0 adopted, 7 unchanged", out)
+        for rel in self.managed():
+            p = os.path.join(self.live, rel)
+            with open(p, "rb") as f, open(os.path.join(expect, rel), "rb") as g:
+                self.assertEqual(f.read(), g.read(), rel)
+            self.assertEqual(os.stat(p).st_mode & 0o100, os.stat(os.path.join(expect, rel)).st_mode & 0o100, rel)
+        (stamp, rec), = self.records()
+        self.assertEqual((rec["status"], rec["kind"], rec["rev"]), ("done", "init", self.head()))
+        self.assertIsNone(rec["prev_manifest"])
+        self.assertEqual(sorted(o["path"] for o in rec["ops"]), ["bin/orchlib/a.py", "bin/x.sh"])
+        for o in rec["ops"]:
+            bp = os.path.join(self.state(), "syncs", stamp, "before", o["path"])
+            with open(bp, "rb") as f:
+                self.assertEqual(f.read(), pre[o["path"]])
+        with open(os.path.join(self.state(), "manifest.json"), encoding="utf-8") as f:
+            m = json.load(f)
+        self.assertEqual((m["rev"], m["record"]), (self.head(), stamp))
+        self.assertEqual(sorted(m["files"]), sorted(self.managed()))
+        for lr, rr in self.managed().items():
+            data = rb(os.path.join(expect, lr))
+            self.assertEqual(m["files"][lr], {"sha256": hashlib.sha256(data).hexdigest(),
+                                              "exec": bool(os.stat(os.path.join(expect, lr)).st_mode & 0o100),
+                                              "repo_path": rr})
+        self.assertEqual(os.stat(self.state()).st_mode & 0o777, 0o700)
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("nothing to do", out)
+        self.assertEqual(os.listdir(self.tmpdir), [], "temp dir left behind")
+
+    def test_T4_2_update_create_delete(self):
+        self.old_file_world()
+        a = os.path.join(self.live, "bin/orchlib/a.py")
+        sk = os.path.join(self.live, "skills/orchestrate/SKILL.md")
+        a_ino, sk_stat = os.stat(a).st_ino, os.stat(sk)
+        pre_old = rb(os.path.join(self.live, "bin/old.sh"))
+        rc, out = self.run_sync()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("2 created, 2 updated, 2 deleted, 0 adopted, 7 unchanged", out)
+        (stamp, rec), = self.records()
+        self.assertEqual(rec["status"], "done")
+        ops = {o["path"]: o["op"] for o in rec["ops"]}
+        self.assertEqual(ops, {"bin/new.sh": "create", "bin/orchlib/sub/z.py": "create",
+                               "bin/old.sh": "delete", "bin/orchlib/old.py": "delete",
+                               "bin/orchlib/a.py": "update", "bin/x.sh": "update"})
+        with open(os.path.join(self.state(), "syncs", stamp, "before", "bin/old.sh"), "rb") as f:
+            self.assertEqual(f.read(), pre_old)
+        self.assertTrue(os.path.exists(os.path.join(self.state(), "syncs", stamp, "before", "bin/orchlib/old.py")))
+        self.assertFalse(os.path.exists(os.path.join(self.live, "bin/old.sh")))
+        self.assertFalse(os.path.exists(os.path.join(self.live, "bin/orchlib/old.py")))
+        self.assertEqual(os.stat(os.path.join(self.live, "bin/new.sh")).st_mode & 0o777, 0o755)
+        self.assertEqual(os.stat(os.path.join(self.live, "bin/orchlib/sub/z.py")).st_mode & 0o777, 0o644)
+        self.assertNotEqual(os.stat(a).st_ino, a_ino)
+        now = os.stat(sk)
+        self.assertEqual((now.st_ino, now.st_mtime_ns), (sk_stat.st_ino, sk_stat.st_mtime_ns))
+        expect = os.path.join(self.tmp, "expect")
+        self.build_live(manifest=False, root=expect, managed=self.after_managed())
+        for rel in self.after_managed():
+            self.assertEqual(rb(os.path.join(self.live, rel)),
+                             rb(os.path.join(expect, rel)), rel)
+        with open(os.path.join(self.state(), "manifest.json"), encoding="utf-8") as f:
+            self.assertEqual(sorted(json.load(f)["files"]), sorted(self.after_managed()))
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("nothing to do", out)
+
+    def test_T4_3_bystanders(self):
+        self.ov["protect"] = ["skills/other"]
+        self.write_overlay()
+        by = {"skills/other/keep.md": "k\n", ".backup-x/f": "b\n", "settings.json": "{}\n",
+              "projects/p/memory/m.md": "m\n", "agents/other.md": "o\n",
+              "bin/orchlib/readme.txt": "not taken by the tree filter\n", "notes-live.txt": "n\n"}
+        for rel, text in by.items():
+            write(os.path.join(self.live, rel), text, rel.endswith(".sh"))
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 2\n")
+        self.commit("change")
+        before = {rel: (rb(os.path.join(self.live, rel)), os.stat(os.path.join(self.live, rel)))
+                  for rel in by}
+        self.assertEqual(self.run_sync()[0], 0)
+        for rel, (data, st) in before.items():
+            p = os.path.join(self.live, rel)
+            self.assertEqual(rb(p), data, rel)
+            self.assertEqual((os.stat(p).st_ino, os.stat(p).st_mtime_ns), (st.st_ino, st.st_mtime_ns), rel)
+        for cfg in (self.overlay, self.private, self.deny):
+            self.assertTrue(os.path.exists(cfg))
+
+    def failing_world(self, mode="marker"):
+        self.old_file_world()
+        self.set_write_check(mode)
+        return self.image(), self.dirs(), rb(os.path.join(self.state(), "manifest.json"))
+
+    def test_T4_4_post_gate_failure_restores(self):
+        image, dirs, manifest = self.failing_world()
+        rc, out = self.run_sync()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("post-sync gates failed", out)
+        self.assertIn("check w: new WARN marker present", out)
+        self.assertEqual(self.image(), image)
+        self.assertEqual(self.dirs(), dirs)
+        self.assertEqual(rb(os.path.join(self.state(), "manifest.json")), manifest)
+        (stamp, rec), = self.records()
+        self.assertEqual(rec["status"], "rolled-back")
+        with open(self.out + ".inode") as f:
+            recorded = int(f.read())  # the inode of the new a.py while the check ran
+        a = os.path.join(self.live, "bin/orchlib/a.py")
+        self.assertEqual(rt(a), "A = 1\n")
+        self.assertNotEqual(os.stat(a).st_ino, recorded)
+        self.assertFalse(os.path.exists(os.path.join(self.live, "bin/new.sh")))
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("update bin/orchlib/a.py", out)
+
+    def test_T4_4b_deleted_file_restored_with_exec_bit(self):
+        self.failing_world()
+        p = os.path.join(self.live, "bin/old.sh")
+        self.assertEqual(os.stat(p).st_mode & 0o777, 0o755)
+        self.assertEqual(self.run_sync()[0], 1)
+        self.assertEqual(rt(p), OLD_SH.replace("\\\n", "\n"))
+        self.assertEqual(os.stat(p).st_mode & 0o777, 0o755)
+        self.assertEqual(os.stat(os.path.join(self.live, "bin/orchlib/old.py")).st_mode & 0o777, 0o644)
+
+    def test_T4_5_unwritable_parent_dir(self):
+        if os.geteuid() == 0:
+            self.skipTest("root ignores directory permissions")
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 2\n")
+        write(os.path.join(self.repo, "bin/x.sh"), "#!/bin/bash\n# public comment\necho bye\n", True)
+        self.commit("change")
+        image, manifest = self.image(), rb(os.path.join(self.state(), "manifest.json"))
+        d = os.path.join(self.live, "bin/orchlib")
+        os.chmod(d, 0o555)
+        self.addCleanup(os.chmod, d, 0o755)
+        rc, out = self.run_sync()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("sync failed", out)
+        os.chmod(d, 0o755)
+        self.assertEqual(self.image(), image)
+        self.assertEqual(rb(os.path.join(self.state(), "manifest.json")), manifest)
+        (stamp, rec), = self.records()
+        self.assertEqual(rec["status"], "rolled-back")
+        self.assertEqual(rt(os.path.join(self.live, "bin/x.sh")).count("echo hi"), 1)
+
+    def test_T4_6_lock_held(self):
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 2\n")
+        self.commit("change")
+        image = self.image()
+        fd = os.open(os.path.join(self.state(), "lock"), os.O_CREAT | os.O_RDWR, 0o600)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        rc, out = self.run_sync()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("another sync or rollback is running", out)
+        self.assertEqual(self.image(), image)
+        self.assertEqual(sorted(os.listdir(self.state())), ["lock", "manifest.json"])
+
+    def test_T4_7_drift_creates_no_record(self):
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 2\n")
+        self.commit("change")
+        write(os.path.join(self.live, "bin/x.sh"), "#!/bin/bash\necho drift\n", True)
+        image = self.image()
+        rc, out = self.run_sync()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: drift bin/x.sh", out)
+        self.assertEqual(self.image(), image)
+        self.assertEqual(os.listdir(self.state()), ["manifest.json"])
+
+    def test_T4_8_restore_leaves_a_tampered_path(self):
+        image, dirs, manifest = self.failing_world("tamper")
+        rc, out = self.run_sync()
+        self.assertEqual(rc, 3, out)
+        (stamp, rec), = self.records()
+        self.assertEqual(rec["status"], "rollback-failed")
+        self.assertIn("RESTORE INCOMPLETE", out)
+        self.assertIn("bin/orchlib/a.py: at neither its before nor its after state", out)
+        self.assertIn(os.path.join(self.state(), "syncs", stamp), out)
+        self.assertEqual(rt(os.path.join(self.live, "bin/orchlib/a.py")), "A = 'tampered'\n")
+        # everything else is back
+        now = self.image()
+        now.pop("bin/orchlib/a.py"); image.pop("bin/orchlib/a.py")
+        self.assertEqual(now, image)
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("interrupted sync %s: run --rollback" % stamp, out)
+
+    def test_T4_9_completed_pending_is_finished(self):
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 2\n")
+        self.commit("change")
+        self.assertEqual(self.run_sync()[0], 0)
+        (stamp, rec), = self.records()
+        rp = os.path.join(self.state(), "syncs", stamp, "record.json")
+        rec["status"] = "pending"
+        write(rp, json.dumps(rec))
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("left pending", out)
+        image, manifest = self.image(), rb(os.path.join(self.state(), "manifest.json"))
+        rc, out = self.run_sync()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("nothing to do", out)
+        self.assertEqual(self.records()[0][1]["status"], "done")
+        self.assertEqual(self.image(), image)
+        self.assertEqual(rb(os.path.join(self.state(), "manifest.json")), manifest)
+        self.assertEqual(len(self.records()), 1)
+
+    def test_T4_10_refused_init_creates_nothing(self):
+        self.drop_state()
+        base = self.head()
+        self.set_tables(', "bin/new.sh"')
+        write(os.path.join(self.repo, "bin/new.sh"), "#!/bin/bash\necho new\n", True)
+        self.commit("new file")
+        write(os.path.join(self.live, "bin/new.sh"), "#!/bin/bash\necho other\n", True)
+        rc, out = self.run_sync("--init", base)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: conflict bin/new.sh", out)
+        self.assertFalse(os.path.exists(self.state()))
+
+    def test_T4_11_sigterm_restores(self):
+        image, dirs, manifest = self.failing_world("sleep")
+        cmd = [sys.executable, os.path.join(self.repo, "scripts", "sync-live.py"), "--live", self.live]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=self.env,
+                             universal_newlines=True)
+        try:
+            deadline = time.time() + 60
+            while not os.path.exists(self.out + ".reached"):
+                if p.poll() is not None:
+                    self.fail("sync ended early: " + p.stdout.read())
+                self.assertLess(time.time(), deadline, "the post-gate check was never reached")
+                time.sleep(0.05)
+            p.send_signal(signal.SIGTERM)
+            out, _ = p.communicate(timeout=30)
+        finally:
+            if p.poll() is None:
+                p.kill(); p.communicate()
+        self.assertEqual(p.returncode, 1, out)
+        self.assertIn("interrupted (SIGTERM)", out)
+        self.assertEqual(self.image(), image)
+        self.assertEqual(self.dirs(), dirs)
+        self.assertEqual(rb(os.path.join(self.state(), "manifest.json")), manifest)
+        (stamp, rec), = self.records()
+        self.assertEqual(rec["status"], "rolled-back")
+
+    def test_T4_12_revert_manifest_only_if_this_record_wrote_it(self):
+        mod = self.module()
+        state = self.state()
+        mp = os.path.join(state, "manifest.json")
+        prev = json.loads(rt(mp))
+        new = dict(prev, record="20270101T000000Z")
+        write(mp, json.dumps(new))
+        rec = {"stamp": "20270101T000000Z", "prev_manifest": prev}
+        self.assertEqual(mod.revert_manifest(state, rec), [])
+        self.assertEqual(json.loads(rt(mp)), prev)
+        self.assertEqual(mod.revert_manifest(state, rec), [])  # not this record's: left alone
+        self.assertEqual(json.loads(rt(mp)), prev)
+        write(mp, json.dumps(new))
+        self.assertEqual(mod.revert_manifest(state, dict(rec, prev_manifest=None)), [])
+        self.assertFalse(os.path.exists(mp))
+
+    def test_T4_13_change_between_plan_and_lock_is_caught(self):
+        self.old_file_world()
+        self.set_write_check("drift")  # the baseline run on live edits bin/x.sh after the plan was made
+        rc, out = self.run_sync()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("live changed while the sync was starting", out)
+        self.assertEqual(rt(os.path.join(self.live, "bin/x.sh")), "#!/bin/bash\necho raced\n")
+        self.assertTrue(os.path.exists(os.path.join(self.live, "bin/old.sh")))
+        self.assertFalse(os.path.exists(os.path.join(self.live, "bin/new.sh")))
+        self.assertEqual(self.records(), [])
+
+    def test_T4_14_manifest_written_then_record_write_fails(self):
+        self.old_file_world()
+        image, dirs, manifest = self.image(), self.dirs(), rb(os.path.join(self.state(), "manifest.json"))
+        mod = self.module()
+        real = mod.write_json_atomic
+
+        def flaky(path, obj):
+            if path.endswith("record.json") and obj.get("status") == "done":
+                raise OSError("injected: disk full")
+            real(path, obj)
+        work = os.path.join(self.tmp, "work")
+        os.makedirs(work)
+        with self.sandbox_env(), mock.patch.object(mod, "write_json_atomic", flaky), \
+                contextlib.redirect_stdout(io.StringIO()) as buf:
+            rc = mod.run(mod.parse_args(["--live", self.live]), self.repo, work)
+        self.assertEqual(rc, 1, buf.getvalue())
+        self.assertIn("injected: disk full", buf.getvalue())
+        self.assertEqual(self.image(), image)
+        self.assertEqual(self.dirs(), dirs)
+        self.assertEqual(json.loads(rb(os.path.join(self.state(), "manifest.json"))), json.loads(manifest))
+        (stamp, rec), = self.records()
+        self.assertEqual(rec["status"], "rolled-back")
 
 
 if __name__ == "__main__":
