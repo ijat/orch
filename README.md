@@ -307,6 +307,12 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 
 Requires Claude Code, `git`, `jq` and Python 3.9 or newer.
 
+Runs on macOS, Linux and Windows. On Windows, Claude Code runs its Bash tool through Git Bash, so run
+`install.sh` from Git Bash too, with `jq` and Python on its `PATH`. The scripts look for `python3`, then
+`python`; `orch` itself starts from a `#!/usr/bin/env python3` line, so if Git Bash has only `python`,
+add a `python3` shim to your `PATH` (e.g. `printf '#!/bin/sh\nexec python "$@"\n' > ~/bin/python3`).
+On Windows, task locks use `msvcrt` instead of `fcntl`, and process checks skip `ps`.
+
 ```bash
 git clone <this repo> orch && cd orch
 ./install.sh --dry-run   # list what would change
