@@ -542,6 +542,105 @@ class GateTests(World):
         self.assertIn("REFUSE: check slow fails on current live: timed out", out)
         self.assertLess(time.time() - t0, 20)
 
+    # --- privacy gates: each fail-closed check is pinned by a test ---
+
+    def state_listing(self):
+        return listing(self.live), os.path.exists(os.path.join(self.live, ".orch-sync", "syncs"))
+
+    def test_T2c_1_denylisted_word_in_unmanaged_tracked_file(self):
+        write(os.path.join(self.repo, "notes.txt"), "not managed\nSECRETWORD here\n")
+        self.commit("private word")
+        before = self.state_listing()
+        for args in (("--dry-run",), ()):
+            with self.subTest(args=args):
+                rc, out = self.run_sync(*args)
+                self.assertEqual(rc, 1, out)
+                self.assertIn("DENYLIST notes.txt:2", out)
+                self.assertEqual(self.state_listing(), before)
+
+    def test_T2c_2_denylisted_word_in_managed_file_public_text(self):
+        write(os.path.join(self.repo, "bin/x.sh"), "#!/bin/bash\n# public comment\n# SECRETWORD\necho hi\n", True)
+        self.commit("private word in a managed file")
+        before = self.state_listing()
+        for args in (("--dry-run",), ()):
+            with self.subTest(args=args):
+                rc, out = self.run_sync(*args)
+                self.assertEqual(rc, 1, out)
+                self.assertIn("DENYLIST bin/x.sh:3", out)
+                self.assertEqual(self.state_listing(), before)
+
+    def test_T2c_3_denylist_missing_and_empty(self):
+        os.remove(self.deny)
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 2, out)
+        self.assertIn(self.deny, out)
+        write(self.deny, ""); os.chmod(self.deny, 0o600)
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: round trip", out)
+        rc, out = self.run_sync()
+        self.assertEqual(rc, 1, out)
+        self.assertFalse(os.path.exists(os.path.join(self.live, ".orch-sync", "syncs")))
+
+    def test_T2c_4_temp_dir_inside_repo_or_live(self):
+        for where in (self.repo, self.live):
+            with self.subTest(where=where):
+                t = os.path.join(where, "tmpd")
+                os.makedirs(t)
+                self.addCleanup(shutil.rmtree, t, ignore_errors=True)
+                rc, out = self.run_sync("--dry-run", env=dict(self.env, TMPDIR=t))
+                self.assertEqual(rc, 2, out)
+                self.assertIn("lies inside", out)
+
+    def test_T2c_5_overlay_symlink_into_repo(self):
+        inside = os.path.join(self.repo, "ov.json")
+        write(inside, json.dumps(self.ov)); os.chmod(inside, 0o600)
+        link = os.path.join(self.tmp, "ov-link.json")
+        os.symlink(inside, link)
+        rc, out = self.run_sync("--dry-run", "--rev", "HEAD", "--overlay", link)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("lies inside the repo", out)
+
+    def test_T2c_6_gitattributes_cannot_hide_or_rewrite_a_file(self):
+        # export-ignore: a tracked private file must not vanish from the scanned image
+        write(os.path.join(self.repo, "notes.txt"), "SECRETWORD\n")
+        write(os.path.join(self.repo, ".gitattributes"), "notes.txt export-ignore\n")
+        self.commit("hide a file")
+        before = self.state_listing()
+        for args in (("--dry-run",), ()):
+            with self.subTest(args=args):
+                rc, out = self.run_sync(*args)
+                self.assertEqual(rc, 2, out)
+                self.assertIn("snapshot differs from commit", out)
+                self.assertIn("notes.txt", out)
+                self.assertEqual(self.state_listing(), before)
+
+    def test_T2c_7_export_subst_cannot_rewrite_a_managed_file(self):
+        write(os.path.join(self.repo, "bin/x.sh"),
+              "#!/bin/bash\n# public comment\n# $Format:%H$\necho hi\n", True)
+        write(os.path.join(self.repo, ".gitattributes"), "bin/x.sh export-subst\n")
+        self.commit("substitute")
+        before = self.state_listing()
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 2, out)
+        self.assertIn("snapshot differs from commit", out)
+        self.assertIn("bin/x.sh", out)
+        self.assertEqual(self.state_listing(), before)
+
+    def test_T2c_8_eol_filter_cannot_rewrite_a_managed_file(self):
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 1\n")
+        write(os.path.join(self.repo, ".gitattributes"), "bin/orchlib/a.py text eol=crlf\n")
+        self.commit("eol")
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 2, out)
+        self.assertIn("snapshot differs from commit", out)
+
+    def test_T2c_9_info_attributes_also_refused(self):
+        write(os.path.join(self.repo, ".git", "info", "attributes"), "notes.txt export-ignore\n")
+        rc, out = self.run_sync("--dry-run", "--rev", "HEAD")
+        self.assertEqual(rc, 2, out)
+        self.assertIn("snapshot differs from commit", out)
+
 
 class StateTests(World):
     def test_T3_1_manifest_and_init_presence(self):
