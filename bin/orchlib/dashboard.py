@@ -62,8 +62,11 @@ INT_TOKEN_RE = re.compile(r"\b\d+\b")
 def read_file(path, cap=None):
     """Bytes of a regular file (no symlink, no fifo, at most `cap` bytes), or None."""
     cap = MAX_FILE if cap is None else cap
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+        if not nofollow and os.path.islink(path):   # Windows has no O_NOFOLLOW
+            return None
+        fd = os.open(path, os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
     except OSError:
         return None
     try:
