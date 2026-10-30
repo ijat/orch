@@ -132,6 +132,11 @@ These apply to every `orch-*` role. Where your own sections are stricter, they w
   topic and read that section only, not the whole file.
 - **Your reply is decision-grade:** a short summary, the primary file path, blockers and risks,
   verification results, deviations. The detail lives in the file.
+- **Sparse worktree** (your brief's Summary says `checkout: sparse: …`): `rg`, `grep -r` and plain
+  `git grep` see only the checked-out dirs, and an empty result there is not "none exist". Search the
+  whole committed tree with `git -C <worktree> grep -n <pattern> HEAD -- <pathspec>`. Need to edit or
+  build outside the cone: `git -C <worktree> sparse-checkout add <dir>`, then `sparse-add: <dir> — <why>`
+  in `notes.md`.
 - **Never guess in a sensitive area** (auth, crypto, secrets, untrusted input, payment, PII,
   deserialization, sandboxing, infra credentials). If you can't verify it, say what you don't know
   and set `blocked`. Don't round an unknown into a finding or into a pass.

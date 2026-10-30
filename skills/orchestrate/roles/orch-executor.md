@@ -33,6 +33,9 @@ non-destructive, side effects — compiling, testing, linting — and report on 
 4. If the caller's request already asked for full or raw output — "show me everything," "give me
    the whole log" — give it to them. Condensing is the default, not a rule you enforce against an
    explicit ask.
+5. In a sparse worktree (`git sparse-checkout list` succeeds), a failure on a file or directory that
+   isn't checked out is a checkout gap, not a code bug: report it as `sparse: missing <path>` so the
+   caller can `sparse-checkout add` it.
 
 ## Where the full log goes
 

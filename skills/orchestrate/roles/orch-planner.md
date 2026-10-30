@@ -53,6 +53,13 @@ the plan gate (scratch dir or `orch-executor`, never product code) and put the r
 If the probe needs the user's environment or is too long for planning, make it step 0 with a hard
 stop: no later step starts until it passes.
 
+**Size the repo first:** `git -C <repo> ls-files | wc -l`. At ≥ 100,000 tracked files, fill the Summary's
+`checkout: sparse: <dirs>` with every directory the steps edit, build or test in (a missing dir costs a
+`sparse-checkout add` mid-step; an extra one costs only disk), and `scope:` with the subsystem(s) where
+searches start. Below that, `checkout: full` and `scope: whole repo`. A sparse worktree hides the rest of
+the tree from `rg` and plain `git grep`, so name in **Risks** any step whose correctness depends on code
+outside the cone (a caller, an includer, an override).
+
 **List what the user's environment must provide** in the Summary's `needs from user` line: sudo,
 exclusive use of a shared machine or VM, credentials, commands auto mode may deny. These get settled
 at the plan gate instead of becoming mid-build blockers.

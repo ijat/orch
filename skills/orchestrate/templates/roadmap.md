@@ -14,6 +14,8 @@
 - decisions needing the user: <D-ids, or "none">
 - needs from user: <sudo, exclusive VM/device, credentials, commands auto mode may deny — or "none">
 - milestones: <N>; review points: <M-ids>; merge points: <M-ids>; user stops: <M-ids>
+- checkout: full | sparse: <dirs of M1>   <!-- sparse at ≥ 100,000 tracked files; later milestones add theirs -->
+- scope: whole repo | <dirs> — <why>
 - budget: <sum of sizes>; fits current 5h/7d headroom: yes | no — <why> (orchestrator fills at the gate)
 - top risks: <at most 3>
 
