@@ -303,6 +303,33 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `bin/orchlib/dashboard.py`, `bin/orchlib/dashboard.html` | `orch dashboard`: a read-only page of active tasks, questions waiting for you and recent events, served on 127.0.0.1 only |
 | `skills/orchestrate/templates/policy.md`, `…/questions.md` | Per-repo stop policy (`~/.claude/orchestrations/<repo>/policy.md`) and the queue of parked questions in a task |
 
+## Code index (optional)
+
+`orch-graph` is a Haiku helper for structural questions about code: where a symbol is defined, who
+calls it, every reference to it, which files include or import a file, which classes override a
+method. It answers them from `orch-index`, a separate command-line code index that reads a
+repository's committed tree (C/C++, Rust, JS/TS, C#) and returns compact `path:line [label]` rows,
+each with a trust label (`resolved`, `syntactic`, or an `ambiguous`/`basename`/`parse-errors` mark
+that says to check the row). On a large repository one query replaces many text searches.
+`orch-explorer` uses the same index first for the same kind of question and keeps its general
+search for everything else.
+
+You do not need the index. Nothing in orch builds or installs it, and without it both helpers work
+as before: each starts by running `orch-index stats`, and when the binary is missing, the repository
+has no index, or the index is behind `HEAD`, the reply opens with `index unavailable: <reason>` and
+the answer comes from scoped `git grep`. The helpers never run `orch-index index`; building or
+refreshing an index is your job.
+
+To use it:
+
+1. Build `orch-index` from its source with `cargo build --release`.
+2. Put the binary on `PATH`, or set `ORCH_INDEX_BIN` to its full path.
+3. Run `orch-index index` once inside each repository you want covered (re-run it after commits you
+   want to see; it only re-reads changed files).
+
+Callers send structural questions to `orch-graph` (all of a step's questions in one spawn, with the
+answer you rely on recorded in `notes.md` for later roles) and everything else to `orch-explorer`.
+
 ## Install
 
 Requires Claude Code, `git`, `jq` and Python 3.9 or newer.
