@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from orchlib import paths, usage  # noqa: E402
+from orchlib import dashboard, paths, usage  # noqa: E402
 
 
 class WindowsPids(unittest.TestCase):
@@ -31,6 +31,22 @@ class WindowsPids(unittest.TestCase):
             self.assertIs(usage.proc_start(1234), usage.PS_UNKNOWN)
             self.assertTrue(usage.is_wait_proc(1234))
         self.assertEqual(run.call_count, 0)
+
+
+class WindowsRead(unittest.TestCase):
+    def test_read_file_without_o_nofollow_still_refuses_symlinks(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d)
+        real, link = os.path.join(d, "a.md"), os.path.join(d, "b.md")
+        with open(real, "wb") as fh:
+            fh.write(b"x\r\ny")
+        os.symlink(real, link)
+        import types
+        fake = types.SimpleNamespace(**{k: getattr(os, k) for k in dir(os) if not k.startswith("__") and k != "O_NOFOLLOW"})
+        with mock.patch.object(dashboard, "os", fake):
+            self.assertEqual(dashboard.read_file(real), b"x\r\ny")
+            self.assertIsNone(dashboard.read_file(link))
 
 
 class WindowsIndex(unittest.TestCase):
