@@ -1133,5 +1133,301 @@ class WriteTests(World):
         self.assertEqual(rec["status"], "rolled-back")
 
 
+class RollbackTests(World):
+    state = WriteTests.state
+    records = WriteTests.records
+    image = WriteTests.image
+    dirs = WriteTests.dirs
+    set_write_check = WriteTests.set_write_check
+    old_file_world = WriteTests.old_file_world
+    failing_world = WriteTests.failing_world
+
+    def manifest(self):
+        return json.loads(rt(os.path.join(self.state(), "manifest.json")))
+
+    def full(self):
+        """Everything under live, state included: (sha256, mode) per file, plus the dir list."""
+        out = listing(self.live)
+        dirs = sorted(os.path.relpath(os.path.join(c, d), self.live) for c, ds, _ in os.walk(self.live)
+                      for d in ds)
+        return out, dirs
+
+    def set_status(self, stamp, status):
+        rp = os.path.join(self.state(), "syncs", stamp, "record.json")
+        rec = json.loads(rt(rp))
+        rec["status"] = status
+        write(rp, json.dumps(rec))
+
+    def test_T5_1_rollback_of_update_create_delete(self):
+        self.old_file_world()
+        image, dirs, manifest = self.image(), self.dirs(), self.manifest()
+        self.assertEqual(self.run_sync()[0], 0)
+        a = os.path.join(self.live, "bin/orchlib/a.py")
+        synced_ino = os.stat(a).st_ino
+        self.assertNotEqual(self.image(), image)
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.image(), image)
+        self.assertEqual(self.dirs(), dirs)
+        self.assertEqual(self.manifest(), manifest)
+        (stamp, rec), = self.records()
+        self.assertEqual(rec["status"], "rolled-back")
+        self.assertNotEqual(os.stat(a).st_ino, synced_ino)  # restored through a fresh inode
+        self.assertEqual(os.stat(os.path.join(self.live, "bin/old.sh")).st_mode & 0o777, 0o755)
+        self.assertEqual(os.listdir(self.tmpdir), [], "temp dir left behind")
+        rc, out = self.run_sync("--dry-run")  # live is old again: the sync is plannable again
+        self.assertEqual(rc, 0, out)
+        self.assertIn("update bin/orchlib/a.py", out)
+
+    def test_T5_2_rollback_walks_back(self):
+        self.drop_state()
+        base = self.head()
+        pre_init = self.image()
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 2\n")
+        self.commit("one")
+        self.assertEqual(self.run_sync("--init", base)[0], 0)
+        pre_second, init_manifest = self.image(), self.manifest()
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 3\n")
+        self.commit("two")
+        self.assertEqual(self.run_sync()[0], 0)
+        self.assertEqual(len(self.records()), 2)
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.image(), pre_second)
+        self.assertEqual(self.manifest(), init_manifest)
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.image(), pre_init)
+        self.assertFalse(os.path.exists(os.path.join(self.state(), "manifest.json")))
+        self.assertEqual([r["status"] for _, r in self.records()], ["rolled-back", "rolled-back"])
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("nothing to roll back", out)
+
+    def test_T5_3_synced_file_edited_after_the_sync(self):
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 2\n")
+        write(os.path.join(self.repo, "bin/x.sh"), "#!/bin/bash\n# public comment\necho bye\n", True)
+        self.commit("change")
+        self.assertEqual(self.run_sync()[0], 0)
+        write(os.path.join(self.live, "bin/x.sh"), "#!/bin/bash\necho edited\n", True)
+        full, manifest = self.full(), self.manifest()
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: bin/x.sh: changed since the sync", out)
+        self.assertEqual(self.full(), full)
+        self.assertEqual(self.manifest(), manifest)
+        self.assertEqual(self.records()[0][1]["status"], "done")
+        rc, out = self.run_sync("--rollback", "--dry-run")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: bin/x.sh", out)
+
+    def test_T5_3b_manifest_of_another_sync(self):
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 2\n")
+        self.commit("change")
+        self.assertEqual(self.run_sync()[0], 0)
+        mp = os.path.join(self.state(), "manifest.json")
+        write(mp, json.dumps(dict(self.manifest(), record="20300101T000000Z")))
+        full = self.full()
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("the manifest was written by another sync", out)
+        self.assertEqual(self.full(), full)
+
+    def test_T5_4_dry_run_writes_nothing(self):
+        self.old_file_world()
+        self.assertEqual(self.run_sync()[0], 0)
+        full = self.full()
+        mtimes = {c: os.stat(c).st_mtime_ns for c, _, _ in os.walk(self.live)}
+        rc, out = self.run_sync("--rollback", "--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("undo update bin/orchlib/a.py", out)
+        self.assertIn("undo create bin/new.sh", out)
+        self.assertIn("undo delete bin/old.sh", out)
+        self.assertIn("would roll back record", out)
+        self.assertEqual(self.full(), full)
+        self.assertEqual({c: os.stat(c).st_mtime_ns for c, _, _ in os.walk(self.live)}, mtimes)
+        self.assertEqual(self.records()[0][1]["status"], "done")
+
+    def test_T5_5_killed_sync_is_rolled_back(self):
+        image, dirs, manifest = self.failing_world("sleep")
+        self.addCleanup(subprocess.call, ["pkill", "-f", os.path.join(self.tmp, "wcheck.py")],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cmd = [sys.executable, os.path.join(self.repo, "scripts", "sync-live.py"), "--live", self.live]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=self.env,
+                             universal_newlines=True)
+        try:
+            deadline = time.time() + 60
+            while not os.path.exists(self.out + ".reached"):
+                if p.poll() is not None:
+                    self.fail("sync ended early: " + p.stdout.read())
+                self.assertLess(time.time(), deadline, "the post-gate check was never reached")
+                time.sleep(0.05)
+            p.send_signal(signal.SIGKILL)
+            p.communicate(timeout=30)
+        finally:
+            if p.poll() is None:
+                p.kill(); p.communicate()
+        (stamp, rec), = self.records()
+        self.assertEqual(rec["status"], "pending")
+        self.assertNotEqual(self.image(), image)
+        sleeping_overlay = rb(self.overlay)
+        self.set_write_check("quiet")  # the later runs' baseline checks must not sleep on the new content
+        for args in (("--dry-run",), ()):
+            rc, out = self.run_sync(*args)
+            self.assertEqual(rc, 1, out)
+            self.assertIn("interrupted sync %s: run --rollback" % stamp, out)
+        rc, out = self.run_sync("--rollback", "--dry-run")
+        self.assertEqual(rc, 0, out)
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 0, out)
+        write(self.overlay, sleeping_overlay); os.chmod(self.overlay, 0o600)
+        self.assertEqual(self.image(), image)
+        self.assertEqual(self.dirs(), dirs)
+        self.assertEqual(self.manifest(), json.loads(manifest))
+        self.assertEqual(self.records()[0][1]["status"], "rolled-back")
+        self.assertEqual(self.run_sync("--dry-run")[0], 0)
+
+    def test_T5_6_nothing_to_roll_back_and_bad_flags(self):
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("nothing to roll back", out)
+        self.drop_state()
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 1, out)
+        self.assertFalse(os.path.exists(self.state()), "--rollback created the state dir")
+        rc, out = self.run_sync("--rollback", "--dry-run")
+        self.assertEqual(rc, 1, out)
+        self.assertFalse(os.path.exists(self.state()))
+        for extra in (("--rev", "HEAD"), ("--init", "HEAD"), ("--allow-non-descendant",)):
+            rc, out = self.run_sync("--rollback", *extra)
+            self.assertEqual(rc, 2, out)
+        # a rolled-back record is not a target
+        self.write_manifest()
+        self.write_record("20260101T000000Z", "rolled-back")
+        self.assertEqual(self.run_sync("--rollback")[0], 1)
+
+    def test_T5_7_completed_pending_record(self):
+        self.old_file_world()
+        image, dirs, manifest = self.image(), self.dirs(), self.manifest()
+        self.assertEqual(self.run_sync()[0], 0)
+        (stamp, _), = self.records()
+        self.set_status(stamp, "pending")
+        rc, out = self.run_sync("--rollback", "--dry-run")
+        self.assertEqual(rc, 0, out)
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.image(), image)
+        self.assertEqual(self.dirs(), dirs)
+        self.assertEqual(self.manifest(), manifest)
+        self.assertEqual(self.records()[0][1]["status"], "rolled-back")
+
+    def test_T5_8_rollback_failed_record_accepts_mixed_states(self):
+        """A rollback killed halfway leaves its record rollback-failed with some ops restored."""
+        self.old_file_world()
+        image, dirs, manifest = self.image(), self.dirs(), self.manifest()
+        self.assertEqual(self.run_sync()[0], 0)
+        (stamp, _), = self.records()
+        # restore two ops by hand, as an interrupted rollback would have
+        shutil.copyfile(os.path.join(self.state(), "syncs", stamp, "before", "bin/old.sh"),
+                        os.path.join(self.live, "bin/old.sh"))
+        os.chmod(os.path.join(self.live, "bin/old.sh"), 0o755)
+        os.remove(os.path.join(self.live, "bin/new.sh"))
+        self.set_status(stamp, "rollback-failed")
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.image(), image)
+        self.assertEqual(self.dirs(), dirs)
+        self.assertEqual(self.manifest(), manifest)
+        self.assertEqual(self.records()[0][1]["status"], "rolled-back")
+
+    def test_T5_9_tampered_path_refuses_and_restores_nothing(self):
+        self.old_file_world()
+        self.assertEqual(self.run_sync()[0], 0)
+        (stamp, _), = self.records()
+        self.set_status(stamp, "rollback-failed")
+        write(os.path.join(self.live, "bin/orchlib/a.py"), "A = 'tampered'\n")
+        full = self.full()
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: bin/orchlib/a.py: at neither its before nor its after state", out)
+        self.assertEqual(self.full(), full)
+        self.assertEqual(self.records()[0][1]["status"], "rollback-failed")
+
+    def test_T5_10_missing_backup_refuses_and_restores_nothing(self):
+        self.old_file_world()
+        self.assertEqual(self.run_sync()[0], 0)
+        (stamp, _), = self.records()
+        os.remove(os.path.join(self.state(), "syncs", stamp, "before", "bin/old.sh"))
+        full = self.full()
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: bin/old.sh: backup in", out)
+        self.assertEqual(self.full(), full)
+
+    def test_T5_11_malformed_record_is_exit_2(self):
+        self.old_file_world()
+        self.assertEqual(self.run_sync()[0], 0)
+        (stamp, rec), = self.records()
+        image = self.image()
+        for bad_path in ("../escape.txt", "/etc/passwd", "settings.json", "bin/../skills/x", ".orch-sync/lock"):
+            rec2 = json.loads(json.dumps(rec))
+            rec2["ops"][0]["path"] = bad_path
+            write(os.path.join(self.state(), "syncs", stamp, "record.json"), json.dumps(rec2))
+            rc, out = self.run_sync("--rollback")
+            self.assertEqual(rc, 2, "%s: %s" % (bad_path, out))
+        rec2 = json.loads(json.dumps(rec))
+        rec2["ops"][0]["before"] = None  # an update needs a before state
+        write(os.path.join(self.state(), "syncs", stamp, "record.json"), json.dumps(rec2))
+        self.assertEqual(self.run_sync("--rollback")[0], 2)
+        write(os.path.join(self.state(), "syncs", stamp, "record.json"), json.dumps(rec))
+        self.assertEqual(self.image(), image)
+
+    def test_T5_12_symlinked_parent_dir_refuses(self):
+        self.old_file_world()
+        self.assertEqual(self.run_sync()[0], 0)
+        elsewhere = os.path.join(self.tmp, "elsewhere")
+        shutil.move(os.path.join(self.live, "bin/orchlib"), elsewhere)
+        os.symlink(elsewhere, os.path.join(self.live, "bin/orchlib"))
+        before = listing(elsewhere)
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("is a symlink", out)
+        self.assertEqual(listing(elsewhere), before)
+
+    def test_T5_13_restore_incomplete_exit_3(self):
+        """The restore cannot put a file back (its parent is read-only): rollback-failed, exit 3."""
+        if os.geteuid() == 0:
+            self.skipTest("root ignores directory permissions")
+        self.old_file_world()
+        self.assertEqual(self.run_sync()[0], 0)
+        (stamp, _), = self.records()
+        d = os.path.join(self.live, "bin/orchlib")
+        os.chmod(d, 0o555)
+        self.addCleanup(os.chmod, d, 0o755)
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 3, out)
+        self.assertIn("RESTORE INCOMPLETE", out)
+        self.assertIn(os.path.join(self.state(), "syncs", stamp), out)
+        os.chmod(d, 0o755)
+        self.assertEqual(self.records()[0][1]["status"], "rollback-failed")
+        rc, out = self.run_sync("--rollback")  # fixed by hand: the rerun finishes the job
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.records()[0][1]["status"], "rolled-back")
+
+    def test_T5_14_lock_held(self):
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 2\n")
+        self.commit("change")
+        self.assertEqual(self.run_sync()[0], 0)
+        full = self.full()
+        fd = os.open(os.path.join(self.state(), "lock"), os.O_CREAT | os.O_RDWR, 0o600)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("another sync or rollback is running", out)
+        self.assertEqual(self.full(), full)
+        self.assertEqual(self.run_sync("--rollback", "--dry-run")[0], 0)  # a dry run needs no lock
+
+
 if __name__ == "__main__":
     unittest.main()
