@@ -53,7 +53,7 @@ below it).
 | Plan reviewer | `orch-plan-reviewer` | `sonnet/high` | — roadmaps and `opus/max` plans only (`PROGRAM.md` §1) |
 | Director | `orch-director` | `opus/high` | → `opus/max` after the user reverses an accepted verdict — plan steps marked `visual:` only (step 7) |
 | Explorer | `orch-explorer` | `haiku/low` | read-only lookups and claim checks |
-| Graph | `orch-graph` | `haiku/low` | keeps the `orch-index` code index fresh (check; rebuild when stale or missing); you, the planner or the user call it, never the explorer. The explorer is the only role that queries the index |
+| Graph | `orch-graph` | `haiku/low` | keeps the code index (orch-index) fresh (check; rebuild when stale or missing); you, the planner or the user call it, never the explorer. The explorer is the only role that queries the index |
 | Executor | `orch-executor` | `haiku/low` | runs builds/tests/lint, returns a digest |
 
 Always pass both `model` and `effort` for planners and implementers, even at the default tier, so the
