@@ -9,20 +9,47 @@ denylist. Every run uses a temp HOME, a temp TMPDIR and an explicit --live; noth
 
 Run: python3 scripts/test_sync_live.py
 """
+import contextlib
 import hashlib
+import importlib.util
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REAL_EXPORT = os.path.join(HERE, "export.py")
 SYNC = os.path.join(HERE, "sync-live.py")
 BUILDER = os.path.join(os.path.dirname(HERE), "bin", "orch-build-agents.py")
 sys.dont_write_bytecode = True
+
+BUILD_CMD = "python3 bin/orch-build-agents.py skills/orchestrate/roles agents"
+
+# An overlay check: behaves per MODE, telling live from stage by ORCH_HOME == the {live} argument.
+CHECK_SCRIPT = """import os, sys, time
+mode, live = sys.argv[1], sys.argv[2]
+root = os.environ["ORCH_HOME"]
+on_live = root == live
+if mode == "both":
+    print("WARN same thing")
+elif mode == "stage_only" and not on_live:
+    print("WARN fresh thing")
+elif mode == "root":
+    print("WARN referenced template missing: " + root + "/templates/x.md")
+elif mode == "realpath":
+    print("WARN referenced template missing: " + os.path.realpath(root) + "/templates/x.md")
+elif mode == "fail_live" and on_live:
+    sys.exit(3)
+elif mode == "sleep":
+    time.sleep(30)
+print("ok")
+"""
 
 ANCHOR_A = "\nFILES = ["
 ANCHOR_B = "\n\ndef fill("
@@ -166,6 +193,23 @@ class World(unittest.TestCase):
 
     def set_tables(self, extra_files):
         write(os.path.join(self.repo, "scripts", "export.py"), trimmed_export(extra_files), True)
+
+    def set_check(self, mode, name="chk"):
+        script = os.path.join(self.tmp, "check.py")
+        write(script, CHECK_SCRIPT)
+        self.ov["checks"] = [{"name": name, "argv": [sys.executable, "-I", "-B", script, mode, "{live}"]}]
+        self.write_overlay()
+
+    def module(self):
+        """sync-live.py imported in-process (for gate-level tests), bytecode off."""
+        spec = importlib.util.spec_from_file_location("sync_live_under_test", SYNC)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def sandbox_env(self):
+        return mock.patch.dict(os.environ, {"HOME": self.home, "TMPDIR": self.tmpdir,
+                                            "PYTHONDONTWRITEBYTECODE": "1"})
 
 
 class CoreTests(World):
@@ -326,6 +370,119 @@ class CoreTests(World):
             src = f.read()
         self.assertEqual(src.count(ANCHOR_A), 1)
         self.assertEqual(src.count(ANCHOR_B), 1)
+
+
+class GateTests(World):
+    def test_T2_5_overlay_not_inverting_export(self):
+        self.ov["edits"].append({"path": "bin/orchlib/a.py", "public": "A = 1\n", "live": "A = 1  # live\n"})
+        self.write_overlay()
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: round trip: bin/orchlib/a.py differs", out)
+
+    def test_T2_11_stale_agent_render(self):
+        write(os.path.join(self.repo, "agents/orch-a.md"), "Role A, stale.\n")
+        self.commit("stale render")
+        self.build_live()
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: agents:", out)
+        self.assertIn(BUILD_CMD, out)
+
+    def test_T2_12_syntax_errors(self):
+        cases = {"bin/x.sh": ("#!/bin/bash\n# public comment\nif then fi (\n", True),
+                 "bin/orchlib/a.py": ("A = (\n", False)}
+        for rel, (text, exe) in cases.items():
+            with self.subTest(rel):
+                good = os.path.join(self.tmp, "good")
+                shutil.copy2(os.path.join(self.repo, rel), good)
+                write(os.path.join(self.repo, rel), text, exe)
+                self.commit("syntax error in " + rel)
+                rc, out = self.run_sync("--dry-run")
+                self.assertEqual(rc, 1, out)
+                self.assertIn("REFUSE: syntax: %s:" % rel, out)
+                shutil.copy2(good, os.path.join(self.repo, rel))
+                self.commit("fix " + rel)
+
+    def test_T2_13_checks(self):
+        for mode, want in (("both", 0), ("root", 0), ("stage_only", 1), ("fail_live", 1)):
+            with self.subTest(mode):
+                self.set_check(mode)
+                rc, out = self.run_sync("--dry-run")
+                self.assertEqual(rc, want, out)
+                if mode == "stage_only":
+                    self.assertIn("REFUSE: check chk: new WARN fresh thing", out)
+                if mode == "fail_live":
+                    self.assertIn("REFUSE: check chk fails on current live", out)
+
+    def test_T2_15_tree_extras(self):
+        extra = os.path.join(self.live, "bin/orchlib/extra.py")
+        write(extra, "E = 1\n")
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: round trip: bin/orchlib/extra.py differs", out)
+        os.remove(extra)
+        ignored = os.path.join(self.live, "bin/orchlib/readme.txt")
+        write(ignored, "not taken by the tree filter\n")
+        before = listing(self.live)
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("nothing to do", out)
+        self.assertEqual(listing(self.live), before)
+
+    def test_T2b_1_exec_bit_lost_in_stage(self):
+        mod = self.module()
+        with self.sandbox_env():
+            snap = os.path.join(self.tmp, "snap")
+            os.makedirs(snap)
+            files = mod.snapshot(self.repo, "HEAD", snap)
+            self.assertTrue(files["bin/x.sh"])
+            stage = os.path.join(self.tmp, "stage")
+            shutil.copytree(self.live, stage)
+            work = os.path.join(self.tmp, "work")
+            os.makedirs(work)
+            self.assertEqual(mod.gate_roundtrip(snap, files, stage, self.private, self.deny, work), [])
+            os.chmod(os.path.join(stage, "bin/x.sh"), 0o644)
+            self.assertEqual(mod.gate_roundtrip(snap, files, stage, self.private, self.deny, work),
+                             ["round trip: bin/x.sh differs"])
+
+    def test_T2b_2_snapshot_stays_pristine(self):
+        mod = self.module()
+        work = os.path.join(self.tmp, "work")
+        os.makedirs(work)
+        old = sys.dont_write_bytecode
+        sys.dont_write_bytecode = False  # so only sync-live's own guard keeps bytecode out
+        try:
+            with self.sandbox_env(), contextlib.redirect_stdout(io.StringIO()) as buf:
+                rc = mod.run(mod.parse_args(["--dry-run", "--live", self.live]), self.repo, work)
+        finally:
+            sys.dont_write_bytecode = old
+        self.assertEqual(rc, 0, buf.getvalue())
+        self.assertIn("nothing to do", buf.getvalue())
+        snap = os.path.join(work, "snapshot")
+        got = sorted(os.path.relpath(os.path.join(c, n), snap) for c, _d, ns in os.walk(snap) for n in ns)
+        want = sorted(self.git("ls-tree", "-r", "--name-only", "HEAD").split())
+        self.assertEqual(got, want)
+
+    def test_T2b_3_realpath_of_root_in_warn(self):
+        link = os.path.join(self.tmp, "lnk")
+        os.symlink(self.tmp, link)
+        live = os.path.join(link, "live")
+        self.assertNotEqual(os.path.realpath(live), live)
+        self.set_check("realpath")
+        env = dict(self.env, TMPDIR=os.path.join(link, "t"))
+        rc, out = self.run_sync("--dry-run", "--live", live, live=False, env=env)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("nothing to do", out)
+
+    def test_T2b_4_check_timeout(self):
+        self.set_check("sleep", name="slow")
+        env = dict(self.env, SYNC_LIVE_CHECK_TIMEOUT="0.5")
+        t0 = time.time()
+        rc, out = self.run_sync("--dry-run", env=env)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: check slow fails on current live: timed out", out)
+        self.assertLess(time.time() - t0, 20)
 
 
 if __name__ == "__main__":
