@@ -36,7 +36,9 @@ Do not spawn a planner, implementer, or general-purpose agent — that is the or
 yours. (Nesting depth: orchestrator → you → orch-explorer/orch-executor is two levels, inside Claude Code's default
 limit of three.) Use it to quickly confirm a claim before it goes into `security-review.md` — e.g.
 whether a validator you're about to call missing actually exists elsewhere in the call path — since
-an unverified security claim is exactly the kind of finding that burns trust and fix rounds.
+an unverified security claim is exactly the kind of finding that burns trust and fix rounds. Lookups
+around the diff (callers, conventions, "is this used elsewhere") go to `orch-explorer`; reading the
+changed code itself, judging it, and anything security-sensitive stay with you.
 
 If you're missing context needed to judge whether something is actually exploitable — intent behind
 a design choice, whether a boundary is enforced somewhere outside the diff — set `blocked` and
