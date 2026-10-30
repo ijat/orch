@@ -344,6 +344,12 @@ def managed_set(ex, snap, private):
     return pairs, moved
 
 
+def bad_component(parts):
+    """True if a path component is never allowed in a managed path: '..', '.', empty, the state dir or
+    .git. Other dot-prefixed names (a fixture's `.hidden/`) are fine."""
+    return any(x in ("", ".", "..", STATE_DIR, ".git") for x in parts)
+
+
 def guard_paths(pairs, moved, protect, live):
     for live_rel, _ in pairs:
         if not isinstance(live_rel, str) or not live_rel:
@@ -351,8 +357,8 @@ def guard_paths(pairs, moved, protect, live):
         if live_rel.startswith("/") or posixpath.normpath(live_rel) != live_rel:
             raise bad("unsafe managed path %s: not relative and normalised" % live_rel)
         parts = live_rel.split("/")
-        if any(p == ".." or p.startswith(".") for p in parts):
-            raise bad("unsafe managed path %s: has a '..' or dot component" % live_rel)
+        if bad_component(parts):
+            raise bad("unsafe managed path %s: has a '..', '.', %s or .git component" % (live_rel, STATE_DIR))
         if parts[0] not in TOP_DIRS:
             raise bad("unsafe managed path %s: must start with %s" % (live_rel, ", ".join(TOP_DIRS)))
         for i in range(1, len(parts) + 1):
@@ -1189,11 +1195,11 @@ def write_phase(c):
 # ---------- 10: rollback ----------
 
 def safe_rel(p):
-    """True for a relative, normalised path under TOP_DIRS with no dot component."""
+    """True for a relative, normalised path under TOP_DIRS with no bad component (see bad_component)."""
     if not isinstance(p, str) or not p or "\0" in p or p.startswith("/") or posixpath.normpath(p) != p:
         return False
     parts = p.split("/")
-    return parts[0] in TOP_DIRS and not any(x == ".." or x.startswith(".") for x in parts)
+    return parts[0] in TOP_DIRS and not bad_component(parts)
 
 
 def state_ok(d):
