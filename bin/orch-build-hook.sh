@@ -10,7 +10,8 @@ case "$target" in
   *skills/orchestrate/roles/*) ;;
   *) exit 0 ;;
 esac
-if ! out=$("$HOME/.claude/bin/orch-build-agents.py" 2>&1); then
+py=$(command -v python3 || command -v python || echo python3)  # Windows installs often name it python
+if ! out=$("$py" "$HOME/.claude/bin/orch-build-agents.py" 2>&1); then
   printf 'orch-build-hook: rebuilding agents from roles/ failed:\n%s\n' "$out" >&2
   exit 2
 fi

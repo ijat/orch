@@ -882,27 +882,27 @@ class TestCommand(Base):
         rc, out, _ = run_cli(self.root, "commands")
         self.assertIn("dashboard", out.split())
 
-    def test_open_runs_open_on_macos_only(self):
+    def test_open_uses_the_default_browser(self):
         with mock.patch.object(db.Server, "serve_forever", side_effect=KeyboardInterrupt), \
-                mock.patch.object(db.subprocess, "run") as run, mock.patch.object(db.sys, "platform", "darwin"):
+                mock.patch.object(db.webbrowser, "open", return_value=True) as wb:
             rc, out, err = run_cli(self.root, "dashboard", "--serve", "--port", "0", "--open")
         self.assertEqual(rc, 0)
-        self.assertEqual(run.call_count, 1)
-        url = run.call_args[0][0][1]
-        self.assertEqual(run.call_args[0][0][0], "open")
+        self.assertEqual(wb.call_count, 1)
+        url = wb.call_args[0][0]
         self.assertRegex(url, r"^http://127\.0\.0\.1:\d+/$")
         self.assertIn("serving " + url, out)
+        self.assertNotIn("warning", err)
         with mock.patch.object(db.Server, "serve_forever", side_effect=KeyboardInterrupt), \
-                mock.patch.object(db.subprocess, "run") as run, mock.patch.object(db.sys, "platform", "linux"):
+                mock.patch.object(db.webbrowser, "open", return_value=False):
             rc, out, err = run_cli(self.root, "dashboard", "--serve", "--port", "0", "--open")
-        self.assertEqual((rc, run.call_count), (0, 0))
-        self.assertIn("--open only works on macOS", err)
+        self.assertEqual(rc, 0)
+        self.assertIn("could not open the browser; open http://127.0.0.1:", err)
 
     def test_serve_without_open_never_runs_a_program(self):
         with mock.patch.object(db.Server, "serve_forever", side_effect=KeyboardInterrupt), \
-                mock.patch.object(db.subprocess, "run") as run:
+                mock.patch.object(db.webbrowser, "open") as wb:
             rc, out, _ = run_cli(self.root, "dashboard", "--serve", "--port", "0")
-        self.assertEqual((rc, run.call_count), (0, 0))
+        self.assertEqual((rc, wb.call_count), (0, 0))
 
 
 class TestRealPage(Base):
