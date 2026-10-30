@@ -47,8 +47,9 @@ threshold in When to delegate: about to run a second search on one question, you
 queries on that index go to `orch-explorer`. Call it (foreground, one at a time) before planning on a
 repository of ≥ 100K tracked files that has the `orch-index` binary, or when the explorer's reply says
 the index is stale (`index unavailable: stale … (refresh: orch-graph)`) on a repository that has one;
-never for `no index` or `binary not found`, and never for an index that is only behind HEAD (the
-explorer reads that one, `index at <sha> + delta search`). While it runs, wait: spawn no explorer and explore nothing yourself. Never
+never for `no index` or `binary not found`, never for an index that is only behind HEAD (the
+explorer reads that one, `index at <sha> + delta search`), and never for a stale line without the
+refresh hint (a linked worktree). Point it at the main checkout, not a task worktree. While it runs, wait: spawn no explorer and explore nothing yourself. Never
 call it twice for the same state.
 
 **Verify, don't assume.** State something as a finding only once you or `orch-explorer` actually read

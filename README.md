@@ -318,15 +318,20 @@ Two roles use it, and only two:
   answers structural questions from it, and it searches with `git grep` / `rg` for everything else
   (other languages, rows marked as uncertain). When the index commit is `HEAD`'s ancestor (for
   example in a task worktree after its first commit), the index is still used: the explorer also
-  searches the files changed since that commit and says `index at <sha> + delta search`. When the
-  index is stale (its commit is not an ancestor of `HEAD`, or an older `orch-index` built it), the reply
-  opens with `index unavailable: stale (<reason>) (refresh: orch-graph)`; when the binary is missing
+  searches the files changed since that commit (renames included) and says
+  `index at <sha> + delta search`. The `index at …, HEAD is …` note `orch-index` prints on such a
+  query is expected there, not a stale signal. When the index is stale (its commit is not an ancestor
+  of `HEAD`, or its commit equals `HEAD` and the query note says `index built by an older orch-index`;
+  `orch-index` shows that note only when the commit equals `HEAD`), the reply opens with
+  `index unavailable: stale (<reason>) (refresh: orch-graph)`, without the refresh hint in a linked
+  worktree (the index is shared with the main checkout); when the binary is missing
   or the repository has no index, it opens with a bare `index unavailable: <reason>`. In both cases the
   answer comes from scoped search, so nothing is lost without an index. The explorer never builds or refreshes the index.
 - **`orch-graph` keeps it fresh.** It checks the index (`fresh`, `fresh-enough` when the index commit
   is an ancestor of `HEAD`, `stale`, `missing`, or `binary not found`) and, when it is stale or
   missing, rebuilds it (incremental when an index exists), then reports the state before and after.
-  It leaves a `fresh-enough` index alone unless asked to bring it to `HEAD`. It answers no code
+  It leaves a `fresh-enough` index alone unless asked to bring it to `HEAD`, and it rebuilds only in
+  the main checkout: from a linked worktree it reports the state and the main checkout's path. It answers no code
   questions. Only you, the orchestrator and the planner call it: the orchestrator or planner when the
   explorer reports a stale index (`… (refresh: orch-graph)`) on a repository that has one, and the
   planner also before planning on a repository of 100K or more tracked files; the other roles do not.

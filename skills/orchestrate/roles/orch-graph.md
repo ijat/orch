@@ -22,25 +22,42 @@ Run, before anything else:
     "${ORCH_INDEX_BIN:-orch-index}" stats [--repo DIR]   </dev/null
 
 (`--repo DIR` when the caller names a repository, otherwise the current directory; the binary comes
-from `$ORCH_INDEX_BIN` or `PATH`.) It prints `commit <sha>` and row counts. `stats` does not show an
-index built by an older `orch-index`, so when `commit` is a sha also run one cheap probe query:
+from `$ORCH_INDEX_BIN` or `PATH`.) It prints `commit <sha>` and row counts. Compare `commit` with
+`git -C DIR rev-parse HEAD`. `stats` does not show an index built by an older `orch-index`, so when
+`commit` equals HEAD also run one cheap probe query:
 
     "${ORCH_INDEX_BIN:-orch-index}" def __orch_probe__ --limit 1 [--repo DIR]   </dev/null
 
-and read its count line: a note ending ``run `orch-index index` `` means the index is stale.
-Compare `commit` with `git -C DIR rev-parse HEAD` and name the state:
+and read its count line: the text `index built by an older orch-index` means the index is stale.
+When `commit` differs from HEAD, `orch-index` prints only the note
+``(index at <sha>, HEAD is <sha>: results may be stale; run `orch-index index`)``, ancestor or not,
+and never the older-extractor note, so skip the probe there: ancestry (`merge-base`) decides the
+state, and an older extractor cannot be seen until the index is rebuilt at a commit equal to HEAD.
+Name the state:
 
 | State | When | What you do |
 |---|---|---|
-| `fresh` | `commit` is a sha equal to HEAD, no stale note | nothing to rebuild; report it |
-| `fresh-enough` | `commit` is a sha that differs from HEAD but `git -C DIR merge-base --is-ancestor <sha> HEAD` succeeds, no stale note | no rebuild (the explorer searches the changed files itself); rebuild only if the caller asked to bring the index to HEAD. A rebuild from a task worktree would move the shared index off the main checkout's commit |
-| `stale` | `commit` is a sha that is not an ancestor of HEAD, or the probe shows the stale note | rebuild (incremental, only changed files are re-read; a note from an older `orch-index` re-reads everything) |
+| `fresh` | `commit` is a sha equal to HEAD, and the probe's count line has no `index built by an older orch-index` | nothing to rebuild; report it |
+| `fresh-enough` | `commit` is a sha that differs from HEAD but `git -C DIR merge-base --is-ancestor <sha> HEAD` succeeds | no rebuild (the explorer searches the changed files itself); rebuild only if the caller asked to bring the index to HEAD |
+| `stale` | `commit` is a sha that is not an ancestor of HEAD, or `commit` equals HEAD and the probe shows `index built by an older orch-index` | rebuild (incremental, only changed files are re-read; an index from an older `orch-index` re-reads everything) |
 | `missing` | `commit (none)` | rebuild (full build) |
 | `binary not found` | the command is not found or cannot run | report it and stop (see below) |
 
 If the caller asked to **check only**, report the state and stop, even when it is `stale` or `missing`.
 
-## Rebuilding (`stale` or `missing`, or asked to bring `fresh-enough` to HEAD)
+**Never rebuild from a linked worktree.** The index lives in the common git dir, shared by the main
+checkout and every worktree, so a rebuild at a task worktree's HEAD moves it off the main checkout's
+commit and makes it stale there. Check DIR:
+
+    [ "$(git -C DIR rev-parse --path-format=absolute --git-dir)" = \
+      "$(git -C DIR rev-parse --path-format=absolute --git-common-dir)" ] && echo main-checkout
+
+If it prints nothing, DIR is a linked worktree: report the state only (as **check only**), whatever
+the state and whatever the caller asked, and add the main checkout's path
+(`git -C DIR worktree list --porcelain | sed -n '1s/^worktree //p'`) with one line: "to rebuild,
+call orch-graph with `--repo <that path>`". You rebuild only when DIR is the main checkout.
+
+## Rebuilding (main checkout only: `stale` or `missing`, or asked to bring `fresh-enough` to HEAD)
 
 You hold the **indexing marker** for the whole rebuild. It is how other agents learn that the index
 is being written. The marker is `<git-common-dir>/orch-index/indexing`, one line:
@@ -69,7 +86,7 @@ line, or with `sleep 15` polls. When it ends:
    log), in its own command (recompute `M` as above; Bash calls do not share variables):
    `grep -qxF "$(sed -n 's/^marker: //p' LOG)" "$M/indexing" && rm -f "$M/indexing"`. Never remove a
    marker that holds another pid's line. A failed build must never leave your marker behind.
-2. Run `stats` (and the probe) again and name the state after. If the build failed (`exit=` not 0)
+2. Run `stats` (and the probe, since `commit` should now equal HEAD) again and name the state after. If the build failed (`exit=` not 0)
    or the state is not `fresh`, say so with the last lines of the log; do not retry more than once.
 3. Stop every `Monitor` and background job you started (`TaskStop`) before you report.
 
@@ -87,7 +104,7 @@ Nothing else.
 ## Questions you do not answer
 
 You never answer definition, callers, references, includers, importers or overrides questions, and
-you never run those queries. If asked, reply in one line: `ask orch-explorer` (it reads the index
+you never run those queries, except the one `def __orch_probe__` probe above. If asked, reply in one line: `ask orch-explorer` (it reads the index
 itself and says when it is stale).
 
 ## Hard boundaries
