@@ -19,9 +19,9 @@ Usage: scripts/sync-live.py [--dry-run] [--rev REV] [--init BASELINE_REV] [--all
               otherwise the run is refused. Refused when a manifest already exists.
 - --allow-non-descendant  sync even when the last synced rev is not an ancestor of REV (a branch cut
               from older code would revert what the last sync wrote); the refusal becomes a NOTE.
-- --dry-run   report only. Without it this version exits 2 (the write phase is not implemented yet).
+- --dry-run   report only. Without it the run writes live (see "Write phase").
 
-State (read here; only the write phase creates it): <live>/.orch-sync/
+State (the write phase creates it; 0700): <live>/.orch-sync/
 - manifest.json = {"version": 1, "rev", "tree", "synced_at", "record", "overlay_sha256",
   "files": {<live path>: {"sha256", "exec", "repo_path"}}}, the image the last sync wrote. Invalid JSON
   or a bad shape is exit 2. Without a manifest, a run needs --init.
@@ -71,11 +71,36 @@ lines, then `sync-live: dry run, rev <short>: C create, U update, D delete, A ad
 R refusal(s)`, or `sync-live: dry run, rev <short>: nothing to do` (no op, no refusal, and a manifest
 exists: an --init run always has the manifest to write).
 
-POSIX only. Exit 0 = would sync; 1 = refused, nothing written; 2 = bad input or unsafe config;
-3 = reserved. Nothing under --live or <repo> is created, changed or deleted by a dry run.
+Write phase (a run without --dry-run, after the same checks come out refusal-free; any refusal is
+exit 1 and nothing, not even the state dir, is created under --live):
+1. flock <state>/lock (non-blocking; busy is exit 1 "another sync or rollback is running"), held until
+   exit; a `pending` record that the manifest names is marked `done`; drift, interrupted records and the
+   op list are re-checked under the lock (a change is exit 1, nothing written);
+2. record `syncs/<stamp>/record.json` (status `pending`): {"version": 1, "stamp", "kind": "init"|"sync",
+   "status", "rev", "tree", "overlay_sha256", "prev_manifest": object|null, "ops": [{"path", "op",
+   "repo_path", "before": {"sha256", "exec"}|null, "after": ...|null}], "dirs_created": []};
+3. every update and delete target is copied to `syncs/<stamp>/before/<path>`, each verified against its
+   before hash;
+4. the ops are applied: create and update through a fresh inode (mkstemp in the target dir, fsync,
+   fchmod, os.replace; never in place, never through a symlink), delete by os.remove, adopt writes
+   nothing; each path is re-checked at its before state right before its write; new parent dirs are
+   recorded in `dirs_created` before they are made;
+5. post-gates on live: the written bytes, `orch-build-agents.py --check`, the overlay checks (against the
+   baseline taken before the writes) and the round trip with `--src <live>`;
+6. `manifest.json` is written (atomically, last), then the record is set to `done`.
+Any failure or interrupt after the record (including Ctrl-C and SIGTERM) restores every applied op from
+`before/` in reverse order (the same atomic write; a create is removed only while it is still at its
+after state; a path at neither state is left alone and reported), removes the dirs it created, puts the
+previous manifest back if this record wrote it, and sets the record to `rolled-back` (exit 1). If the
+restore cannot be verified the record is `rollback-failed` (exit 3, the message names the record dir).
+Backups and old records are never deleted.
+
+POSIX only. Exit 0 = would sync / synced; 1 = refused or rolled back, live is as before; 2 = bad input
+or unsafe config; 3 = restore incomplete. A dry run creates, changes and deletes nothing under --live
+or <repo>.
 """
-import argparse, difflib, hashlib, importlib.util, io, json, os, posixpath, re, shutil, signal, stat
-import subprocess, sys, tarfile, tempfile
+import argparse, datetime, difflib, fcntl, hashlib, importlib.util, io, json, os, posixpath, re, shutil
+import signal, stat, subprocess, sys, tarfile, tempfile, types
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOP_DIRS = ("skills", "agents", "bin")
@@ -403,6 +428,13 @@ def run_cmd(argv, env, timeout, cwd):
         except OSError:
             pass
         p.communicate()
+        raise
+    except BaseException:  # an interrupt (Ctrl-C, SIGTERM) must not leave a check running
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        p.wait()
         raise
     return p.returncode, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
 
@@ -745,7 +777,7 @@ def diff_text(old_path, new_path, rel):
     return "".join(out)
 
 
-def report(ops, notes, refusals, short, stage, live, has_manifest):
+def report(ops, notes, refusals, short, stage, live, has_manifest, dry=True):
     counts = {k: 0 for k in ("create", "update", "unchanged", "adopt", "conflict", "delete", "left")}
     for op, rel in ops:
         counts[op] += 1
@@ -761,13 +793,378 @@ def report(ops, notes, refusals, short, stage, live, has_manifest):
     for r in refusals:
         print("REFUSE: %s" % r)
     work = counts["create"] + counts["update"] + counts["delete"] + counts["adopt"]
+    label = "dry run, " if dry else ""
     if not refusals and not work and has_manifest:
-        print("sync-live: dry run, rev %s: nothing to do" % short)
-    else:
-        print("sync-live: dry run, rev %s: %d create, %d update, %d delete, %d adopt, %d unchanged, "
-              "%d refusal(s)" % (short, counts["create"], counts["update"], counts["delete"],
+        print("sync-live: %srev %s: nothing to do" % (label, short))
+    elif dry or refusals or not work:
+        print("sync-live: %srev %s: %d create, %d update, %d delete, %d adopt, %d unchanged, "
+              "%d refusal(s)" % (label, short, counts["create"], counts["update"], counts["delete"],
                                  counts["adopt"], counts["unchanged"], len(refusals)))
     return 0 if not refusals else 1
+
+
+# ---------- 9: write phase (lock, record, backups, atomic writes, post-gates, restore, manifest) ----------
+
+WRITE_KINDS = ("create", "update", "delete", "adopt")
+
+
+class Interrupted(BaseException):
+    """SIGTERM or SIGHUP during the write phase: handled like Ctrl-C (restore, then exit)."""
+
+
+def _raise_interrupted(signum, frame):
+    raise Interrupted(signal.Signals(signum).name)
+
+
+def utc_iso():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def tup(d):
+    """(sha256, exec) of a record's {"sha256", "exec"} state; None for an absent file."""
+    return None if d is None else (d["sha256"], d["exec"])
+
+
+def sdict(t):
+    return None if t is None else {"sha256": t[0], "exec": t[1]}
+
+
+def state_of(path):
+    """None if `path` is absent, (sha256, owner-exec) if it is a regular file, else a marker tuple that
+    equals no recorded state. Never follows a symlink and never blocks on a FIFO."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return ("unreadable",)
+    with os.fdopen(fd, "rb") as f:
+        st = os.fstat(f.fileno())
+        if not stat.S_ISREG(st.st_mode):
+            return ("special",)
+        data = f.read()
+    return hashlib.sha256(data).hexdigest(), bool(st.st_mode & stat.S_IXUSR)
+
+
+def fsync_dir(d):
+    try:
+        fd = os.open(d, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def atomic_write(path, data, mode):
+    """Replace `path` with `data` through a fresh inode: mkstemp in the same dir (O_EXCL, random name),
+    write, fsync, fchmod, os.replace. Never writes the existing inode, never follows a symlink."""
+    d, base = os.path.split(path)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix="." + base + ".sync-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+            os.fchmod(f.fileno(), mode)
+        os.replace(tmp, path)
+    finally:
+        if os.path.lexists(tmp):
+            os.remove(tmp)
+    fsync_dir(d)
+
+
+def write_json_atomic(path, obj):
+    atomic_write(path, (json.dumps(obj, indent=1, sort_keys=True) + "\n").encode("utf-8"), 0o600)
+
+
+def exec_mode(exe):
+    return 0o755 if exe else 0o644
+
+
+def check_no_symlink(live, rel):
+    cur = live
+    for part in rel.split("/"):
+        cur = os.path.join(cur, part)
+        if os.path.islink(cur):
+            raise Fail(1, "%s: %s is a symlink; nothing was written there" % (rel, cur))
+
+
+def ensure_parents(live, rel, record, rec_path):
+    """Create the missing parent dirs of `rel` top-down, recording each in the record BEFORE making it."""
+    parts = rel.split("/")[:-1]
+    for i in range(1, len(parts) + 1):
+        d = "/".join(parts[:i])
+        full = os.path.join(live, d)
+        if os.path.lexists(full):
+            continue
+        record["dirs_created"].append(d)
+        write_json_atomic(rec_path, record)
+        try:
+            os.mkdir(full, 0o755)
+        except FileExistsError:
+            pass
+
+
+def restore_file(rec_dir, live, op):
+    """Put the backed-up bytes and exec bit of an update/delete op back, atomically. Problem text or None."""
+    bp = os.path.join(rec_dir, "before", op["path"])
+    try:
+        with open(bp, "rb") as f:
+            data = f.read()
+    except OSError as e:
+        return "%s: backup unreadable (%s)" % (op["path"], e.__class__.__name__)
+    if hashlib.sha256(data).hexdigest() != op["before"]["sha256"]:
+        return "%s: backup does not match its recorded hash" % op["path"]
+    try:
+        atomic_write(os.path.join(live, op["path"]), data, exec_mode(op["before"]["exec"]))
+    except OSError as e:
+        return "%s: restore failed (%s)" % (op["path"], e)
+    return None
+
+
+def restore(live, rec_dir, record):
+    """Undo a record's ops, newest first. The one restore for the automatic undo and --rollback.
+    A path at its before state is skipped (never applied or already restored); a path at neither its
+    before nor its after state is left alone and reported. Empty dirs the sync created are removed.
+    Returns the list of problems; empty means every op is verified at its before state."""
+    problems = {}
+    for op in reversed(record["ops"]):
+        rel = op["path"]
+        p = os.path.join(live, rel)
+        cur = state_of(p)
+        if cur == tup(op["before"]):
+            continue
+        if cur != tup(op["after"]):
+            problems[rel] = "%s: at neither its before nor its after state; left alone" % rel
+            continue
+        try:
+            if op["op"] == "create":
+                os.remove(p)
+            else:
+                msg = restore_file(rec_dir, live, op)
+                if msg:
+                    problems[rel] = msg
+        except OSError as e:
+            problems[rel] = "%s: restore failed (%s)" % (rel, e)
+    for d in reversed(record["dirs_created"]):
+        try:
+            os.rmdir(os.path.join(live, d))
+        except OSError:
+            pass
+    for op in record["ops"]:
+        if op["path"] not in problems and state_of(os.path.join(live, op["path"])) != tup(op["before"]):
+            problems[op["path"]] = "%s: not at its pre-sync state after the restore" % op["path"]
+    return list(problems.values())
+
+
+def revert_manifest(state, record):
+    """Put the previous manifest back if manifest.json is the one this record wrote. Problems list."""
+    mp = os.path.join(state, "manifest.json")
+    try:
+        cur = read_json(mp, "manifest") if os.path.lexists(mp) else None
+    except Fail as f:
+        return ["manifest: %s" % f.msg]
+    if not isinstance(cur, dict) or cur.get("record") != record["stamp"]:
+        return []
+    try:
+        if record["prev_manifest"] is None:
+            os.remove(mp)
+        else:
+            write_json_atomic(mp, record["prev_manifest"])
+    except OSError as e:
+        return ["manifest: could not restore the previous one (%s)" % e]
+    return []
+
+
+def ensure_state_dir(state):
+    if not os.path.lexists(state):
+        os.mkdir(state, 0o700)
+        os.chmod(state, 0o700)
+    elif os.path.islink(state) or not os.path.isdir(state):
+        raise bad("state dir %s: not a directory" % state)
+    elif os.stat(state).st_uid != os.getuid():
+        raise bad("state dir %s: not owned by the current user" % state)
+
+
+def take_lock(state):
+    """Exclusive non-blocking flock on <state>/lock; the fd (kept open until exit) or exit 1."""
+    lp = os.path.join(state, "lock")
+    try:
+        fd = os.open(lp, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    except OSError as e:
+        raise bad("cannot open the lock %s: %s" % (lp, e))
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        raise Fail(1, "another sync or rollback is running")
+    return fd
+
+
+def new_stamp_dir(state):
+    syncs = os.path.join(state, "syncs")
+    if not os.path.lexists(syncs):
+        os.mkdir(syncs, 0o700)
+    base = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    n = 0
+    while True:
+        stamp = base if n == 0 else "%s-%d" % (base, n)
+        d = os.path.join(state, "syncs", stamp)
+        try:
+            os.mkdir(d, 0o700)
+        except FileExistsError:
+            n += 1
+            continue
+        return stamp, d
+
+
+def finish_completed_pending(state, manifest, records):
+    """A `pending` record whose stamp is the manifest's finished (the manifest is written last): mark
+    it done, atomically."""
+    for stamp, status in records:
+        if status == "pending" and manifest is not None and manifest["record"] == stamp:
+            rp = os.path.join(state, "syncs", stamp, "record.json")
+            rec = read_json(rp, "record")
+            rec["status"] = "done"
+            write_json_atomic(rp, rec)
+
+
+def describe(e):
+    if isinstance(e, Fail):
+        return e.msg
+    if isinstance(e, (KeyboardInterrupt, Interrupted)):
+        return "interrupted (%s)" % (e if isinstance(e, Interrupted) else "Ctrl-C")
+    return "%s: %s" % (e.__class__.__name__, e)
+
+
+def post_gates(c):
+    """The gates again, on live, after the writes: written bytes, rendered agents, overlay checks (with
+    the baseline taken before the writes) and the round trip with --src live."""
+    refusals = []
+    for o in c.wops:
+        if o["after"] is not None and state_of(os.path.join(c.live, o["path"])) != tup(o["after"]):
+            refusals.append("write: %s does not hold the staged content" % o["path"])
+    refusals += gate_agents(c.snap, c.live, c.tmp)
+    refusals += gate_checks(c.overlay["checks"], c.live, c.live, c.baseline, c.tmp)
+    refusals += gate_roundtrip(c.snap, c.snap_files, c.live, c.private_path, c.deny_path, c.tmp)
+    return refusals
+
+
+def abort_sync(c, state, rec_dir, record, e):
+    """Restore everything from the backups after a failure, set the record, return the exit code."""
+    saved = {s: signal.signal(s, signal.SIG_IGN) for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+    try:
+        print("sync-live: sync failed: %s" % describe(e))
+        problems = restore(c.live, rec_dir, record) + revert_manifest(state, record)
+        record["status"] = "rolled-back" if not problems else "rollback-failed"
+        try:
+            write_json_atomic(os.path.join(rec_dir, "record.json"), record)
+        except OSError as werr:
+            record["status"] = "rollback-failed"
+            problems.append("record not updated (%s)" % werr)
+        if problems:
+            print("sync-live: RESTORE INCOMPLETE, record %s is rollback-failed:" % record["stamp"])
+            for pr in problems:
+                print("  %s" % pr)
+            print("sync-live: record dir: %s (backups are in its before/ dir)" % rec_dir)
+            return 3
+        print("sync-live: restored the live install from the backups (record %s rolled-back)"
+              % record["stamp"])
+        return 1
+    finally:
+        for s, h in saved.items():
+            signal.signal(s, h)
+
+
+def locked_sync(c, state):
+    """Everything after the lock is held. Returns the exit code."""
+    live = c.live
+    manifest, records = read_state(live)
+    finish_completed_pending(state, manifest, records)
+    manifest, records = read_state(live)
+    notes, refusals = record_findings(records, manifest)
+    ops, class_refusals = classify(c.ex, c.pairs, c.stage, live, c.known, c.hashes)
+    if refusals or class_refusals or ops != c.ops or manifest != c.manifest:
+        raise Fail(1, "live changed while the sync was starting; nothing was written; run again")
+    wops = [(k, lr) for k, lr in ops if k in WRITE_KINDS]
+    if not wops and c.init is None:
+        return 0
+    stamp, rec_dir = new_stamp_dir(state)
+    rec_path = os.path.join(rec_dir, "record.json")
+    c.wops = []
+    for kind, lr in wops:
+        c.wops.append({"path": lr, "op": kind, "repo_path": c.repo_of[lr],
+                       "before": None if kind == "create" else sdict(state_of(os.path.join(live, lr))),
+                       "after": None if kind == "delete" else sdict(sha_exec(os.path.join(c.stage, lr)))})
+    record = {"version": 1, "stamp": stamp, "kind": "init" if c.init is not None else "sync",
+              "status": "pending", "rev": c.full, "tree": c.tree, "overlay_sha256": c.overlay_sha,
+              "prev_manifest": manifest, "ops": c.wops, "dirs_created": []}
+    old = {s: signal.signal(s, _raise_interrupted) for s in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        try:
+            write_json_atomic(rec_path, record)
+            for o in c.wops:  # back up everything first, each verified against its before hash
+                if o["op"] in ("update", "delete"):
+                    with open(os.path.join(live, o["path"]), "rb") as f:
+                        data = f.read()
+                    if (hashlib.sha256(data).hexdigest() != o["before"]["sha256"]
+                            or state_of(os.path.join(live, o["path"])) != tup(o["before"])):
+                        raise Fail(1, "%s changed while it was being backed up; nothing was written"
+                                   % o["path"])
+                    bp = os.path.join(rec_dir, "before", o["path"])
+                    os.makedirs(os.path.dirname(bp), exist_ok=True)
+                    atomic_write(bp, data, exec_mode(o["before"]["exec"]))
+            for o in c.wops:
+                p = os.path.join(live, o["path"])
+                check_no_symlink(live, o["path"])
+                if state_of(p) != tup(o["before"]):
+                    raise Fail(1, "%s changed during the sync" % o["path"])
+                if o["op"] in ("create", "update"):
+                    ensure_parents(live, o["path"], record, rec_path)
+                    with open(os.path.join(c.stage, o["path"]), "rb") as f:
+                        data = f.read()
+                    atomic_write(p, data, exec_mode(o["after"]["exec"]))
+                elif o["op"] == "delete":
+                    os.remove(p)
+            failures = post_gates(c)
+            if failures:
+                raise Fail(1, "post-sync gates failed:\n  " + "\n  ".join(failures))
+            write_json_atomic(os.path.join(state, "manifest.json"),
+                              {"version": 1, "rev": c.full, "tree": c.tree, "synced_at": utc_iso(),
+                               "record": stamp, "overlay_sha256": c.overlay_sha, "files": c.new_files})
+            record["status"] = "done"
+            write_json_atomic(rec_path, record)
+        except BaseException as e:
+            return abort_sync(c, state, rec_dir, record, e)
+    finally:
+        for s, h in old.items():
+            signal.signal(s, h)
+    n = {k: 0 for k in WRITE_KINDS}
+    for o in c.wops:
+        n[o["op"]] += 1
+    unchanged = sum(1 for k, _ in c.ops if k == "unchanged")
+    print("sync-live: synced rev %s: %d created, %d updated, %d deleted, %d adopted, %d unchanged "
+          "(record %s)" % (c.short, n["create"], n["update"], n["delete"], n["adopt"], unchanged, stamp))
+    return 0
+
+
+def write_phase(c):
+    """The real sync, after the plan is final and refusal-free: lock, then locked_sync."""
+    state = os.path.join(c.live, STATE_DIR)
+    work = any(k in WRITE_KINDS for k, _ in c.ops)
+    pending = any(st == "pending" for _, st in c.records)
+    if not work and not pending and c.init is None:
+        return 0
+    ensure_state_dir(state)
+    fd = take_lock(state)
+    try:
+        return locked_sync(c, state)
+    finally:
+        os.close(fd)
 
 
 # ---------- main ----------
@@ -856,15 +1253,30 @@ def run(a, repo, tmp):
     refusals += base_refusals
     refusals += run_gates(ex, pairs, snap, snap_files, overlay, a.private, a.denylist, stage, a.live,
                           baseline, tmp)
-    return report(ops, notes, refusals, short, stage, a.live, manifest is not None)
+    rc = report(ops, notes, refusals, short, stage, a.live, manifest is not None, dry=a.dry_run)
+    if a.dry_run or rc:
+        return rc
+    tree = git(repo, "rev-parse", "--verify", "--quiet", full + "^{tree}")
+    with open(a.overlay, "rb") as f:
+        overlay_sha = hashlib.sha256(f.read()).hexdigest()
+    new_files = {}
+    for lr, rr in pairs:
+        sha, exe = sha_exec(os.path.join(stage, lr))
+        new_files[lr] = {"sha256": sha, "exec": exe, "repo_path": rr}
+    ctx = types.SimpleNamespace(
+        live=a.live, ex=ex, pairs=pairs, stage=stage, known=known, hashes=hashes, ops=ops,
+        manifest=manifest, records=records, init=a.init, full=full, short=short,
+        tree=tree.decode().strip() if tree else "", overlay_sha=overlay_sha, overlay=overlay,
+        new_files=new_files, repo_of=dict(pairs, **{lr: h["repo_path"] for lr, h in (hashes or {}).items()}),
+        snap=snap, snap_files=snap_files, baseline=baseline,
+        private_path=a.private, deny_path=a.denylist, tmp=tmp)
+    return write_phase(ctx)
 
 
 def main(argv=None):
     a = parse_args(sys.argv[1:] if argv is None else argv)
     if os.name != "posix":
         print("sync-live: POSIX only", file=sys.stderr); return 2
-    if not a.dry_run:
-        print("sync-live: only --dry-run is implemented yet", file=sys.stderr); return 2
     repo = REPO
     tmp = tempfile.mkdtemp(prefix="sync-live-")
     try:
