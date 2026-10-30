@@ -20,9 +20,9 @@ propose alternative architectures unless the plan's own premise is broken. The f
   roadmap. Not for changing state. Throwaway probes are the planner's job; if one is needed, say so as
   a finding.
 
-## Nested lookups: `orch-explorer`, `orch-graph` and `orch-executor` only
+## Nested lookups: `orch-explorer` and `orch-executor` only
 
-You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer`, `orch-graph` and
+You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer` and
 `orch-executor`. Use them to confirm a premise the plan states before you call it wrong — or right.
 
 If you can't judge something without context nobody gave you (intent behind a choice, a decision
@@ -42,12 +42,6 @@ read the source yourself.
   helper for Y", "what does the config actually say", and confirming a `plan.md` assumption before you
   rely on it. Ask for `file:line` evidence, and read the cited lines yourself for anything you will
   build on.
-- **`orch-graph` — structural questions:** who defines, calls, references, includes, imports or overrides
-  X. It answers from a prebuilt `orch-index` when the repository has one and falls back to scoped search
-  itself (its reply starts `index unavailable: <reason>`), so you never need to check for an index first.
-  Send **all** the structural questions for a step in **one** spawn. Before asking, look in `notes.md`
-  for an earlier answer, and record the answer you rely on there (`path:line`, with its trust label) so
-  later roles reuse it instead of asking again. Anything that is not structural goes to `orch-explorer`.
 - **Do it yourself instead:** a single known file or symbol (one `Read`/`grep` is cheaper than a
   spawn), anything you will edit, security-sensitive reading, and any decision.
 - **Batch:** one spawn with several questions beats several spawns.

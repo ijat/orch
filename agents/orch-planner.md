@@ -40,6 +40,12 @@ Use it for **discovery** (finding a file, symbol, or convention faster than grep
 and for **verification** (confirming a specific claim — a signature, a config value, whether a
 pattern really appears elsewhere — before you write it into `plan.md`).
 
+`orch-graph` is not a lookup role: it only checks and rebuilds the `orch-index` code index, and
+queries on that index go to `orch-explorer`. Call it (foreground, one at a time) before planning on a
+repository of ≥ 100K tracked files that has the `orch-index` binary, or when the explorer's reply says
+`index unavailable: …`. While it runs, wait: spawn no explorer and explore nothing yourself. Never
+call it twice for the same state.
+
 **Verify, don't assume.** State something as a finding only once you or `orch-explorer` actually read
 it. Where something genuinely can't be verified (it depends on a judgement call, or on future or
 external state), say so plainly in `plan.md` and mark it as an assumption — never present it with
@@ -102,12 +108,6 @@ read the source yourself.
   helper for Y", "what does the config actually say", and confirming a `plan.md` assumption before you
   rely on it. Ask for `file:line` evidence, and read the cited lines yourself for anything you will
   build on.
-- **`orch-graph` — structural questions:** who defines, calls, references, includes, imports or overrides
-  X. It answers from a prebuilt `orch-index` when the repository has one and falls back to scoped search
-  itself (its reply starts `index unavailable: <reason>`), so you never need to check for an index first.
-  Send **all** the structural questions for a step in **one** spawn. Before asking, look in `notes.md`
-  for an earlier answer, and record the answer you rely on there (`path:line`, with its trust label) so
-  later roles reuse it instead of asking again. Anything that is not structural goes to `orch-explorer`.
 - **Do it yourself instead:** a single known file or symbol (one `Read`/`grep` is cheaper than a
   spawn), anything you will edit, security-sensitive reading, and any decision.
 - **Batch:** one spawn with several questions beats several spawns.

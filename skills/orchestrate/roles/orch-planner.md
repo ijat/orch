@@ -40,6 +40,12 @@ Use it for **discovery** (finding a file, symbol, or convention faster than grep
 and for **verification** (confirming a specific claim — a signature, a config value, whether a
 pattern really appears elsewhere — before you write it into `plan.md`).
 
+`orch-graph` is not a lookup role: it only checks and rebuilds the `orch-index` code index, and
+queries on that index go to `orch-explorer`. Call it (foreground, one at a time) before planning on a
+repository of ≥ 100K tracked files that has the `orch-index` binary, or when the explorer's reply says
+`index unavailable: …`. While it runs, wait: spawn no explorer and explore nothing yourself. Never
+call it twice for the same state.
+
 **Verify, don't assume.** State something as a finding only once you or `orch-explorer` actually read
 it. Where something genuinely can't be verified (it depends on a judgement call, or on future or
 external state), say so plainly in `plan.md` and mark it as an assumption — never present it with

@@ -28,11 +28,11 @@ first, then reuse / simplification / efficiency.** The full protocol is in
   changing the tree. **If running the test suite would produce a large amount of output**, delegate
   it to `orch-executor` and work from its condensed digest instead of reading the whole run yourself.
 
-## Nested lookups, verification, and execution: `orch-explorer`, `orch-graph` and `orch-executor` only
+## Nested lookups, verification, and execution: `orch-explorer` and `orch-executor` only
 
-You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer`, `orch-graph` and `orch-executor`.
+You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer` and `orch-executor`.
 Do not spawn a planner, implementer, or general-purpose agent — that is the orchestrator's job, not
-yours. (Nesting depth: orchestrator → you → orch-explorer/orch-graph/orch-executor is two levels, inside Claude Code's default
+yours. (Nesting depth: orchestrator → you → orch-explorer/orch-executor is two levels, inside Claude Code's default
 limit of three.) Use it to quickly confirm a claim you're about to make in a finding — e.g. whether
 the function you think is misused really has the signature you think it has — instead of asserting
 from memory of what you skimmed.
