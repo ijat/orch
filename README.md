@@ -305,30 +305,40 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 
 ## Code index (optional)
 
-`orch-graph` is a Haiku helper for structural questions about code: where a symbol is defined, who
-calls it, every reference to it, which files include or import a file, which classes override a
-method. It answers them from `orch-index`, a separate command-line code index that reads a
-repository's committed tree (C/C++, Rust, JS/TS, C#) and returns compact `path:line [label]` rows,
-each with a trust label (`resolved`, `syntactic`, or an `ambiguous`/`basename`/`parse-errors` mark
-that says to check the row). On a large repository one query replaces many text searches.
-`orch-explorer` uses the same index first for the same kind of question and keeps its general
-search for everything else.
+`orch-index` is a separate command-line code index. It reads a repository's committed tree (C/C++,
+Rust, JS/TS, C#) and answers structural questions (where a symbol is defined, who calls it, every
+reference, which files include or import a file, which classes override a method) as compact
+`path:line [label]` rows, each with a trust label (`resolved`, `syntactic`, or an
+`ambiguous`/`basename`/`parse-errors` mark that says to check the row). On a large repository one
+query replaces many text searches.
 
-You do not need the index. Nothing in orch builds or installs it, and without it both helpers work
-as before: each starts by running `orch-index stats`, and when the binary is missing, the repository
-has no index, or the index is behind `HEAD`, the reply opens with `index unavailable: <reason>` and
-the answer comes from scoped `git grep`. The helpers never run `orch-index index`; building or
-refreshing an index is your job.
+Two roles use it, and only two:
 
-To use it:
+- **`orch-explorer` queries it.** Its first command is `orch-index stats`; when the index is fresh it
+  answers structural questions from it, and it searches with `git grep` / `rg` for everything else
+  (other languages, rows marked as uncertain). When the binary is missing, the repository has no
+  index, or the index is behind `HEAD`, its reply opens with `index unavailable: <reason>
+  (refresh: orch-graph)` and the answer comes from scoped search, so nothing is lost without an
+  index. The explorer never builds or refreshes the index.
+- **`orch-graph` keeps it fresh.** It checks the index (`fresh`, `stale`, `missing`, or `binary not
+  found`) and, when it is stale or missing, rebuilds it (incremental when an index exists), then
+  reports the state before and after. It answers no code questions. Only you, the orchestrator and
+  the planner call it (the planner before planning on a repository of 100K or more tracked files, or
+  after an `index unavailable` reply); the other roles do not.
+
+While `orch-graph` rebuilds, it writes a marker file, `<git-common-dir>/orch-index/indexing`, and
+removes it afterwards. During the rebuild the orchestrator and the planner start no other agent and
+do no exploring of their own, and the explorer's first command waits (up to five minutes) for a live
+marker before it queries. A marker whose process is gone, or that is over 30 minutes old, is ignored.
+This is a rule the roles follow, not a lock: another person's session, or a role that never reads the
+rule, is not blocked.
+
+You do not need the index. Nothing in orch builds or installs it. To use it:
 
 1. Build `orch-index` from its source with `cargo build --release`.
 2. Put the binary on `PATH`, or set `ORCH_INDEX_BIN` to its full path.
-3. Run `orch-index index` once inside each repository you want covered (re-run it after commits you
-   want to see; it only re-reads changed files).
-
-Callers send structural questions to `orch-graph` (all of a step's questions in one spawn, with the
-answer you rely on recorded in `notes.md` for later roles) and everything else to `orch-explorer`.
+3. Ask for `orch-graph` once per repository (or run `orch-index index` yourself inside it); later
+   calls only re-read changed files.
 
 ## Install
 
