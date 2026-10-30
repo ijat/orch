@@ -349,15 +349,22 @@ class CoreTests(World):
 
     def test_T2_8_unsafe_files_paths(self):
         write(os.path.join(self.repo, "settings.json"), "{}\n")
-        write(os.path.join(self.repo, ".h/x"), "x\n")
+        write(os.path.join(self.repo, ".git2/x"), "x\n")
         self.commit("odd files")
-        for bad in ("../x", ".h/x", "settings.json", "/abs"):
+        for bad in ("../x", "bin/.git/x", "bin/.orch-sync/x", "bin/./x", "settings.json", "/abs"):
             with self.subTest(bad):
                 self.set_tables(', "%s"' % bad)
                 self.commit("tables " + bad)
                 rc, out = self.run_sync("--dry-run")
                 self.assertEqual(rc, 2, out)
                 self.assertIn("unsafe managed path", out)
+
+    def test_T2_8b_dot_directory_is_allowed(self):
+        write(os.path.join(self.repo, "bin/orchlib/.hidden/s.py"), "H = 1\n")
+        self.commit("dot dir")
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("create bin/orchlib/.hidden/s.py", out)
 
     def test_T2_9_symlinks(self):
         target = os.path.join(self.tmp, "elsewhere")
@@ -1178,6 +1185,18 @@ class RollbackTests(World):
         rc, out = self.run_sync("--dry-run")  # live is old again: the sync is plannable again
         self.assertEqual(rc, 0, out)
         self.assertIn("update bin/orchlib/a.py", out)
+
+    def test_T5_1b_dot_directory_syncs_and_rolls_back(self):
+        self.drop_state()
+        image = self.image()
+        write(os.path.join(self.repo, "bin/orchlib/.hidden/s.py"), "H = 1\n")
+        self.commit("dot dir")
+        self.assertEqual(self.run_sync("--init", self.git("rev-parse", "HEAD~1").strip())[0], 0)
+        self.assertEqual(rb(os.path.join(self.live, "bin/orchlib/.hidden/s.py")), b"H = 1\n")
+        rc, out = self.run_sync("--rollback")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.image(), image)
+        self.assertFalse(os.path.exists(os.path.join(self.live, "bin/orchlib/.hidden/s.py")))
 
     def test_T5_2_rollback_walks_back(self):
         self.drop_state()
