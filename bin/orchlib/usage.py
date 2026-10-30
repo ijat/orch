@@ -494,7 +494,26 @@ def parse_transcript(path, since, key):
     return out
 
 
+def _pid_alive_nt(pid):
+    """Windows: os.kill(pid, 0) would terminate the process, so ask the kernel instead."""
+    import ctypes
+    k32 = ctypes.windll.kernel32
+    h = k32.OpenProcess(0x1000, False, int(pid))   # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return ctypes.GetLastError() == 5   # ERROR_ACCESS_DENIED: it exists
+    try:
+        code = ctypes.c_ulong()
+        return bool(k32.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == 259   # STILL_ACTIVE
+    finally:
+        k32.CloseHandle(h)
+
+
 def pid_alive(pid):
+    if os.name == 'nt':
+        try:
+            return int(pid) > 0 and _pid_alive_nt(pid)
+        except (OSError, ValueError, OverflowError, TypeError, AttributeError):
+            return False
     try:
         os.kill(int(pid), 0)
     except PermissionError:
@@ -532,6 +551,8 @@ def proc_starts(pids):
     live = sorted(set(int(p) for p in pids if pid_alive(p)))
     if not live:
         return {}
+    if os.name == 'nt':
+        return None   # no `ps` with -o (Git Bash's lists its own pids)
     try:
         out = subprocess.run(['ps', '-o', 'pid=,etime=', '-p', ','.join(map(str, live))], stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, universal_newlines=True, timeout=5,
@@ -815,6 +836,8 @@ def is_wait_proc(pid, launch='-'):
     the process started by that launch -- a pid reused after a left-behind pidfile starts later."""
     if not pid_alive(pid):
         return False
+    if os.name == 'nt':
+        return True   # no usable `ps`: pid liveness only
     try:
         cmd = subprocess.run(['ps', '-o', 'command=', '-p', str(int(pid))], stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, universal_newlines=True, timeout=5,
@@ -1196,8 +1219,9 @@ def cmd_wait(ns):
         w = Wait(state, key, lambda: safe_estimate(home=home, state=state, line=line, session=sid, scanner=sc),
                  task_dir=task_dir, owner=owner, sid=sid, interval=interval, max_sec=max_sec,
                  until_reset=ns.until_reset, refresh=ns.refresh)
-        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-            signal.signal(sig, _signal_exit)
+        for name in ('SIGTERM', 'SIGINT', 'SIGHUP'):   # Windows has no SIGHUP
+            if hasattr(signal, name):
+                signal.signal(getattr(signal, name), _signal_exit)
         code, text = w.run()
     except Exception as exc:
         if w is not None:

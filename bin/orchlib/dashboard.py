@@ -15,10 +15,10 @@ import re
 import socket
 import socketserver
 import stat
-import subprocess
 import sys
 import threading
 import time
+import webbrowser
 
 from . import plan as pl
 from . import questions as qs
@@ -700,13 +700,12 @@ def serve(root, port, open_browser):
     print("serving %s (Ctrl-C to stop)" % url)
     sys.stdout.flush()
     if open_browser:
-        if sys.platform == "darwin":
-            try:
-                subprocess.run(["open", url], check=False)
-            except OSError as exc:
-                sys.stderr.write("warning: could not open the browser: %s\n" % exc)
-        else:
-            sys.stderr.write("warning: --open only works on macOS; open %s yourself\n" % url)
+        try:
+            opened = webbrowser.open(url)
+        except Exception:
+            opened = False
+        if not opened:
+            sys.stderr.write("warning: could not open the browser; open %s yourself\n" % url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
