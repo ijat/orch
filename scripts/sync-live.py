@@ -280,7 +280,8 @@ def tree_dirty(repo):
 
 
 def snapshot(repo, rev, dst):
-    """Extract `git archive <rev>` into `dst`; return {repo_rel: exec_bool} for every file."""
+    """Extract `git archive <rev>` into `dst`, then prove it equals the commit's blobs (verify_snapshot);
+    return {repo_rel: exec_bool} for every file."""
     data = git(repo, "archive", "--format=tar", rev)
     if data is None:
         raise bad("git archive failed for %s" % rev)
@@ -297,7 +298,49 @@ def snapshot(repo, rev, dst):
                 files[name] = bool(m.mode & 0o100)
         kw = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
         t.extractall(dst, members=members, **kw)
+    verify_snapshot(repo, rev, dst, files)
     return files
+
+
+def verify_snapshot(repo, rev, dst, files):
+    """Refuse (exit 2) unless the extracted image is exactly the commit's tracked blobs.
+
+    `git archive` applies .gitattributes (export-ignore drops a file, export-subst and eol/filter
+    attributes rewrite bytes), so the image is compared with `git ls-tree` on path set, exec bit and
+    blob id, hashed raw (--no-filters). Everything downstream trusts the image to be the commit."""
+    out = git(repo, "ls-tree", "-r", "-z", "--full-tree", rev)
+    if out is None:
+        raise bad("git ls-tree failed for %s" % rev)
+    want = {}
+    for rec in out.split(b"\0"):
+        if not rec:
+            continue
+        meta, _, path = rec.partition(b"\t")
+        mode, otype, oid = meta.decode("ascii", "replace").split(" ")
+        path = path.decode("utf-8", "surrogateescape")
+        if otype != "blob" or mode not in ("100644", "100755"):
+            raise bad("snapshot: %s is a %s (mode %s); only regular files can be synced" % (path, otype, mode))
+        want[path] = (mode == "100755", oid)
+    if set(want) != set(files):
+        diff = sorted(set(want) ^ set(files))
+        raise bad("snapshot differs from commit %s in its file set (.gitattributes export-ignore?): %s"
+                  % (rev, ", ".join(diff[:10])))
+    names = sorted(want)
+    if not names:
+        return
+    stdin = ("\n".join(os.path.join(dst, n) for n in names) + "\n").encode("utf-8", "surrogateescape")
+    try:
+        r = subprocess.run(["git", "-C", repo, "hash-object", "--no-filters", "--stdin-paths"], input=stdin,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=git_env())
+    except OSError as e:
+        raise bad("git: %s" % e)
+    oids = r.stdout.decode("ascii", "replace").split()
+    if r.returncode != 0 or len(oids) != len(names):
+        raise bad("git hash-object failed on the snapshot")
+    bad_files = [n for n, got in zip(names, oids) if got != want[n][1] or files[n] != want[n][0]]
+    if bad_files:
+        raise bad("snapshot differs from commit %s (.gitattributes export-subst, eol or filter?): %s"
+                  % (rev, ", ".join(bad_files[:10])))
 
 
 # ---------- 2 + 3: file set and path guards ----------
