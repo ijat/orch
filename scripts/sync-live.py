@@ -7,6 +7,7 @@ overlay's edits applied) and reports what would change.
 
 Usage: scripts/sync-live.py [--dry-run] [--rev REV] [--init BASELINE_REV] [--allow-non-descendant]
                             [--live DIR] [--overlay FILE] [--private FILE] [--denylist FILE]
+       scripts/sync-live.py --rollback [--dry-run] [--live DIR]
 
 - --live      default ~/.claude (the live install)
 - --overlay   default <live>/orch-live-overlay.json; owner-only (chmod 600), outside <repo>
@@ -20,6 +21,8 @@ Usage: scripts/sync-live.py [--dry-run] [--rev REV] [--init BASELINE_REV] [--all
 - --allow-non-descendant  sync even when the last synced rev is not an ancestor of REV (a branch cut
               from older code would revert what the last sync wrote); the refusal becomes a NOTE.
 - --dry-run   report only. Without it the run writes live (see "Write phase").
+- --rollback  undo the newest sync record that is not `rolled-back` (see "Rollback"); with --rev, --init
+              or --allow-non-descendant it is exit 2.
 
 State (the write phase creates it; 0700): <live>/.orch-sync/
 - manifest.json = {"version": 1, "rev", "tree", "synced_at", "record", "overlay_sha256",
@@ -94,6 +97,22 @@ after state; a path at neither state is left alone and reported), removes the di
 previous manifest back if this record wrote it, and sets the record to `rolled-back` (exit 1). If the
 restore cannot be verified the record is `rollback-failed` (exit 3, the message names the record dir).
 Backups and old records are never deleted.
+
+Rollback (--rollback [--dry-run]): the target is the newest record whose status is not `rolled-back`
+(none: exit 1 "nothing to roll back"). Refused (exit 1, the paths listed, nothing restored) unless
+- a `done` record (or a `pending` one that the manifest names, a completed sync) has the manifest's
+  `record` equal to its stamp and every op at its after state;
+- a `pending` or `rollback-failed` record has every op at its before or after state;
+and, for the ops still to undo, the backup in `before/` is present and matches its recorded hash.
+Under the same lock, the same restore as the automatic one then runs (atomic writes, a create is
+removed only at its after state, dirs the sync created go), manifest.json becomes the record's
+`prev_manifest` (deleted when that is null) and the record `rolled-back`; exit 0, or 3 with the record
+dir named if the restore cannot be verified. A `done` record is set to `rollback-failed` right before
+the restore starts, so a rollback that is killed halfway is finished by running --rollback again.
+Repeat --rollback to walk back through older records. --rollback --dry-run prints the ops and the
+verdict and writes nothing, not even the lock. Only the ops of the record are touched, and the
+record's paths must be relative, normalised and under skills/, agents/ or bin/. State, backups and
+records are never deleted.
 
 POSIX only. Exit 0 = would sync / synced; 1 = refused or rolled back, live is as before; 2 = bad input
 or unsafe config; 3 = restore incomplete. A dry run creates, changes and deletes nothing under --live
@@ -1167,6 +1186,175 @@ def write_phase(c):
         os.close(fd)
 
 
+# ---------- 10: rollback ----------
+
+def safe_rel(p):
+    """True for a relative, normalised path under TOP_DIRS with no dot component."""
+    if not isinstance(p, str) or not p or "\0" in p or p.startswith("/") or posixpath.normpath(p) != p:
+        return False
+    parts = p.split("/")
+    return parts[0] in TOP_DIRS and not any(x == ".." or x.startswith(".") for x in parts)
+
+
+def state_ok(d):
+    return d is None or (isinstance(d, dict) and set(d) == {"sha256", "exec"}
+                         and isinstance(d["sha256"], str) and bool(SHA256.fullmatch(d["sha256"]))
+                         and isinstance(d["exec"], bool))
+
+
+def load_record(state, stamp):
+    """The full record `syncs/<stamp>/record.json`, its shape checked (exit 2 otherwise): the restore
+    removes and rewrites live paths from it."""
+    rpath = os.path.join(state, "syncs", stamp, "record.json")
+    r = read_json(rpath, "record")
+
+    def malformed(why):
+        return bad("record %s: %s" % (rpath, why))
+    ops, dirs = r.get("ops"), r.get("dirs_created", [])
+    if not isinstance(ops, list) or not isinstance(dirs, list) or r.get("stamp") != stamp:
+        raise malformed("needs its own stamp, an ops list and a dirs_created list")
+    if r.get("prev_manifest") is not None:
+        check_manifest(r["prev_manifest"], rpath + " prev_manifest")
+    for d in dirs:
+        if not safe_rel(d):
+            raise malformed("unsafe dirs_created entry %r" % (d,))
+    seen = set()
+    for o in ops:
+        if (not isinstance(o, dict) or not safe_rel(o.get("path")) or o["path"] in seen
+                or o.get("op") not in WRITE_KINDS or not state_ok(o.get("before"))
+                or not state_ok(o.get("after"))):
+            raise malformed("bad op entry %r" % (o,))
+        seen.add(o["path"])
+        want = {"create": (False, True), "delete": (True, False)}.get(o["op"], (True, True))
+        if (o["before"] is not None, o["after"] is not None) != want:
+            raise malformed("op %s %s has the wrong before/after states" % (o["op"], o["path"]))
+        if o["op"] == "adopt" and o["before"] != o["after"]:
+            raise malformed("adopt %s must have equal before/after states" % o["path"])
+    return r
+
+
+def plan_rollback(live):
+    """(stamp, rec_dir, record, effective status, op lines, refusals) for the newest record that is not
+    rolled-back, or None. Reads only."""
+    state = os.path.join(live, STATE_DIR)
+    manifest, records = read_state(live)
+    todo = [(s, st) for s, st in records if st != "rolled-back"]
+    if not todo:
+        return None
+    stamp, status = todo[-1]
+    if status == "pending" and manifest is not None and manifest["record"] == stamp:
+        status = "done"  # the sync completed; only the status write was lost
+    rec_dir = os.path.join(state, "syncs", stamp)
+    record = load_record(state, stamp)
+    refusals, lines = [], []
+    if status == "done" and (manifest is None or manifest["record"] != stamp):
+        refusals.append("the manifest was written by another sync (record %s), not by %s"
+                        % (manifest["record"] if manifest else "none", stamp))
+    for o in record["ops"]:
+        rel = o["path"]
+        p = os.path.join(live, rel)
+        cur = state_of(p)
+        try:
+            check_no_symlink(live, rel)
+        except Fail as f:
+            refusals.append(f.msg)
+            continue
+        at_before, at_after = cur == tup(o["before"]), cur == tup(o["after"])
+        if status == "done" and not at_after:
+            refusals.append("%s: changed since the sync; not at its synced state" % rel)
+        elif not at_before and not at_after:
+            refusals.append("%s: at neither its before nor its after state" % rel)
+        elif o["op"] in ("update", "delete") and not at_before:
+            bp = os.path.join(rec_dir, "before", rel)
+            try:
+                with open(bp, "rb") as f:
+                    ok = hashlib.sha256(f.read()).hexdigest() == o["before"]["sha256"]
+            except OSError:
+                ok = False
+            if not ok:
+                refusals.append("%s: backup in %s is missing or does not match its recorded hash"
+                                % (rel, os.path.join(rec_dir, "before")))
+        lines.append("undo %s %s%s" % (o["op"], rel, " (already at its pre-sync state)"
+                                      if at_before and o["op"] != "adopt" else ""))
+    for d in record["dirs_created"]:
+        try:
+            check_no_symlink(live, d)
+        except Fail as f:
+            refusals.append(f.msg)
+    return stamp, rec_dir, record, status, lines, refusals
+
+
+def print_plan(plan, label):
+    stamp, _, record, status, lines, refusals = plan
+    print("%s record %s (%s, %s, rev %s)" % (label, stamp, record.get("kind", "?"), status,
+                                              str(record.get("rev", "?"))[:12]))
+    for ln in lines:
+        print(ln)
+    for r in refusals:
+        print("REFUSE: %s" % r)
+
+
+def rollback(a):
+    live = a.live
+    if a.rev is not None or a.init is not None or a.allow_non_descendant:
+        raise bad("--rollback cannot be combined with --rev, --init or --allow-non-descendant")
+    state = os.path.join(live, STATE_DIR)
+    plan = plan_rollback(live)
+    if plan is None:
+        print("sync-live: nothing to roll back")
+        return 1
+    if a.dry_run:
+        print_plan(plan, "sync-live: rollback dry run,")
+        print("sync-live: rollback dry run: %s" % ("%d refusal(s)" % len(plan[5]) if plan[5]
+                                                     else "would roll back record %s" % plan[0]))
+        return 1 if plan[5] else 0
+    ensure_state_dir(state)
+    fd = take_lock(state)
+    try:
+        plan = plan_rollback(live)  # again, now that no other sync or rollback can run
+        if plan is None:
+            print("sync-live: nothing to roll back")
+            return 1
+        print_plan(plan, "sync-live: rolling back")
+        if plan[5]:
+            print("sync-live: rollback refused; nothing was restored")
+            return 1
+        return do_rollback(live, state, plan)
+    finally:
+        os.close(fd)
+
+
+def do_rollback(live, state, plan):
+    stamp, rec_dir, record, status, _, _ = plan
+    rec_path = os.path.join(rec_dir, "record.json")
+    saved = {s: signal.signal(s, signal.SIG_IGN) for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+    try:
+        problems = []
+        try:
+            if status != "rollback-failed":
+                # in progress: a rollback killed halfway leaves ops at before OR after, which is exactly
+                # what a rollback-failed record is allowed to have
+                record["status"] = "rollback-failed"
+                write_json_atomic(rec_path, record)
+            problems = restore(live, rec_dir, record) + revert_manifest(state, record)
+            record["status"] = "rolled-back" if not problems else "rollback-failed"
+            write_json_atomic(rec_path, record)
+        except OSError as e:
+            record["status"] = "rollback-failed"
+            problems.append("record or state not updated (%s)" % e)
+        if problems:
+            print("sync-live: RESTORE INCOMPLETE, record %s is rollback-failed:" % stamp)
+            for pr in problems:
+                print("  %s" % pr)
+            print("sync-live: record dir: %s (backups are in its before/ dir)" % rec_dir)
+            return 3
+        print("sync-live: rolled back record %s: the live install is as before that sync" % stamp)
+        return 0
+    finally:
+        for s, h in saved.items():
+            signal.signal(s, h)
+
+
 # ---------- main ----------
 
 def parse_args(argv):
@@ -1175,6 +1363,7 @@ def parse_args(argv):
     ap.add_argument("--rev")
     ap.add_argument("--init", metavar="BASELINE_REV")
     ap.add_argument("--allow-non-descendant", action="store_true")
+    ap.add_argument("--rollback", action="store_true")
     ap.add_argument("--live")
     ap.add_argument("--overlay")
     ap.add_argument("--private")
@@ -1278,18 +1467,21 @@ def main(argv=None):
     if os.name != "posix":
         print("sync-live: POSIX only", file=sys.stderr); return 2
     repo = REPO
-    tmp = tempfile.mkdtemp(prefix="sync-live-")
     try:
-        rt = os.path.realpath(tmp)
-        for root in (repo, a.live):
-            if under(rt, os.path.realpath(root)):
-                raise bad("temp dir %s lies inside %s; set TMPDIR elsewhere" % (tmp, root))
-        return run(a, repo, tmp)
+        if a.rollback:
+            return rollback(a)
+        tmp = tempfile.mkdtemp(prefix="sync-live-")
+        try:
+            rt = os.path.realpath(tmp)
+            for root in (repo, a.live):
+                if under(rt, os.path.realpath(root)):
+                    raise bad("temp dir %s lies inside %s; set TMPDIR elsewhere" % (tmp, root))
+            return run(a, repo, tmp)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
     except Fail as f:
         print("sync-live: %s" % f.msg, file=sys.stderr)
         return f.code
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
