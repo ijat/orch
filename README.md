@@ -289,11 +289,11 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `skills/orchestrate/PROGRAM.md` | Program mode: a roadmap of milestones for big features |
 | `skills/orchestrate/TIERS.md` | Guide for choosing each role's model and effort, including the implementer routing procedure (guided Haiku, Sonnet default, when Opus) |
 | `skills/orchestrate/templates/` | One template per task file: plan, status, log, review, journal, sketch, guide, … |
-| `agents/orch-*.md` | Roles: planner, implementer, code reviewer, security reviewer, plan reviewer, director (visual judgement), explorer, executor. **Generated**, do not edit |
+| `agents/orch-*.md` | Roles: planner, implementer, code reviewer, security reviewer, plan reviewer, director (visual judgement), explorer, graph, executor. **Generated**, do not edit |
 | `skills/orchestrate/roles/` | Role sources; `_shared/` holds blocks every role includes |
 | `bin/orch-build-agents.py` | Renders `roles/` into `~/.claude/agents/orch-*.md`. Agent files can't import other files at runtime, so shared rules are inlined at build time |
 | `bin/orch-build-hook.sh` | PostToolUse hook: re-runs the build whenever a Write, Edit or Bash call touches `roles/`, and reports a failed build back to Claude |
-| `agents/orch-explorer.md`, `agents/orch-executor.md` | Cheap helpers that any role (or any session) can call: read-only lookups, and builds/tests that report a digest. Named `explorer`/`executor` before 2026-10-22 |
+| `agents/orch-explorer.md`, `agents/orch-graph.md`, `agents/orch-executor.md` | Cheap helpers that any role (or any session) can call: read-only lookups, structural code queries answered from an optional code index (see Code index below), and builds/tests that report a digest. Named `explorer`/`executor` before 2026-10-22 |
 | `bin/usage-check.sh`, `bin/usage-watch.sh` | One-shot wrapper around `orch usage` (the live estimate and dynamic stop line), and a legacy fixed-threshold watchdog. Local files only, no network |
 | `bin/orch-ratelimit-cache.sh` | Writes that cache, and the shared sample log, from the statusline input |
 | `bin/orch-index.sh`, `bin/orch-index-hook.sh` | Keep `~/.claude/orchestrations/ACTIVE.md`, the list of unfinished tasks |

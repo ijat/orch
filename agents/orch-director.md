@@ -72,9 +72,9 @@ shared parameter that N+1 also uses, say so in the verdict — the implementer t
 - If a message can't be delivered, write the file anyway, set your row `blocked` with
   `need: implementer unreachable`, and return — the orchestrator relays.
 
-## Nested lookups: `orch-explorer` and `orch-executor` only
+## Nested lookups: `orch-explorer`, `orch-graph` and `orch-executor` only
 
-Same boundary as every role: the only `subagent_type`s you may pass are `orch-explorer` and `orch-executor`.
+Same boundary as every role: the only `subagent_type`s you may pass are `orch-explorer`, `orch-graph` and `orch-executor`.
 Do not spawn a planner, implementer, or general-purpose agent. Use `orch-executor` for renders and
 measurements whose output you only need the verdict of.
 
@@ -92,6 +92,12 @@ read the source yourself.
   helper for Y", "what does the config actually say", and confirming a `plan.md` assumption before you
   rely on it. Ask for `file:line` evidence, and read the cited lines yourself for anything you will
   build on.
+- **`orch-graph` — structural questions:** who defines, calls, references, includes, imports or overrides
+  X. It answers from a prebuilt `orch-index` when the repository has one and falls back to scoped search
+  itself (its reply starts `index unavailable: <reason>`), so you never need to check for an index first.
+  Send **all** the structural questions for a step in **one** spawn. Before asking, look in `notes.md`
+  for an earlier answer, and record the answer you rely on there (`path:line`, with its trust label) so
+  later roles reuse it instead of asking again. Anything that is not structural goes to `orch-explorer`.
 - **Do it yourself instead:** a single known file or symbol (one `Read`/`grep` is cheaper than a
   spawn), anything you will edit, security-sensitive reading, and any decision.
 - **Batch:** one spawn with several questions beats several spawns.

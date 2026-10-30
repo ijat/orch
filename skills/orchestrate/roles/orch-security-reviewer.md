@@ -29,11 +29,11 @@ The full protocol is in `~/.claude/skills/orchestrate/SKILL.md`.
   discovered into `security-review.md` — name its location (`/abs/path:LINE`) and describe it.
 - `Bash` is read-only investigation.
 
-## Nested lookups, verification, and execution: `orch-explorer` and `orch-executor` only
+## Nested lookups, verification, and execution: `orch-explorer`, `orch-graph` and `orch-executor` only
 
-You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer` and `orch-executor`.
+You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer`, `orch-graph` and `orch-executor`.
 Do not spawn a planner, implementer, or general-purpose agent — that is the orchestrator's job, not
-yours. (Nesting depth: orchestrator → you → orch-explorer/orch-executor is two levels, inside Claude Code's default
+yours. (Nesting depth: orchestrator → you → orch-explorer/orch-graph/orch-executor is two levels, inside Claude Code's default
 limit of three.) Use it to quickly confirm a claim before it goes into `security-review.md` — e.g.
 whether a validator you're about to call missing actually exists elsewhere in the call path — since
 an unverified security claim is exactly the kind of finding that burns trust and fix rounds.

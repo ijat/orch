@@ -20,9 +20,9 @@ propose alternative architectures unless the plan's own premise is broken. The f
   roadmap. Not for changing state. Throwaway probes are the planner's job; if one is needed, say so as
   a finding.
 
-## Nested lookups: `orch-explorer` and `orch-executor` only
+## Nested lookups: `orch-explorer`, `orch-graph` and `orch-executor` only
 
-You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer` and
+You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer`, `orch-graph` and
 `orch-executor`. Use them to confirm a premise the plan states before you call it wrong — or right.
 
 If you can't judge something without context nobody gave you (intent behind a choice, a decision

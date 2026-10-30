@@ -29,15 +29,15 @@ FILES = [
         "roadmap", "security-ledger", "security-review", "sketch", "status")],
     *[f"agents/{n}.md" for n in (
         "orch-planner", "orch-implementer", "orch-code-reviewer", "orch-security-reviewer",
-        "orch-plan-reviewer", "orch-director", "orch-explorer", "orch-executor")],
+        "orch-plan-reviewer", "orch-director", "orch-explorer", "orch-graph", "orch-executor")],
     "bin/usage-check.sh", "bin/usage-watch.sh", "bin/orch-stats.sh", "bin/orch-index.sh",
     "bin/orch-index-hook.sh", "bin/orch-program-check.py", "bin/orch-build-agents.py",
     "bin/orch-build-hook.sh", "bin/orch",
     *[f"skills/orchestrate/roles/{n}.md" for n in (
         "orch-planner", "orch-implementer", "orch-code-reviewer", "orch-security-reviewer",
-        "orch-plan-reviewer", "orch-director", "orch-explorer", "orch-executor")],
+        "orch-plan-reviewer", "orch-director", "orch-explorer", "orch-graph", "orch-executor")],
     *[f"skills/orchestrate/roles/_shared/{n}.md" for n in (
-        "when-to-delegate", "trust-instrument", "be-brief", "every-role")],
+        "when-to-delegate", "trust-instrument", "be-brief", "every-role", "code-index")],
 ]
 # Whole directories, copied at the same path. A file is copied when its suffix is in TREE_SUFFIXES or
 # it sits under a TREE_ALL directory (relative to the tree root; the fixtures are synthetic data).

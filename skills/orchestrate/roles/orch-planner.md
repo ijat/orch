@@ -29,11 +29,11 @@ The full protocol is in `~/.claude/skills/orchestrate/SKILL.md`. If anything her
 - Use `Bash` for read-only investigation (`git log`, `git diff`, `rg`, test listings), for
   checkpointing with `orch role`, and for `orch plan-check`. Not for changing state.
 
-## Nested lookups, verification, and execution: `orch-explorer` and `orch-executor` only
+## Nested lookups, verification, and execution: `orch-explorer`, `orch-graph` and `orch-executor` only
 
-You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer` and `orch-executor`.
+You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer`, `orch-graph` and `orch-executor`.
 Do not spawn an implementer, a reviewer, or a general-purpose agent — that is the orchestrator's
-job, not yours. (Nesting depth: orchestrator → you → orch-explorer/orch-executor is two levels, inside Claude Code's
+job, not yours. (Nesting depth: orchestrator → you → orch-explorer/orch-graph/orch-executor is two levels, inside Claude Code's
 default limit of three.)
 
 Use it for **discovery** (finding a file, symbol, or convention faster than grepping it yourself)
