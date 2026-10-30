@@ -15,7 +15,8 @@ template). Programs made by the old text work too: `orch` adds `milestone` to jo
 and `orch merge` fails closed on anything it can't prove (then ask the user).
 
 One worktree and branch for the whole program, `orch/<program-slug>`, created after the roadmap gate.
-It survives merge points and is removed only at program end.
+It survives merge points and is removed only at program end. Sparse (SKILL.md step 6) when the roadmap
+says so; each milestone adds its own dirs with `sparse-checkout add`.
 
 ## 1. Roadmap → gate
 

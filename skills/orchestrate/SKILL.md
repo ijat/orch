@@ -461,6 +461,21 @@ git -C <repo> worktree add .claude/worktrees/orch-<task-slug> -b orch/<task-slug
 Base = the user's current branch unless they say otherwise. Record worktree, branch, and base in
 `status.md` (`orch set`). If the user says "no worktree", work on a branch in the main tree and record that.
 
+**Sparse checkout** when the plan's Summary says `checkout: sparse: <dirs>` (the planner's rule: a repo
+of ≥ 100,000 tracked files). Cone mode; files at the repo root always come along:
+
+```bash
+git -C <repo> worktree add --no-checkout .claude/worktrees/orch-<task-slug> -b orch/<task-slug> <base-branch>
+git -C <worktree> sparse-checkout set --cone <dirs>
+git -C <worktree> checkout
+```
+
+Record it as `worktree=<path> (sparse: <dirs>)`. A role that needs a path outside the cone runs
+`git -C <worktree> sparse-checkout add <dir>` and writes `sparse-add: <dir> — <why>` in `notes.md`; pass it
+on in later briefs (`--extra`). If the final gate needs the whole tree, run `git -C <worktree>
+sparse-checkout disable` first and log it. Measured on Firefox (486K files): full worktree 49 s / 4.7 GB,
+sparse 1.6 s / 29 MB.
+
 Give every subagent the **absolute worktree path** and state that it is the worktree, not the main
 repo. Never pass `isolation: "worktree"` to the `Agent` tool.
 
@@ -484,7 +499,8 @@ it) before anything else; a gap re-routes the step (`TIERS.md` § Haiku gate). A
 
 **Parallel only when `plan.md` explicitly declares disjoint file sets.** Then each part gets its own
 branch and worktree off the task branch (own brief and row, `implementer:<part>`):
-`git -C <repo> worktree add .claude/worktrees/orch-<slug>-<part> -b orch/<slug>--<part> orch/<slug>`.
+`git -C <repo> worktree add .claude/worktrees/orch-<slug>-<part> -b orch/<slug>--<part> orch/<slug>`
+(sparse task: the same three commands as step 6, same cone).
 You merge the part-branches into `orch/<task-slug>` yourself **before** review, then remove each
 part worktree and delete its branch. Log each part-branch, merge, and removal.
 

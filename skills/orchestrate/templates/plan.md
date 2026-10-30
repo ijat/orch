@@ -24,7 +24,8 @@
 - decisions needing the user: <D-ids from ## Decisions, or "none">
 - needs from user: <sudo, exclusive VM/device, credentials, commands auto mode may deny — or "none">
 - files: <count>; sensitive areas: <list from SKILL.md step 5, or "none">
-- implementer tier: <model>/<effort> (default sonnet/high) — <why>
+- checkout: full | sparse: <dirs>   <!-- sparse when the repo has ≥ 100,000 tracked files: every dir the steps edit, build or test in -->
+- scope: whole repo | <dirs> — <why>   <!-- where searches start; impact questions (callers, includers, overrides) always search the whole tree -->- implementer tier: <model>/<effort> (default sonnet/high) — <why>
 - continue: steps <ids> | no — <why>   <!-- steps you would implement yourself: TIERS.md § Planner continuation; the orchestrator decides -->
 - parallelization: sequential | <N> disjoint tracks
 - sketched steps: <step numbers, or "none">

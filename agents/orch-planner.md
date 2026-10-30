@@ -53,6 +53,13 @@ the plan gate (scratch dir or `orch-executor`, never product code) and put the r
 If the probe needs the user's environment or is too long for planning, make it step 0 with a hard
 stop: no later step starts until it passes.
 
+**Size the repo first:** `git -C <repo> ls-files | wc -l`. At ≥ 100,000 tracked files, fill the Summary's
+`checkout: sparse: <dirs>` with every directory the steps edit, build or test in (a missing dir costs a
+`sparse-checkout add` mid-step; an extra one costs only disk), and `scope:` with the subsystem(s) where
+searches start. Below that, `checkout: full` and `scope: whole repo`. A sparse worktree hides the rest of
+the tree from `rg` and plain `git grep`, so name in **Risks** any step whose correctness depends on code
+outside the cone (a caller, an includer, an override).
+
 **List what the user's environment must provide** in the Summary's `needs from user` line: sudo,
 exclusive use of a shared machine or VM, credentials, commands auto mode may deny. These get settled
 at the plan gate instead of becoming mid-build blockers.
@@ -144,6 +151,11 @@ These apply to every `orch-*` role. Where your own sections are stricter, they w
   topic and read that section only, not the whole file.
 - **Your reply is decision-grade:** a short summary, the primary file path, blockers and risks,
   verification results, deviations. The detail lives in the file.
+- **Sparse worktree** (your brief's Summary says `checkout: sparse: …`): `rg`, `grep -r` and plain
+  `git grep` see only the checked-out dirs, and an empty result there is not "none exist". Search the
+  whole committed tree with `git -C <worktree> grep -n <pattern> HEAD -- <pathspec>`. Need to edit or
+  build outside the cone: `git -C <worktree> sparse-checkout add <dir>`, then `sparse-add: <dir> — <why>`
+  in `notes.md`.
 - **Never guess in a sensitive area** (auth, crypto, secrets, untrusted input, payment, PII,
   deserialization, sandboxing, infra credentials). If you can't verify it, say what you don't know
   and set `blocked`. Don't round an unknown into a finding or into a pass.
