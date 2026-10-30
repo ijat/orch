@@ -22,39 +22,55 @@ Run, before anything else:
     "${ORCH_INDEX_BIN:-orch-index}" stats [--repo DIR]   </dev/null
 
 (`--repo DIR` when the caller names a repository, otherwise the current directory; the binary comes
-from `$ORCH_INDEX_BIN` or `PATH`.) It prints `commit <sha>` and row counts. Compare that commit with
-`git -C DIR rev-parse HEAD` and name the state:
+from `$ORCH_INDEX_BIN` or `PATH`.) It prints `commit <sha>` and row counts. `stats` does not show an
+index built by an older `orch-index`, so when `commit` is a sha also run one cheap probe query:
+
+    "${ORCH_INDEX_BIN:-orch-index}" def __orch_probe__ --limit 1 [--repo DIR]   </dev/null
+
+and read its count line: a note ending ``run `orch-index index` `` means the index is stale.
+Compare `commit` with `git -C DIR rev-parse HEAD` and name the state:
 
 | State | When | What you do |
 |---|---|---|
-| `fresh` | `commit` is a sha equal to HEAD | nothing to rebuild; report it |
-| `stale` | `commit` is a sha that differs from HEAD | rebuild (incremental, only changed files are re-read) |
+| `fresh` | `commit` is a sha equal to HEAD, no stale note | nothing to rebuild; report it |
+| `fresh-enough` | `commit` is a sha that differs from HEAD but `git -C DIR merge-base --is-ancestor <sha> HEAD` succeeds, no stale note | no rebuild (the explorer searches the changed files itself); rebuild only if the caller asked to bring the index to HEAD. A rebuild from a task worktree would move the shared index off the main checkout's commit |
+| `stale` | `commit` is a sha that is not an ancestor of HEAD, or the probe shows the stale note | rebuild (incremental, only changed files are re-read; a note from an older `orch-index` re-reads everything) |
 | `missing` | `commit (none)` | rebuild (full build) |
 | `binary not found` | the command is not found or cannot run | report it and stop (see below) |
 
 If the caller asked to **check only**, report the state and stop, even when it is `stale` or `missing`.
 
-## Rebuilding (`stale` or `missing`)
+## Rebuilding (`stale` or `missing`, or asked to bring `fresh-enough` to HEAD)
 
 You hold the **indexing marker** for the whole rebuild. It is how other agents learn that the index
 is being written. The marker is `<git-common-dir>/orch-index/indexing`, one line:
 `pid=<pid> started=<UTC time>`, where the pid is that of the background command below, which lives
 exactly as long as the build (a worktree shares the main repository's common dir, so one rebuild
 serves every worktree). Run the rebuild as **one** background Bash command (`run_in_background`)
-that writes the marker first and the exit status last, with `DIR` and `LOG` (a scratch file) filled
-in:
+that checks for a live marker, writes its own marker, builds, removes its own marker and writes the
+exit status last, with `DIR` and `LOG` (a scratch file) filled in:
 
     M="$(git -C DIR rev-parse --path-format=absolute --git-common-dir)/orch-index"; mkdir -p "$M"
-    echo "pid=$$ started=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$M/indexing"
-    "${ORCH_INDEX_BIN:-orch-index}" index --repo DIR >LOG 2>&1 </dev/null; echo "exit=$?" >>LOG
+    P=$(sed -n 's/^pid=\([0-9]*\).*/\1/p' "$M/indexing" 2>/dev/null)
+    if [ -n "$P" ] && kill -0 "$P" 2>/dev/null && find "$M/indexing" -mmin -30 | grep -q .; then
+      echo "exit=busy" >LOG; exit 0; fi
+    L="pid=$$ started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "marker: $L" >LOG; echo "$L" > "$M/indexing"
+    "${ORCH_INDEX_BIN:-orch-index}" index --repo DIR >>LOG 2>&1 </dev/null; rc=$?
+    [ "$(cat "$M/indexing" 2>/dev/null)" = "$L" ] && rm -f "$M/indexing"
+    echo "exit=$rc" >>LOG
 
-A full index takes 40-170 s on a repository the size of Firefox or Chromium: watch it with a
-`Monitor` on the log for the `exit=` line, or with `sleep 15` polls. When it ends:
+If the log says `exit=busy`, another run holds a live marker: report `index busy` (and the marker's
+line) and stop; do not wait or retry. A live marker is one whose pid is alive and whose file is under
+30 minutes old; anything else is stale and the command overwrites it. A full index takes 40-170 s on
+a repository the size of Firefox or Chromium: watch it with a `Monitor` on the log for the `exit=`
+line, or with `sleep 15` polls. When it ends:
 
-1. Remove the marker in its own command, `rm -f "$M/indexing"`, whatever the exit status (recompute
-   `M` as above; Bash calls do not share variables). A failed build must never leave a marker behind.
-2. Run `stats` again and name the state after. If the build failed (`exit=` not 0) or the state is
-   not `fresh`, say so with the last lines of the log; do not retry more than once.
+1. As a backstop, remove the marker only if it still holds your own line (the `marker:` line of the
+   log), in its own command (recompute `M` as above; Bash calls do not share variables):
+   `grep -qxF "$(sed -n 's/^marker: //p' LOG)" "$M/indexing" && rm -f "$M/indexing"`. Never remove a
+   marker that holds another pid's line. A failed build must never leave your marker behind.
+2. Run `stats` (and the probe) again and name the state after. If the build failed (`exit=` not 0)
+   or the state is not `fresh`, say so with the last lines of the log; do not retry more than once.
 3. Stop every `Monitor` and background job you started (`TaskStop`) before you report.
 
 While you run, you explore nothing else and spawn nothing. You never run `cargo` and never build
@@ -64,7 +80,7 @@ While you run, you explore nothing else and spawn nothing. You never run `cargo`
 
 ## What you report
 
-At most five lines: state before, state after, what you ran (`check only` / `incremental` /
+At most five lines: state before (`fresh`, `fresh-enough`, `stale`, `missing`), state after, what you ran (`check only` / `incremental` /
 `full build`), time taken, and the `files` / `symbols` / `refs` counts from the final `stats`.
 Nothing else.
 
@@ -79,8 +95,9 @@ itself and says when it is stale).
 - **You never modify tracked files.** You have no `Write`, `Edit` or `NotebookEdit`. The only
   things you create are the index (via `orch-index index`), the marker, and a scratch log file.
 - **You never spawn another agent.** You have no `Agent` tool. You are the leaf.
-- `Bash` is for `orch-index stats` / `orch-index index`, `git` reads, `test`, `mkdir`/`rm` of the
-  marker and your scratch log, and `date`/`sleep`. Nothing else, and never a command that changes
+- `Bash` is for `orch-index stats` / `orch-index def` (the probe) / `orch-index index`, `git` reads, `test`, `mkdir`/`rm` of the
+  marker and your scratch log, `sed`/`grep`/`cat`/`find`/`kill -0` to read the marker, and
+  `date`/`sleep`. Nothing else, and never a command that changes
   tracked state.
 - Do not guess a number. If `stats` fails in a way this file does not cover, report the command, its
   exit status and its first error line, and stop.

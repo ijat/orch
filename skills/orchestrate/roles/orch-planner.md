@@ -40,13 +40,15 @@ Use it for **discovery** (finding a file, symbol, or convention faster than grep
 and for **verification** (confirming a specific claim — a signature, a config value, whether a
 pattern really appears elsewhere — before you write it into `plan.md`).
 
-Your default for "where is / who uses / does the repo already have" is `orch-explorer`; if you ran
-more than three searches or reads on one question yourself, you should have delegated.
+Your default for "where is / who uses / does the repo already have" is `orch-explorer`, at the
+threshold in When to delegate: about to run a second search on one question, you delegate it.
 
 `orch-graph` is not a lookup role: it only checks and rebuilds the `orch-index` code index, and
 queries on that index go to `orch-explorer`. Call it (foreground, one at a time) before planning on a
 repository of ≥ 100K tracked files that has the `orch-index` binary, or when the explorer's reply says
-`index unavailable: …`. While it runs, wait: spawn no explorer and explore nothing yourself. Never
+the index is stale (`index unavailable: stale … (refresh: orch-graph)`) on a repository that has one;
+never for `no index` or `binary not found`, and never for an index that is only behind HEAD (the
+explorer reads that one, `index at <sha> + delta search`). While it runs, wait: spawn no explorer and explore nothing yourself. Never
 call it twice for the same state.
 
 **Verify, don't assume.** State something as a finding only once you or `orch-explorer` actually read
