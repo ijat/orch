@@ -3,8 +3,8 @@
 
 Each test builds a throwaway world under a temp dir: a git repo whose scripts/export.py is the REAL
 export.py with only its table block replaced (so the file-set code under test is the real one), a
-live dir written by the test itself as overlay(repo), and a private overlay, private file and
-denylist. Every run uses a temp HOME, a temp TMPDIR and an explicit --live; nothing reads the real
+live dir written by the test itself as overlay(repo) with a manifest of the hashes the test computed
+from its own files, and a private overlay, private file and denylist. Every run uses a temp HOME, a temp TMPDIR and an explicit --live; nothing reads the real
 ~/.claude.
 
 Run: python3 scripts/test_sync_live.py
@@ -171,8 +171,9 @@ class World(unittest.TestCase):
             m[r] = r
         return m
 
-    def build_live(self):
-        """Live = overlay applied to the repo's files, written independently of sync-live."""
+    def build_live(self, manifest=True):
+        """Live = overlay applied to the repo's files, written independently of sync-live; then a
+        manifest of exactly those files at HEAD (unless manifest=False)."""
         for live_rel, repo_rel in self.managed().items():
             src = os.path.join(self.repo, repo_rel)
             with open(src, encoding="utf-8") as f:
@@ -182,6 +183,35 @@ class World(unittest.TestCase):
                     self.assertEqual(text.count(e["public"]), 1)
                     text = text.replace(e["public"], e["live"])
             write(os.path.join(self.live, live_rel), text, bool(os.stat(src).st_mode & 0o100))
+        if manifest:
+            self.write_manifest()
+
+    def head(self):
+        return self.git("rev-parse", "HEAD").strip()
+
+    def write_manifest(self, files=None, rev=None, record="20260101T000000Z", raw=None):
+        """<live>/.orch-sync/manifest.json for `files` (live_rel -> repo_rel, default managed()), with
+        the sha256 and owner-exec bit the test reads from the live files it wrote."""
+        state = os.path.join(self.live, ".orch-sync")
+        os.makedirs(state, exist_ok=True)
+        if raw is None:
+            entries = {}
+            for lr, rr in (files or self.managed()).items():
+                lp = os.path.join(self.live, lr)
+                with open(lp, "rb") as f:
+                    sha = hashlib.sha256(f.read()).hexdigest()
+                entries[lr] = {"sha256": sha, "exec": bool(os.stat(lp).st_mode & 0o100), "repo_path": rr}
+            raw = json.dumps({"version": 1, "rev": rev or self.head(), "tree": "0" * 40,
+                              "synced_at": "2026-01-01T00:00:00Z", "record": record,
+                              "overlay_sha256": "0" * 64, "files": entries})
+        write(os.path.join(state, "manifest.json"), raw)
+
+    def write_record(self, stamp, status):
+        write(os.path.join(self.live, ".orch-sync", "syncs", stamp, "record.json"),
+              json.dumps({"version": 1, "stamp": stamp, "kind": "sync", "status": status, "ops": []}))
+
+    def drop_state(self):
+        shutil.rmtree(os.path.join(self.live, ".orch-sync"))
 
     def run_sync(self, *args, live=True, env=None):
         cmd = [sys.executable, os.path.join(self.repo, "scripts", "sync-live.py")]
@@ -219,8 +249,15 @@ class CoreTests(World):
         self.assertEqual(rc, 0, out)
         self.assertIn("nothing to do", out)
         self.assertEqual(listing(self.live), before)
-        self.assertFalse(os.path.exists(os.path.join(self.live, ".orch-sync")))
         self.assertEqual(self.git("status", "--porcelain"), "")
+        self.assertEqual(os.listdir(self.tmpdir), [], "temp dir left behind")
+        # without any state, the (init) dry run creates none
+        self.drop_state()
+        before = listing(self.live)
+        rc, out = self.run_sync("--dry-run", "--init", "HEAD")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(listing(self.live), before)
+        self.assertFalse(os.path.exists(os.path.join(self.live, ".orch-sync")))
         self.assertEqual(os.listdir(self.tmpdir), [], "temp dir left behind")
 
     def test_T2_2_changed_files_and_tree_file_update(self):
@@ -483,6 +520,215 @@ class GateTests(World):
         self.assertEqual(rc, 1, out)
         self.assertIn("REFUSE: check slow fails on current live: timed out", out)
         self.assertLess(time.time() - t0, 20)
+
+
+class StateTests(World):
+    def test_T3_1_manifest_and_init_presence(self):
+        rc, out = self.run_sync("--dry-run", "--init", "HEAD")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: --init: a manifest already exists", out)
+        self.drop_state()
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: first sync: pass --init <rev>", out)
+
+    def test_T3_2_init_proof(self):
+        self.drop_state()
+        base = self.head()
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 2\n")
+        self.commit("change")
+        rc, out = self.run_sync("--dry-run", "--init", base)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("update bin/orchlib/a.py\n", out)
+        self.assertIn("1 update, 0 delete, 0 adopt", out)
+        self.assertNotIn("nothing to do", out)
+        sk = os.path.join(self.live, "skills/orchestrate/SKILL.md")
+        with open(sk, encoding="utf-8") as f:
+            text = f.read()
+        write(sk, text.replace("Body line.\n", "Body line, hand edited.\n"))
+        rc, out = self.run_sync("--dry-run", "--init", base)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: init proof failed: round trip: skills/orchestrate/SKILL.md differs", out)
+
+    def test_T3_3_init_adopt_conflict_left_extra(self):
+        self.drop_state()
+        base = self.head()
+        self.set_tables(', "bin/new.sh"')
+        write(os.path.join(self.repo, "bin/new.sh"), "#!/bin/bash\necho new\n", True)
+        self.commit("new file")
+        for live_text, want in (("#!/bin/bash\necho new\n", 0), ("#!/bin/bash\necho other\n", 1)):
+            with self.subTest(want=want):
+                write(os.path.join(self.live, "bin/new.sh"), live_text, True)
+                rc, out = self.run_sync("--dry-run", "--init", base)
+                self.assertEqual(rc, want, out)
+                if want == 0:
+                    self.assertIn("adopt bin/new.sh\n", out)
+                    self.assertIn("0 create, 0 update, 0 delete, 1 adopt", out)
+                else:
+                    self.assertIn("conflict bin/new.sh\n", out)
+                    self.assertIn("REFUSE: conflict bin/new.sh: unmanaged live file would be overwritten", out)
+        os.remove(os.path.join(self.live, "bin/new.sh"))
+        # baseline with an extra FILES path and an extra tree file, both dropped by HEAD
+        self.set_tables(', "bin/old.sh"')
+        write(os.path.join(self.repo, "bin/old.sh"), "#!/bin/bash\necho old\n", True)
+        write(os.path.join(self.repo, "bin/orchlib/old.py"), "OLD = 1\n")
+        self.commit("baseline with old files")
+        base = self.head()
+        for rel in ("bin/old.sh", "bin/orchlib/old.py"):
+            shutil.copy2(os.path.join(self.repo, rel), os.path.join(self.live, rel))
+        self.set_tables("")
+        os.remove(os.path.join(self.repo, "bin/old.sh"))
+        os.remove(os.path.join(self.repo, "bin/orchlib/old.py"))
+        self.commit("drop old files")
+        rc, out = self.run_sync("--dry-run", "--init", base)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("left in place bin/old.sh\n", out)
+        self.assertNotIn("delete bin/old.sh", out)
+        self.assertNotIn("REFUSE: extra bin/old.sh", out)
+        self.assertNotIn("REFUSE: init proof failed", out)
+        self.assertIn("REFUSE: extra bin/orchlib/old.py", out)
+        self.assertIn("0 delete", out)
+
+    def test_T3_4_drift(self):
+        cases = {
+            "content": ("bin/orchlib/a.py", lambda p: write(p, "A = 99\n")),
+            "deletion": ("bin/orchlib/tests/fixtures/f.txt", os.remove),
+            "exec bit": ("bin/x.sh", lambda p: os.chmod(p, 0o644)),
+        }
+        for name, (rel, act) in cases.items():
+            with self.subTest(name):
+                p = os.path.join(self.live, rel)
+                keep = os.path.join(self.tmp, "keep")
+                shutil.copy2(p, keep)
+                act(p)
+                rc, out = self.run_sync("--dry-run")
+                self.assertEqual(rc, 1, out)
+                self.assertIn("REFUSE: drift %s" % rel, out)
+                shutil.copy2(keep, p)
+                self.assertEqual(self.run_sync("--dry-run")[0], 0)
+
+    def test_T3_5_delete(self):
+        self.set_tables(', "bin/old.sh"')
+        write(os.path.join(self.repo, "bin/old.sh"), "#!/bin/bash\necho old\n", True)
+        write(os.path.join(self.repo, "bin/orchlib/old.py"), "OLD = 1\n")
+        self.commit("with old files")
+        files = dict(self.managed(), **{"bin/old.sh": "bin/old.sh", "bin/orchlib/old.py": "bin/orchlib/old.py"})
+        for rel in ("bin/old.sh", "bin/orchlib/old.py"):
+            shutil.copy2(os.path.join(self.repo, rel), os.path.join(self.live, rel))
+        self.write_manifest(files)
+        self.assertEqual(self.run_sync("--dry-run")[0], 0)
+        self.set_tables("")
+        os.remove(os.path.join(self.repo, "bin/old.sh"))
+        os.remove(os.path.join(self.repo, "bin/orchlib/old.py"))
+        self.commit("drop old files")
+        before = listing(self.live)
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 0, out)  # the deleted tree file is not staged as an extra: round trip passes
+        self.assertIn("delete bin/old.sh\n", out)
+        self.assertIn("delete bin/orchlib/old.py\n", out)
+        self.assertIn("0 create, 0 update, 2 delete, 0 adopt", out)
+        self.assertEqual(listing(self.live), before)
+
+    def test_T3_5b_unsafe_manifest_path(self):
+        files = dict(self.managed(), **{"settings.json": "settings.json"})
+        write(os.path.join(self.live, "settings.json"), "{}\n")
+        self.write_manifest(files)
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 2, out)
+        self.assertIn("unsafe managed path settings.json", out)
+
+    def test_T3_6_tree_extra(self):
+        write(os.path.join(self.live, "bin/orchlib/stray.py"), "S = 1\n")
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: extra bin/orchlib/stray.py", out)
+
+    def test_T3_7_interrupted(self):
+        for status in ("pending", "rollback-failed"):
+            with self.subTest(status):
+                self.write_record("20260202T000000Z", status)
+                rc, out = self.run_sync("--dry-run")
+                self.assertEqual(rc, 1, out)
+                self.assertIn("REFUSE: interrupted sync 20260202T000000Z: run --rollback", out)
+        for status in ("done", "rolled-back"):
+            with self.subTest(status):
+                self.write_record("20260202T000000Z", status)
+                self.assertEqual(self.run_sync("--dry-run")[0], 0)
+
+    def test_T3_8_malformed_manifest(self):
+        good = {"version": 1, "rev": self.head(), "tree": "0" * 40, "synced_at": "x", "record": "s",
+                "overlay_sha256": "0" * 64, "files": {}}
+        cases = {
+            "not json": "{nope",
+            "bad version": json.dumps(dict(good, version=2)),
+            "unknown key": json.dumps(dict(good, extra=1)),
+            "bad rev": json.dumps(dict(good, rev="--output=x")),
+            "bad entry": json.dumps(dict(good, files={"bin/x.sh": {"sha256": "z", "exec": True,
+                                                                   "repo_path": "bin/x.sh"}})),
+        }
+        for name, raw in cases.items():
+            with self.subTest(name):
+                self.write_manifest(raw=raw)
+                rc, out = self.run_sync("--dry-run")
+                self.assertEqual(rc, 2, out)
+                self.assertIn("manifest", out)
+
+    def _branch_a_synced(self):
+        """Branch b at the world commit; branch a changes bin/orchlib/a.py; live + manifest = a's image."""
+        self.git("branch", "b")
+        self.git("checkout", "-q", "-b", "a")
+        write(os.path.join(self.repo, "bin/orchlib/a.py"), "A = 2\n")
+        self.commit("a: change a.py")
+        self.build_live()
+        self.git("checkout", "-q", "b")
+
+    def test_T3_9_not_descendant_refused(self):
+        self._branch_a_synced()
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: not-descendant: last synced rev", out)
+        self.assertIn("1 managed file(s) changed by it would revert: bin/orchlib/a.py", out)
+        self.assertIn("(1 file(s) differ from the last sync in total)", out)
+
+    def test_T3_10_not_descendant_allowed(self):
+        self._branch_a_synced()
+        rc, out = self.run_sync("--dry-run", "--allow-non-descendant")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("NOTE not-descendant: ", out)
+        self.assertNotIn("REFUSE", out)
+        self.assertIn("update bin/orchlib/a.py\n", out)
+
+    def test_T3_11_merged_with_no_ff(self):
+        self._branch_a_synced()
+        self.git("checkout", "-q", "main")
+        self.git("merge", "-q", "--no-ff", "-m", "merge a", "a")
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("not-descendant", out)
+        self.assertIn("nothing to do", out)
+
+    def test_T3_12_unknown_manifest_rev(self):
+        self.write_manifest(rev="0123456789abcdef0123456789abcdef01234567")
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: not-descendant: last synced rev 0123456", out)
+        self.assertIn("unknown managed file(s)", out)
+        rc, out = self.run_sync("--dry-run", "--allow-non-descendant")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("NOTE not-descendant: ", out)
+
+    def test_T3_13_completed_pending(self):
+        self.write_manifest(record="20260303T000000Z")
+        self.write_record("20260303T000000Z", "pending")
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("NOTE completed sync 20260303T000000Z was left pending; the next real run marks it done",
+                      out)
+        self.assertNotIn("interrupted", out)
+        self.write_record("20260304T000000Z", "pending")
+        rc, out = self.run_sync("--dry-run")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("REFUSE: interrupted sync 20260304T000000Z: run --rollback", out)
 
 
 if __name__ == "__main__":

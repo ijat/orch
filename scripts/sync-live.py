@@ -5,8 +5,8 @@ The repo is the source of truth; scripts/export.py maps a live install back to t
 this script is its inverse. It builds the new live image in a temp stage (the commit's files, the
 overlay's edits applied) and reports what would change.
 
-Usage: scripts/sync-live.py [--dry-run] [--rev REV] [--live DIR] [--overlay FILE] [--private FILE]
-                            [--denylist FILE]
+Usage: scripts/sync-live.py [--dry-run] [--rev REV] [--init BASELINE_REV] [--allow-non-descendant]
+                            [--live DIR] [--overlay FILE] [--private FILE] [--denylist FILE]
 
 - --live      default ~/.claude (the live install)
 - --overlay   default <live>/orch-live-overlay.json; owner-only (chmod 600), outside <repo>
@@ -14,7 +14,31 @@ Usage: scripts/sync-live.py [--dry-run] [--rev REV] [--live DIR] [--overlay FILE
 - --denylist  default <live>/orch-export-denylist.txt
 - --rev       the commit to sync, default HEAD. With the default, a working tree that is not clean
               (tracked changes or untracked files) is a refusal, so what was tested is what is synced.
+- --init      first sync only: BASELINE_REV is the commit the current live install was exported from.
+              Its own export.py, run with `--src <live>`, must reproduce it exactly ("init proof");
+              otherwise the run is refused. Refused when a manifest already exists.
+- --allow-non-descendant  sync even when the last synced rev is not an ancestor of REV (a branch cut
+              from older code would revert what the last sync wrote); the refusal becomes a NOTE.
 - --dry-run   report only. Without it this version exits 2 (the write phase is not implemented yet).
+
+State (read here; only the write phase creates it): <live>/.orch-sync/
+- manifest.json = {"version": 1, "rev", "tree", "synced_at", "record", "overlay_sha256",
+  "files": {<live path>: {"sha256", "exec", "repo_path"}}}, the image the last sync wrote. Invalid JSON
+  or a bad shape is exit 2. Without a manifest, a run needs --init.
+- syncs/<stamp>/record.json, one per sync. A record left `pending` or `rollback-failed` is an
+  interrupted sync and refuses every run ("run --rollback"), except a `pending` record whose stamp is
+  the manifest's `record`: that sync completed (the manifest is written only after its checks pass),
+  so it is only noted.
+
+Classification, T = this rev's managed live paths, F = the manifest's (with --init: the baseline's,
+"K", and no hash check):
+- p in F whose live file is missing or differs (sha256, owner-exec) from the manifest: `drift`, refused;
+- p in T and F: update or unchanged;
+- p in T only: create if absent, `adopt` if identical to the new file (no write), else `conflict`
+  (an unmanaged live file would be overwritten), refused;
+- p in F only: `delete` (never with --init: there such a path is `left in place`, unless the tree
+  filter takes it, which makes it an extra);
+- a live file the tree filter takes that is in neither T nor F: `extra`, refused.
 
 <repo> is this script's grandparent directory. The file set is the one the commit's own
 scripts/export.py defines (FILES, TREES, MOVED), imported by path with bytecode off.
@@ -41,10 +65,11 @@ Every subprocess gets PYTHONDONTWRITEBYTECODE=1; Python ones also run with -I -B
 SYNC_LIVE_CHECK_TIMEOUT (seconds, default 300) is for the test suite only: it shortens the per-check
 timeout so a hanging check can be tested. Do not set it in normal use.
 
-Output: `create <path>` / `update <path>` lines, a unified diff per update (`--- live/<path>`,
-`+++ new/<path>`), `REFUSE: <reason>` lines, then
-`sync-live: dry run, rev <short>: C create, U update, N unchanged, R refusal(s)` or
-`sync-live: dry run, rev <short>: nothing to do`.
+Output: `create`, `update`, `delete`, `adopt`, `conflict` and `left in place <path>` lines, a unified
+diff per update and conflict (`--- live/<path>`, `+++ new/<path>`), `NOTE` lines, `REFUSE: <reason>`
+lines, then `sync-live: dry run, rev <short>: C create, U update, D delete, A adopt, N unchanged,
+R refusal(s)`, or `sync-live: dry run, rev <short>: nothing to do` (no op, no refusal, and a manifest
+exists: an --init run always has the manifest to write).
 
 POSIX only. Exit 0 = would sync; 1 = refused, nothing written; 2 = bad input or unsafe config;
 3 = reserved. Nothing under --live or <repo> is created, changed or deleted by a dry run.
@@ -56,6 +81,11 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOP_DIRS = ("skills", "agents", "bin")
 NO_EDIT_PREFIXES = ("agents/", "skills/orchestrate/roles/")
 EXPORT_NAMES = ("FILES", "TREES", "MOVED", "tree_files", "fill", "load_private")
+STATE_DIR = ".orch-sync"
+RECORD_STATUSES = ("pending", "done", "rolled-back", "rollback-failed")
+SHA1_OR_256 = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+SHA256 = re.compile(r"[0-9a-f]{64}")
+MANIFEST_KEYS = {"version", "rev", "tree", "synced_at", "record", "overlay_sha256", "files"}
 
 
 class Fail(Exception):
@@ -83,6 +113,16 @@ def git(repo, *args):
     except OSError as e:
         raise bad("git: %s" % e)
     return r.stdout if r.returncode == 0 else None
+
+
+def git_rc(repo, *args):
+    """(exit code, stdout text) of `git -C repo args`."""
+    try:
+        r = subprocess.run(["git", "-C", repo, *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           env=git_env())
+    except OSError as e:
+        raise bad("git: %s" % e)
+    return r.returncode, r.stdout.decode("utf-8", "replace")
 
 
 def under(path, root):
@@ -218,14 +258,14 @@ def snapshot(repo, rev, dst):
 
 # ---------- 2 + 3: file set and path guards ----------
 
-def load_export(path):
+def load_export(path, name="sync_live_export"):
     """The snapshot's export.py as a module, imported with bytecode off."""
     if not os.path.isfile(path):
         raise bad("snapshot has no scripts/export.py")
     old = sys.dont_write_bytecode
     sys.dont_write_bytecode = True
     try:
-        spec = importlib.util.spec_from_file_location("sync_live_export", path)
+        spec = importlib.util.spec_from_file_location(name, path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
     except Exception as e:  # any failure of a foreign module is bad input, never a crash
@@ -287,7 +327,9 @@ def check_in_snapshot(pairs, snap_files):
 
 # ---------- 5: stage ----------
 
-def build_stage(ex, pairs, snap, snap_files, edits, live, stage):
+def build_stage(ex, pairs, snap, snap_files, edits, live, stage, skip=()):
+    """Write the new image into `stage`; copy tree extras (live tree files that are not managed),
+    except those in `skip` (the paths this sync deletes). Returns the extras copied."""
     by_path = {}
     for i, e in enumerate(edits):
         by_path.setdefault(e["path"], []).append((i, e))
@@ -312,7 +354,7 @@ def build_stage(ex, pairs, snap, snap_files, edits, live, stage):
     for t in ex.TREES:
         for r in ex.tree_files(os.path.join(live, t)):
             rel = t + "/" + r
-            if rel not in managed:
+            if rel not in managed and rel not in skip:
                 src = os.path.join(live, rel)
                 with open(src, "rb") as f:
                     data = f.read()
@@ -529,20 +571,157 @@ def run_gates(ex, pairs, snap, snap_files, overlay, private_path, deny_path, roo
     return refusals
 
 
-# ---------- 7 + 8: ops and output ----------
+# ---------- 7: state (manifest, records), classification, ancestry ----------
 
-def compute_ops(pairs, stage, live):
-    ops = []
-    for live_rel, _ in pairs:
-        lp = os.path.join(live, live_rel)
+def read_json(path, what):
+    """The JSON value at `path` (a regular file, not a symlink); exit 2 if unreadable or invalid."""
+    if os.path.islink(path) or not os.path.isfile(path):
+        raise bad("%s %s: not a regular file" % (what, path))
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError) as e:
+        raise bad("%s %s: not valid JSON (%s)" % (what, path, e.__class__.__name__))
+
+
+def check_manifest(m, path):
+    if not isinstance(m, dict):
+        raise bad("manifest %s: not a JSON object" % path)
+    if m.get("version") != 1 or isinstance(m.get("version"), bool):
+        raise bad("manifest %s: version must be 1" % path)
+    if set(m) != MANIFEST_KEYS:
+        raise bad("manifest %s: keys must be exactly %s" % (path, ", ".join(sorted(MANIFEST_KEYS))))
+    if not isinstance(m["rev"], str) or not SHA1_OR_256.fullmatch(m["rev"]):
+        raise bad("manifest %s: rev must be a full commit sha" % path)
+    if not isinstance(m["record"], str) or not m["record"]:
+        raise bad("manifest %s: record must be a non-empty string" % path)
+    files = m["files"]
+    if not isinstance(files, dict):
+        raise bad("manifest %s: files must be an object" % path)
+    for lr, e in files.items():
+        if (not isinstance(e, dict) or set(e) != {"sha256", "exec", "repo_path"}
+                or not isinstance(e["sha256"], str) or not SHA256.fullmatch(e["sha256"])
+                or not isinstance(e["exec"], bool) or not isinstance(e["repo_path"], str)
+                or not e["repo_path"]):
+            raise bad("manifest %s: files[%r] must be {sha256, exec, repo_path}" % (path, lr))
+    return m
+
+
+def read_state(live):
+    """(manifest dict or None, [(stamp, status)] sorted by stamp). Exit 2 on a malformed state."""
+    state = os.path.join(live, STATE_DIR)
+    if not os.path.lexists(state):
+        return None, []
+    if os.path.islink(state) or not os.path.isdir(state):
+        raise bad("state dir %s: not a directory" % state)
+    mpath = os.path.join(state, "manifest.json")
+    manifest = check_manifest(read_json(mpath, "manifest"), mpath) if os.path.lexists(mpath) else None
+    records = []
+    syncs = os.path.join(state, "syncs")
+    if os.path.lexists(syncs):
+        if os.path.islink(syncs) or not os.path.isdir(syncs):
+            raise bad("state dir %s: not a directory" % syncs)
+        for stamp in sorted(os.listdir(syncs)):
+            rpath = os.path.join(syncs, stamp, "record.json")
+            if not os.path.lexists(rpath):
+                continue  # the write phase writes the record before any live write: nothing happened
+            r = read_json(rpath, "record")
+            if (not isinstance(r, dict) or r.get("version") != 1 or isinstance(r.get("version"), bool)
+                    or r.get("status") not in RECORD_STATUSES or r.get("stamp", stamp) != stamp):
+                raise bad("record %s: needs version 1, its own stamp and a status of %s"
+                          % (rpath, ", ".join(RECORD_STATUSES)))
+            records.append((stamp, r["status"]))
+    return manifest, records
+
+
+def record_findings(records, manifest):
+    """(notes, refusals) for records left pending or rollback-failed."""
+    notes, refusals = [], []
+    for stamp, status in records:
+        if status == "pending" and manifest is not None and manifest["record"] == stamp:
+            notes.append("completed sync %s was left pending; the next real run marks it done" % stamp)
+        elif status in ("pending", "rollback-failed"):
+            refusals.append("interrupted sync %s: run --rollback" % stamp)
+    return notes, refusals
+
+
+def tree_taken(ex, live):
+    """Live paths that the tree filter takes under `live`."""
+    out = []
+    for t in ex.TREES:
+        d = os.path.join(live, t)
+        if os.path.isdir(d):
+            out += [t + "/" + r for r in ex.tree_files(d)]
+    return out
+
+
+def classify(ex, pairs, stage, live, known, hashes):
+    """(ops, refusals). ops = [(kind, live path)], kind in create, update, unchanged, adopt, conflict,
+    delete, left (in place). `known` = F (manifest mode, `hashes` = its files) or K (init, `hashes`
+    None: no drift check and nothing is deleted)."""
+    ops, refusals = [], []
+    T = [lr for lr, _ in pairs]
+    tset = set(T)
+    for lr in T:
+        lp = os.path.join(live, lr)
         if not os.path.lexists(lp):
-            ops.append(("create", live_rel)); continue
+            ops.append(("create", lr)); continue
         if not os.path.isfile(lp):
             raise bad("live path %s exists but is not a regular file" % lp)
-        ops.append(("update" if sha_exec(lp) != sha_exec(os.path.join(stage, live_rel)) else "unchanged",
-                    live_rel))
-    return ops
+        same = sha_exec(lp) == sha_exec(os.path.join(stage, lr))
+        if lr in known:
+            ops.append(("unchanged" if same else "update", lr))
+        elif same:
+            ops.append(("adopt", lr))
+        else:
+            ops.append(("conflict", lr))
+            refusals.append("conflict %s: unmanaged live file would be overwritten" % lr)
+    taken = tree_taken(ex, live)
+    if hashes is not None:
+        for lr in sorted(known):
+            lp = os.path.join(live, lr)
+            if not os.path.lexists(lp):
+                refusals.append("drift %s: missing since the last sync" % lr)
+            elif not os.path.isfile(lp):
+                raise bad("live path %s exists but is not a regular file" % lp)
+            elif sha_exec(lp) != (hashes[lr]["sha256"], hashes[lr]["exec"]):
+                refusals.append("drift %s: changed since the last sync" % lr)
+        ops += [("delete", lr) for lr in sorted(set(known) - tset)]
+    else:
+        tk = set(taken)
+        ops += [("left", lr) for lr in sorted(set(known) - tset) if lr not in tk]
+    for lr in taken:
+        if lr not in tset and (hashes is None or lr not in known):
+            refusals.append("extra %s: a live tree file managed by neither this rev nor the last sync" % lr)
+    return ops, refusals
 
+
+def ancestry(repo, m, r, managed_repo, n_ops):
+    """None if the last synced rev `m` is an ancestor of `r`, else the not-descendant message."""
+    rc, _ = git_rc(repo, "merge-base", "--is-ancestor", m, r)
+    if rc == 0:
+        return None
+    reverting = None
+    if rc == 1:
+        brc, base = git_rc(repo, "merge-base", m, r)
+        c1, by_m = git_rc(repo, "diff", "--no-renames", "--name-only", base.strip(), m) if brc == 0 else (1, "")
+        c2, m_r = git_rc(repo, "diff", "--no-renames", "--name-only", m, r)
+        if brc == 0 and c1 == 0 and c2 == 0:
+            reverting = sorted(set(by_m.splitlines()) & managed_repo & set(m_r.splitlines()))
+    src, ms = git_rc(repo, "rev-parse", "--short", m + "^{commit}") if rc == 1 else (1, "")
+    _, rs = git_rc(repo, "rev-parse", "--short", r)
+    ms = ms.strip() if src == 0 else m[:7]
+    if reverting is None:
+        k, paths = "unknown", ""
+    else:
+        k = str(len(reverting))
+        paths = ": " + ", ".join(reverting[:10]) + (", \u2026" if len(reverting) > 10 else "") if reverting else ""
+    return ("not-descendant: last synced rev %s is not an ancestor of %s; %s managed file(s) changed by it "
+            "would revert%s (%d file(s) differ from the last sync in total); pass --allow-non-descendant "
+            "to sync anyway" % (ms, rs.strip(), k, paths, n_ops))
+
+
+# ---------- 8: output ----------
 
 def diff_text(old_path, new_path, rel):
     with open(old_path, "rb") as f:
@@ -566,22 +745,28 @@ def diff_text(old_path, new_path, rel):
     return "".join(out)
 
 
-def report(ops, refusals, short, stage, live):
-    counts = {"create": 0, "update": 0, "unchanged": 0}
+def report(ops, notes, refusals, short, stage, live, has_manifest):
+    counts = {k: 0 for k in ("create", "update", "unchanged", "adopt", "conflict", "delete", "left")}
     for op, rel in ops:
         counts[op] += 1
-        if op == "create":
-            print("create %s" % rel)
-        elif op == "update":
-            print("update %s" % rel)
+        if op in ("create", "delete", "adopt"):
+            print("%s %s" % (op, rel))
+        elif op == "left":
+            print("left in place %s" % rel)
+        elif op in ("update", "conflict"):
+            print("%s %s" % (op, rel))
             sys.stdout.write(diff_text(os.path.join(live, rel), os.path.join(stage, rel), rel))
+    for n in notes:
+        print("NOTE %s" % n)
     for r in refusals:
         print("REFUSE: %s" % r)
-    if not refusals and not counts["create"] and not counts["update"]:
+    work = counts["create"] + counts["update"] + counts["delete"] + counts["adopt"]
+    if not refusals and not work and has_manifest:
         print("sync-live: dry run, rev %s: nothing to do" % short)
     else:
-        print("sync-live: dry run, rev %s: %d create, %d update, %d unchanged, %d refusal(s)"
-              % (short, counts["create"], counts["update"], counts["unchanged"], len(refusals)))
+        print("sync-live: dry run, rev %s: %d create, %d update, %d delete, %d adopt, %d unchanged, "
+              "%d refusal(s)" % (short, counts["create"], counts["update"], counts["delete"],
+                                 counts["adopt"], counts["unchanged"], len(refusals)))
     return 0 if not refusals else 1
 
 
@@ -591,6 +776,8 @@ def parse_args(argv):
     ap = argparse.ArgumentParser(description="Sync the live orch install from this repo.")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--rev")
+    ap.add_argument("--init", metavar="BASELINE_REV")
+    ap.add_argument("--allow-non-descendant", action="store_true")
     ap.add_argument("--live")
     ap.add_argument("--overlay")
     ap.add_argument("--private")
@@ -603,9 +790,28 @@ def parse_args(argv):
     return a
 
 
+def init_known(a, repo, tmp, private, protect):
+    """(K = the baseline's managed live paths, init-proof refusals) for --init BASELINE_REV."""
+    bfull, _ = resolve_rev(repo, a.init)
+    bsnap = os.path.join(tmp, "baseline")
+    os.mkdir(bsnap)
+    bfiles = snapshot(repo, bfull, bsnap)
+    bex = load_export(os.path.join(bsnap, "scripts", "export.py"), "sync_live_export_baseline")
+    bpairs, bmoved = managed_set(bex, bsnap, private)
+    guard_paths(bpairs, bmoved, protect, a.live)
+    check_in_snapshot(bpairs, bfiles)
+    proof = gate_roundtrip(bsnap, bfiles, a.live, a.private, a.denylist, tmp)
+    return {lr for lr, _ in bpairs}, ["init proof failed: %s" % r for r in proof]
+
+
 def run(a, repo, tmp):
     check_config_files([a.overlay, a.private, a.denylist])
-    refusals = []
+    manifest, records = read_state(a.live)
+    notes, refusals = record_findings(records, manifest)
+    if manifest is None and a.init is None:
+        refusals.append("first sync: pass --init <rev>")
+    if manifest is not None and a.init is not None:
+        refusals.append("--init: a manifest already exists (%s)" % os.path.join(a.live, STATE_DIR))
     if a.rev is None:
         rev = "HEAD"
         if tree_dirty(repo):
@@ -623,16 +829,34 @@ def run(a, repo, tmp):
     guard_paths(pairs, moved, overlay["protect"], a.live)
     check_in_snapshot(pairs, snap_files)
     check_edit_paths(overlay["edits"], {r for _, r in pairs})
+    tset = {lr for lr, _ in pairs}
+    if a.init is not None:
+        known, proof = init_known(a, repo, tmp, private, overlay["protect"])
+        refusals += proof
+        hashes, deletes = None, set()
+    else:
+        hashes = manifest["files"] if manifest is not None else {}
+        known, deletes = set(hashes), set(hashes) - tset
+        # a delete target is a live path too: the same guards apply before anything touches it
+        guard_paths([(lr, hashes[lr]["repo_path"]) for lr in sorted(deletes)], moved, overlay["protect"],
+                    a.live)
     stage = os.path.join(tmp, "stage")
     os.mkdir(stage)
-    build_stage(ex, pairs, snap, snap_files, overlay["edits"], a.live, stage)
-    ops = compute_ops(pairs, stage, a.live)
+    build_stage(ex, pairs, snap, snap_files, overlay["edits"], a.live, stage, skip=deletes)
+    ops, class_refusals = classify(ex, pairs, stage, a.live, known, hashes)
+    refusals += class_refusals
+    if manifest is not None and a.init is None:
+        managed_repo = {r for _, r in pairs} | {e["repo_path"] for e in hashes.values()}
+        n = sum(1 for op, _ in ops if op in ("create", "update", "delete"))
+        msg = ancestry(repo, manifest["rev"], full, managed_repo, n)
+        if msg is not None:
+            (notes if a.allow_non_descendant else refusals).append(msg)
     check_timeout()
     baseline, base_refusals = baseline_checks(overlay["checks"], a.live, tmp)
     refusals += base_refusals
     refusals += run_gates(ex, pairs, snap, snap_files, overlay, a.private, a.denylist, stage, a.live,
                           baseline, tmp)
-    return report(ops, refusals, short, stage, a.live)
+    return report(ops, notes, refusals, short, stage, a.live, manifest is not None)
 
 
 def main(argv=None):
