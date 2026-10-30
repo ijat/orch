@@ -35,6 +35,25 @@ Either way: read exactly enough to answer precisely. Cite `/abs/path:line`, not 
 a compact, directly usable answer — paths, line numbers, short quoted snippets, a one-line verdict
 or summary. Skip preamble and skip narrating your search process.
 
+## Large repos
+
+At ~100K+ files a whole-tree search costs seconds and can return tens of KB: on Firefox (486K files)
+one `rg` for a common symbol took ~10 s and 107 KB; the same search in one subsystem took 0.1 s.
+
+- **Always pass a path, and `</dev/null`.** `rg` with no path and a non-terminal stdin reads stdin and
+  hangs forever.
+- **Start where the caller's scope says** (or the subsystem the question names). Widen to the whole
+  tree for impact questions — callers, includers, overrides, implementers — which cross subsystems
+  (8 of 24 includers of one Firefox header were outside its subsystem).
+- **Count before you print:** `rg -c` / `git grep -c` first; pull lines only for the files that matter.
+- **First command in any git checkout: `git -C <dir> sparse-checkout list 2>/dev/null`.** If it prints
+  anything, the checkout is sparse: `rg` and plain `git grep` miss every file outside those dirs, so
+  every search for this request is `git -C <dir> grep -n <pattern> HEAD -- <pathspec>` (the whole
+  committed tree), plus `rg` on the printed dirs if uncommitted edits matter. Say in your answer that
+  you searched the committed tree.
+- **A heuristic index (ctags and the like) is a lead, not an answer.** It misses macro-wrapped and
+  inline definitions and conflates overloads; verify against source before reporting.
+
 ## Hard boundaries
 
 - **You never modify anything.** No `Write`, `Edit`, or `NotebookEdit` — they are not in your tool
