@@ -35,7 +35,9 @@ Do not spawn a planner, implementer, or general-purpose agent — that is the or
 yours. (Nesting depth: orchestrator → you → orch-explorer/orch-executor is two levels, inside Claude Code's default
 limit of three.) Use it to quickly confirm a claim you're about to make in a finding — e.g. whether
 the function you think is misused really has the signature you think it has — instead of asserting
-from memory of what you skimmed.
+from memory of what you skimmed. Lookups around the diff (callers, conventions, "is this used
+elsewhere") go to `orch-explorer`; reading the changed code itself, judging it, and anything
+security-sensitive stay with you.
 
 If you're missing context you'd need to review confidently — why a design choice was made, what
 `plan.md` intended in a place the diff doesn't make obvious — set `blocked` and return rather than
@@ -52,10 +54,13 @@ read the source yourself.
   linters, typecheckers, large greps/listings of generated output. Give it the exact command and what
   "pass" means. If its digest reports a failure, or is vaguer than the failure deserves, re-run that
   one case yourself and read the raw output before acting on it.
-- **`orch-explorer` — breadth lookups and claim checks:** "where is X used", "does this repo already have a
-  helper for Y", "what does the config actually say", and confirming a `plan.md` assumption before you
-  rely on it. Ask for `file:line` evidence, and read the cited lines yourself for anything you will
-  build on.
+- **`orch-explorer` — breadth lookups and claim checks, and your default for them:** "where is X used",
+  "who calls/includes/overrides X", "does this repo already have a helper for Y", "what does the config
+  actually say", and confirming a `plan.md` assumption before you rely on it. **Threshold:** before you
+  run a second search, or read a second unfamiliar file, for the same question, send that question to
+  `orch-explorer` instead (several questions in one spawn; ask for `file:line` evidence), and read the
+  cited lines yourself for anything you will build on. On a repository with a code index the explorer
+  answers structural questions from it in one query; you do not need to know whether there is one.
 - **Do it yourself instead:** a single known file or symbol (one `Read`/`grep` is cheaper than a
   spawn), anything you will edit, security-sensitive reading, and any decision.
 - **Batch:** one spawn with several questions beats several spawns.

@@ -40,6 +40,9 @@ Use it for **discovery** (finding a file, symbol, or convention faster than grep
 and for **verification** (confirming a specific claim — a signature, a config value, whether a
 pattern really appears elsewhere — before you write it into `plan.md`).
 
+Your default for "where is / who uses / does the repo already have" is `orch-explorer`; if you ran
+more than three searches or reads on one question yourself, you should have delegated.
+
 `orch-graph` is not a lookup role: it only checks and rebuilds the `orch-index` code index, and
 queries on that index go to `orch-explorer`. Call it (foreground, one at a time) before planning on a
 repository of ≥ 100K tracked files that has the `orch-index` binary, or when the explorer's reply says

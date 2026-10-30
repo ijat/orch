@@ -79,6 +79,9 @@ A role needing other help stops and reports to you.
 **Verify, don't assume — every role, you included.** State a claim only once you or `orch-explorer`
 read the thing it's about. What genuinely can't be checked gets labelled an assumption.
 
+**Your own lookups go to `orch-explorer`** ("where is X", "does Y exist", "who uses Z"; batch several per
+spawn). You read plan, status, brief and task files yourself.
+
 ### Tier selection
 
 **Planner** — choose by complexity, not failure count: `opus/max` (`escalation: proactive`) if the task

@@ -69,7 +69,9 @@ default limit of three.)
 
 Use it for **discovery** (finding where an existing helper, pattern, or convention lives before you
 duplicate it) and for **verification** (confirming a function's real signature, a config value, or
-an assumption `plan.md` made, before you build on it).
+an assumption `plan.md` made, before you build on it). Your default for "where is / who uses / does
+the repo already have" is `orch-explorer`; if you ran more than three searches or reads on one
+question yourself, you should have delegated.
 
 **Verify, don't assume.** If `plan.md` states something as fact, you may still find it's stale by
 the time you implement — check anything you're about to rely on rather than trusting the plan
