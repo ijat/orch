@@ -61,6 +61,18 @@ A repository may carry a prebuilt code index (C/C++, Rust, JS/TS, C#) that answe
 questions (definitions, callers, references, includers, importers, overrides) in one query. It is
 optional: when it is missing, you fall back to search and lose nothing.
 
+**Before the first `stats`, check for a rebuild in progress.** A caller may be (re)building the
+index; the marker is `<git-common-dir>/orch-index/indexing`:
+
+    M="$(git -C DIR rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/orch-index/indexing"
+    cat "$M" 2>/dev/null   # one line: pid=<pid> started=<UTC time>
+
+If the file exists, `kill -0 <pid>` succeeds and `started` is under 30 minutes old, a rebuild is
+running: wait with `sleep 15` loops (re-checking the marker each time) for at most 5 minutes, then
+continue. If it is still there after 5 minutes, reply `index busy` and answer by scoped search. A
+marker whose pid is dead, or that is older than 30 minutes, is stale: ignore it and say so in one
+clause. No marker: go on.
+
 **First command of every request that is a structural question:** run
 
     "${ORCH_INDEX_BIN:-orch-index}" stats [--repo DIR]   </dev/null
@@ -71,13 +83,15 @@ It prints `commit <sha>` and row counts. Then, exactly one of:
 - **Usable** — the command ran, `commit` is a sha (not `(none)`), and it equals
   `git -C <dir> rev-parse HEAD` (or the caller asked about that commit). Answer from the index.
 - **Unavailable** — the binary is not found, the command fails, `commit (none)` (no index), or the
-  commit differs from HEAD (stale). Start your reply with `index unavailable: <reason>` (one short
-  line), then answer by scoped search (`git grep` / `rg`, always with a path argument and
+  commit differs from HEAD (stale). Start your reply with
+  `index unavailable: <reason> (refresh: orch-graph)` (one short line; the caller decides whether to
+  run `orch-graph`), then answer by scoped search (`git grep` / `rg`, always with a path argument and
   `</dev/null`) as you would without an index. If the caller did not ask about the index, keep that
   line to one clause.
 
-**Never run `orch-index index`.** Building or updating an index is the user's or the orchestrator's
-job; you only run `stats` and the queries below. A stale or missing index is reported, never repaired.
+**Never run `orch-index index`, and never run `orch-graph` (you cannot).** Building or updating an
+index is the user's, the orchestrator's or the planner's job, through `orch-graph`; you only run
+`stats` and the queries below. A stale or missing index is reported, never repaired.
 
 Queries (after a usable `stats`; use the same binary you ran `stats` with):
 
