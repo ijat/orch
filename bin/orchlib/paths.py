@@ -1,11 +1,16 @@
 """Task resolution, locking, atomic writes, timestamps, index refresh."""
-import fcntl
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import datetime
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 BIN_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 TEMPLATES_DIR = os.path.normpath(os.path.join(BIN_DIR, "..", "skills", "orchestrate", "templates"))
@@ -78,7 +83,7 @@ def resolve_task(arg, must_exist=True):
 
 
 class TaskLock(object):
-    """fcntl.flock on TASK/.orch.lock around a read-modify-write."""
+    """An exclusive lock on TASK/.orch.lock around a read-modify-write (fcntl.flock; msvcrt.locking on Windows)."""
 
     def __init__(self, task_dir):
         self.path = os.path.join(task_dir, ".orch.lock")
@@ -86,12 +91,25 @@ class TaskLock(object):
 
     def __enter__(self):
         self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
-        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        if os.name == "nt":
+            # LK_LOCK gives up after 10 tries a second apart; keep trying, as flock would block.
+            while True:
+                try:
+                    msvcrt.locking(self.fd, msvcrt.LK_LOCK, 1)
+                    break
+                except OSError:
+                    pass
+        else:
+            fcntl.flock(self.fd, fcntl.LOCK_EX)
         return self
 
     def __exit__(self, *exc):
         try:
-            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            if os.name == "nt":
+                os.lseek(self.fd, 0, os.SEEK_SET)
+                msvcrt.locking(self.fd, msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(self.fd, fcntl.LOCK_UN)
         finally:
             os.close(self.fd)
         return False
@@ -152,8 +170,16 @@ def refresh_index(warn):
     if not os.path.exists(script):
         warn("index not refreshed: %s missing" % script)
         return
+    argv = [script]
+    if os.name == "nt":
+        # Windows can't exec a .sh; Claude Code there runs on Git Bash, which provides bash.
+        bash = shutil.which("bash")
+        if not bash:
+            warn("index not refreshed: no bash on PATH")
+            return
+        argv = [bash, script]
     try:
-        res = subprocess.run([script], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60)
+        res = subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60)
         if res.returncode != 0:
             warn("index refresh failed (rc %d): %s" % (res.returncode, res.stderr.decode("utf-8", "replace").strip()[:200]))
     except (OSError, subprocess.SubprocessError) as exc:

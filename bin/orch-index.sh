@@ -8,9 +8,10 @@ root="${ORCH_DIR:-$HOME/.claude/orchestrations}"
 out="$root/ACTIVE.md"
 [ "${1:-}" = "--stdout" ] && out=/dev/stdout
 [ "${1:-}" = "-h" ] && { sed -n 2,3p "$0"; exit 0; }
+py=$(command -v python3 || command -v python || echo python3)  # Windows installs often name it python
 
 generate() {
-  body=$(python3 -I - "$root" <<'PY'
+  body=$("$py" -I - "$root" <<'PY'
 import sys, os, re, glob, time, datetime
 root = sys.argv[1]
 ENUM = {"planning","awaiting_approval","implementing","reviewing","awaiting_merge","paused_usage_limit","done","abandoned"}

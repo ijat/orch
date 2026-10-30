@@ -26,7 +26,9 @@ if [ -x "$_orch" ]; then
   _args=()
   [ -n "${STOP_PCT:+x}" ] && _args+=(--line "$STOP_PCT")
   [ -n "${WARN_PCT:+x}" ] && _args+=(--warn "$WARN_PCT")
-  _out=$("$_orch" usage ${_args[@]+"${_args[@]}"} 2>/dev/null)
+  # Through the interpreter, not the #! line: Windows installs often have only `python`.
+  _py=$(command -v python3 || command -v python || echo python3)
+  _out=$("$_py" "$_orch" usage ${_args[@]+"${_args[@]}"} 2>/dev/null)
   _code=$?
   _last=$(printf '%s\n' "$_out" | tail -n 1)
   if [[ "$_last" == state=* ]]; then
