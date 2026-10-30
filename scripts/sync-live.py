@@ -24,6 +24,23 @@ Overlay (JSON): {"version": 1, "edits": [{"path", "public", "live"}], "protect":
 `public` text must occur exactly once. A managed path under a `protect` prefix is allowed only if it
 is a MOVED target. `{live}` is the only placeholder allowed in a check's argv.
 
+Gates (step 6): before anything is reported as syncable, the stage must pass four checks; each
+failure is a `REFUSE:` line and all of them are collected:
+- syntax: `bash -n` for a `.sh` file or a `#!` naming bash; an in-process compile() for a `.py` file or
+  a `#!` naming python;
+- agents: `python3 -I -B <snapshot>/bin/orch-build-agents.py <root>/skills/orchestrate/roles
+  <root>/agents --check` exits 0 (a stale render: run `python3 bin/orch-build-agents.py
+  skills/orchestrate/roles agents` in the repo and commit);
+- checks: each overlay check runs without a shell, with ORCH_HOME=<root>, first on live (the
+  baseline), then on the stage. A non-zero exit fails, and so does a `WARN` line the baseline did not
+  print (the root path and its realpath are normalised to `<root>` first);
+- round trip: the commit's own export.py, run in a copy of the commit with `--src <stage>`, must
+  reproduce the commit exactly (file set, bytes, owner-exec bit), its denylist scan included.
+Every subprocess gets PYTHONDONTWRITEBYTECODE=1; Python ones also run with -I -B.
+
+SYNC_LIVE_CHECK_TIMEOUT (seconds, default 300) is for the test suite only: it shortens the per-check
+timeout so a hanging check can be tested. Do not set it in normal use.
+
 Output: `create <path>` / `update <path>` lines, a unified diff per update (`--- live/<path>`,
 `+++ new/<path>`), `REFUSE: <reason>` lines, then
 `sync-live: dry run, rev <short>: C create, U update, N unchanged, R refusal(s)` or
@@ -32,8 +49,8 @@ Output: `create <path>` / `update <path>` lines, a unified diff per update (`---
 POSIX only. Exit 0 = would sync; 1 = refused, nothing written; 2 = bad input or unsafe config;
 3 = reserved. Nothing under --live or <repo> is created, changed or deleted by a dry run.
 """
-import argparse, difflib, hashlib, importlib.util, io, json, os, posixpath, re, shutil, stat, subprocess
-import sys, tarfile, tempfile
+import argparse, difflib, hashlib, importlib.util, io, json, os, posixpath, re, shutil, signal, stat
+import subprocess, sys, tarfile, tempfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOP_DIRS = ("skills", "agents", "bin")
@@ -53,7 +70,9 @@ def bad(msg):
 
 
 def git_env():
-    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
 
 
 def git(repo, *args):
@@ -309,6 +328,207 @@ def write_file(path, data, exe):
     os.chmod(path, 0o755 if exe else 0o644)
 
 
+# ---------- 6: gates (pure functions of the root they check; step 4 reuses them on live) ----------
+
+GATE_TIMEOUT = 300
+BUILD_CMD = "python3 bin/orch-build-agents.py skills/orchestrate/roles agents"
+
+
+def check_timeout():
+    """The per-check timeout; SYNC_LIVE_CHECK_TIMEOUT overrides it in tests only."""
+    v = os.environ.get("SYNC_LIVE_CHECK_TIMEOUT")
+    if v is None:
+        return GATE_TIMEOUT
+    try:
+        t = float(v)
+    except ValueError:
+        t = 0
+    if not t > 0:
+        raise bad("SYNC_LIVE_CHECK_TIMEOUT must be a positive number of seconds")
+    return t
+
+
+def run_cmd(argv, env, timeout, cwd):
+    """(rc, stdout, stderr) as text. Raises subprocess.TimeoutExpired after killing the whole process
+    group, so a check's children cannot keep the pipes open; raises OSError if argv[0] cannot run."""
+    p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                         env=env, cwd=cwd, start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        p.communicate()
+        raise
+    return p.returncode, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
+
+
+def tail(text, n=8):
+    lines = [l for l in text.strip().splitlines() if l.strip()]
+    return " | ".join(lines[-n:]) if lines else "(no output)"
+
+
+def image_rels(ex, pairs, root):
+    """Every file of the image under `root`: the managed live paths plus what the trees take there."""
+    rels = [lr for lr, _ in pairs]
+    seen = set(rels)
+    for t in ex.TREES:
+        d = os.path.join(root, t)
+        if os.path.isdir(d):
+            for r in ex.tree_files(d):
+                rel = t + "/" + r
+                if rel not in seen:
+                    rels.append(rel); seen.add(rel)
+    return rels
+
+
+def gate_syntax(root, rels, tmp):
+    """(a) bash -n for shell files, compile() for Python files."""
+    refusals = []
+    for rel in rels:
+        p = os.path.join(root, rel)
+        if not os.path.isfile(p):
+            continue
+        with open(p, "rb") as f:
+            data = f.read()
+        first = data.split(b"\n", 1)[0] if data.startswith(b"#!") else b""
+        if rel.endswith(".sh") or b"bash" in first:
+            try:
+                rc, out, err = run_cmd(["bash", "-n", p], git_env(), GATE_TIMEOUT, tmp)
+            except (OSError, subprocess.TimeoutExpired) as e:
+                refusals.append("syntax: %s: bash -n could not run (%s)" % (rel, e.__class__.__name__))
+                continue
+            if rc:
+                refusals.append("syntax: %s: bash -n: %s" % (rel, tail(err.replace(p, rel), 3)))
+        elif rel.endswith(".py") or b"python" in first:
+            try:
+                compile(data, rel, "exec", dont_inherit=True)
+            except (SyntaxError, ValueError) as e:
+                refusals.append("syntax: %s: %s: %s" % (rel, e.__class__.__name__, e))
+    return refusals
+
+
+def gate_agents(snap, root, tmp):
+    """(b) The rendered agents under `root` match their role sources (the snapshot's builder, --check)."""
+    builder = os.path.join(snap, "bin", "orch-build-agents.py")
+    if not os.path.isfile(builder):
+        raise bad("snapshot has no bin/orch-build-agents.py")
+    argv = [sys.executable, "-I", "-B", builder, os.path.join(root, "skills", "orchestrate", "roles"),
+            os.path.join(root, "agents"), "--check"]
+    try:
+        rc, out, err = run_cmd(argv, git_env(), GATE_TIMEOUT, tmp)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return ["agents: orch-build-agents.py --check could not run (%s)" % e.__class__.__name__]
+    if rc:
+        return ["agents: rendered agents are stale (%s); run `%s` in the repo and commit"
+                % (tail(out + err), BUILD_CMD)]
+    return []
+
+
+def normalise(line, root):
+    """`line` with `root` and its realpath replaced by <root>, longest first."""
+    for r in sorted({root, os.path.realpath(root)}, key=len, reverse=True):
+        line = line.replace(r, "<root>")
+    return line.rstrip()
+
+
+def run_check(check, root, live, tmp):
+    """(rc, set of normalised WARN lines) of one overlay check with ORCH_HOME=root.
+    Raises OSError or subprocess.TimeoutExpired."""
+    argv = [a.replace("{live}", live) for a in check["argv"]]
+    env = dict(os.environ, ORCH_HOME=root, PYTHONDONTWRITEBYTECODE="1")
+    rc, out, err = run_cmd(argv, env, check_timeout(), tmp)
+    warns = {normalise(l, root) for l in (out + err).splitlines() if l.startswith("WARN")}
+    return rc, warns
+
+
+def baseline_checks(checks, live, tmp):
+    """([WARN set, or None if the check fails on live] aligned with `checks`, refusals). Computed once
+    per run and reused for every later root."""
+    base, refusals = [None] * len(checks), []
+    for i, c in enumerate(checks):
+        try:
+            rc, warns = run_check(c, live, live, tmp)
+        except subprocess.TimeoutExpired:
+            refusals.append("check %s fails on current live: timed out" % c["name"]); continue
+        except OSError as e:
+            refusals.append("check %s fails on current live: cannot run (%s)" % (c["name"], e)); continue
+        if rc:
+            refusals.append("check %s fails on current live (exit %d)" % (c["name"], rc)); continue
+        base[i] = warns
+    return base, refusals
+
+
+def gate_checks(checks, root, live, baseline, tmp):
+    """(c) Each check on `root`: a non-zero exit, or a WARN line the baseline lacks, is a refusal.
+    A check that already failed on live (baseline None) was refused there and is not re-run."""
+    if len(baseline) != len(checks):
+        raise bad("internal: the check baseline does not match the overlay's checks")
+    refusals = []
+    for c, base in zip(checks, baseline):
+        name = c["name"]
+        if base is None:
+            continue
+        try:
+            rc, warns = run_check(c, root, live, tmp)
+        except subprocess.TimeoutExpired:
+            refusals.append("check %s: timed out" % name); continue
+        except OSError as e:
+            refusals.append("check %s: cannot run (%s)" % (name, e)); continue
+        if rc:
+            refusals.append("check %s: exit %d" % (name, rc))
+        for w in sorted(warns - base):
+            refusals.append("check %s: new %s" % (name, w))
+    return refusals
+
+
+def tree_diff(snap, snap_files, other):
+    """Repo paths where `other` differs from the commit: file set, bytes, or owner-exec bit."""
+    found = set()
+    for cur, _dirs, names in os.walk(other):
+        for n in names:
+            p = os.path.join(cur, n)
+            found.add(os.path.relpath(p, other).replace(os.sep, "/"))
+    diffs = []
+    for rel in sorted(found | set(snap_files)):
+        if rel not in found or rel not in snap_files:
+            diffs.append(rel); continue
+        p = os.path.join(other, rel)
+        if os.path.islink(p) or bool(os.stat(p).st_mode & stat.S_IXUSR) != snap_files[rel]:
+            diffs.append(rel); continue
+        with open(p, "rb") as f, open(os.path.join(snap, rel), "rb") as g:
+            if f.read() != g.read():
+                diffs.append(rel)
+    return diffs
+
+
+def gate_roundtrip(snap, snap_files, root, private_path, deny_path, tmp):
+    """(d) The commit's export.py, run in a copy of the commit with --src root, reproduces the commit."""
+    work = tempfile.mkdtemp(prefix="rt-", dir=tmp)
+    copy = os.path.join(work, "repo")
+    shutil.copytree(snap, copy)
+    argv = [sys.executable, "-I", "-B", os.path.join(copy, "scripts", "export.py"), "--src", root,
+            "--denylist", deny_path, "--private", private_path]
+    try:
+        rc, out, err = run_cmd(argv, git_env(), GATE_TIMEOUT, work)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return ["round trip: export.py could not run (%s)" % e.__class__.__name__]
+    if rc:
+        return ["round trip: export.py exit %d: %s" % (rc, tail(err))]
+    return ["round trip: %s differs" % rel for rel in tree_diff(snap, snap_files, copy)]
+
+
+def run_gates(ex, pairs, snap, snap_files, overlay, private_path, deny_path, root, live, baseline, tmp):
+    """All four gates on `root`; the collected refusals."""
+    refusals = gate_syntax(root, image_rels(ex, pairs, root), tmp)
+    refusals += gate_agents(snap, root, tmp)
+    refusals += gate_checks(overlay["checks"], root, live, baseline, tmp)
+    refusals += gate_roundtrip(snap, snap_files, root, private_path, deny_path, tmp)
+    return refusals
+
+
 # ---------- 7 + 8: ops and output ----------
 
 def compute_ops(pairs, stage, live):
@@ -407,6 +627,11 @@ def run(a, repo, tmp):
     os.mkdir(stage)
     build_stage(ex, pairs, snap, snap_files, overlay["edits"], a.live, stage)
     ops = compute_ops(pairs, stage, a.live)
+    check_timeout()
+    baseline, base_refusals = baseline_checks(overlay["checks"], a.live, tmp)
+    refusals += base_refusals
+    refusals += run_gates(ex, pairs, snap, snap_files, overlay, a.private, a.denylist, stage, a.live,
+                          baseline, tmp)
     return report(ops, refusals, short, stage, a.live)
 
 
