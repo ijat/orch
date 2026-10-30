@@ -398,18 +398,47 @@ prints the same data once.
 
 ## Maintaining (for the repo owner)
 
-This repo is a sanitised **export** of a live `~/.claude` install. The live files are the source
-of truth.
+This repo is the **source of truth** for the owner's live `~/.claude` orch files. Edit here, never
+in `~/.claude`.
 
-1. Edit the skill in `~/.claude`. For a role, edit `skills/orchestrate/roles/`; never edit
-   `agents/orch-*.md` directly. The build hook regenerates them after each edit made inside Claude
-   Code. After editing outside Claude Code, run `~/.claude/bin/orch-build-agents.py` yourself.
-   Running sessions keep the agent definitions they started with; new sessions pick up the change.
-2. Run `scripts/export.py`. It copies the files here, applies its listed edits, and fails if a
-   local denylist (kept outside the repo) matches anything.
-3. Commit and push.
+`scripts/sync-live.py` (POSIX only) writes the live install from a commit of this repo plus a private
+overlay kept outside the repo. The overlay holds the few live-only differences (pointers to files that
+exist only on the owner's machine). Before it touches anything it builds the new live image in a temp
+stage and checks it:
 
-Don't run `install.sh` over the live install. It would replace live files with the sanitised copies.
+- script syntax;
+- the rendered agents (`orch-build-agents.py --check`);
+- the owner's audit checks, which must print no new warnings;
+- a **round trip**: `scripts/export.py`, run against the stage, must reproduce the commit byte for byte
+  and pass the denylist scan.
+
+Only then does it write, all-or-nothing: record, back up every file it will replace, atomic replace,
+the same checks on live, and a manifest of file hashes. Any failure restores from the backups. A drift
+guard compares live with the manifest and refuses to overwrite files edited by hand (there is no
+`--force`). `scripts/sync-live.py --rollback` undoes the newest sync. `--dry-run` shows everything and
+writes nothing.
+
+A sync replaces files one at a time, so don't start `orch` commands or orchestrations in other sessions
+while it runs.
+
+sync-live refuses a commit that does not descend from the last synced one unless
+`--allow-non-descendant` is given, and it lists the managed files that would revert.
+
+`install.sh` refuses (exit 2) when `~/.claude/.orch-sync` exists, so it can never overwrite a
+sync-managed install.
+
+Workflow:
+
+1. Branch, then edit. For a role, edit `skills/orchestrate/roles/`; never edit `agents/orch-*.md`
+   directly. Render them with `python3 bin/orch-build-agents.py skills/orchestrate/roles agents`.
+2. Test: `python3 scripts/test_export.py`, `python3 -m unittest discover -s bin/orchlib/tests`,
+   `node --test bin/orchlib/tests/test_dashboard_page.mjs`.
+3. Commit, then `scripts/sync-live.py --dry-run` and `scripts/sync-live.py`.
+4. Merge with `git merge --no-ff`, then push.
+
+`scripts/export.py` is the inverse of the sync: it maps a live install back to this repo's form
+(dropping owner-only pointers, making examples generic) and checks the result against a local denylist
+kept outside the repo. sync-live runs it as its round-trip proof.
 
 ## License
 

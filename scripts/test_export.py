@@ -22,8 +22,7 @@ import export  # noqa: E402
 
 SECRET = "SECRETWORD"
 # Stand-ins for the values of the private file; the real ones never appear in this repo.
-PRIVATE = {"AUDIT": "fake-audit", "WHY_DOC": "FAKEDOC", "STATUSLINE": "fake-line.sh",
-           "PRIVATE_REPO": "FakeRepo", "PRIVATE_TASK": "faketask"}
+PRIVATE = {"AUDIT": "fake-audit", "WHY_DOC": "FAKEDOC"}
 
 
 def write(path, text=""):
@@ -253,10 +252,16 @@ class ExportCase(unittest.TestCase):
     def test_private_value_is_replaced_by_its_edit(self):
         rc, out, err = self.run_export()
         self.assertEqual(rc, 0, err)
-        with open(os.path.join(self.repo, "bin/usage-check.sh"), encoding="utf-8") as f:
+        with open(os.path.join(self.repo, "skills/orchestrate/PROGRAM.md"), encoding="utf-8") as f:
             text = f.read()
-        self.assertNotIn(PRIVATE["STATUSLINE"], text)
-        self.assertIn("orch-ratelimit-cache.sh", text)
+        self.assertNotIn(PRIVATE["AUDIT"], text)
+        self.assertIn("~/.claude/bin/role-cost.py --by tier", text)
+
+    def test_edit_tables_have_their_expected_sizes(self):
+        # the cosmetic edits are gone: live converges to the public wording (sync-live's overlay holds the rest)
+        self.assertEqual(len(export.PRIVATE_EDITS), 7)
+        self.assertEqual(len(export.EDITS), 3)
+        self.assertIn("skills/orchestrate/templates/guide.md", export.FILES)
 
     def html_path(self):
         return os.path.join(self.src, "bin/orchlib/dashboard.html")
@@ -328,6 +333,19 @@ class InstallCase(unittest.TestCase):
         rc, out, err = self.run_install("--dry-run")
         self.assertEqual(rc, 0, err)
         self.assertIn("new 0, updated 0", out)
+
+    def test_sync_managed_install_is_refused_in_both_modes(self):
+        managed = os.path.join(self.home, ".claude", ".orch-sync")
+        os.makedirs(managed)
+
+        def listing():
+            return sorted(os.path.join(c, n) for c, ds, fs in os.walk(self.home) for n in ds + fs)
+        before = listing()
+        for args in ((), ("--dry-run",)):
+            rc, out, err = self.run_install(*args)
+            self.assertEqual(rc, 2, (args, out, err))
+            self.assertIn("sync-live", err)
+            self.assertEqual(listing(), before, args)
 
 
 if __name__ == "__main__":
