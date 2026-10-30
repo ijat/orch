@@ -202,11 +202,13 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
 
 **Index rebuild pause.** Call `orch-graph` only when the explorer's reply says the index is stale
 (`index unavailable: stale … (refresh: orch-graph)`) on a repository that has an index; never for
-`no index`, `binary not found` or an index that is only behind HEAD (`index at <sha> + delta search`),
-never automatically, never two at once, and never while another index run is in progress (a live
+`no index`, `binary not found`, an index that is only behind HEAD (`index at <sha> + delta search`)
+or a stale line without the refresh hint (the explorer omits it in a linked worktree, where a rebuild
+would make the main checkout's index stale), never automatically, never two at once, and never while another index run is in progress (a live
 `<git-common-dir>/orch-index/indexing` marker, or a running `orch-graph` spawn). The pre-planning
 call on a repository of ≥ 100K tracked files that has the `orch-index` binary is the planner's, not
-yours. Spawn it in the **foreground** (it writes
+yours. Point it at the repository's main checkout, never a task worktree (from a linked worktree it
+only reports). Spawn it in the **foreground** (it writes
 `<git-common-dir>/orch-index/indexing` for the rebuild, removes it after, and the explorer's first
 command waits on that marker). While an `orch-graph` spawn runs, spawn nothing else (no explorer, no
 implementer, no reviewer) and do no exploring of your own. The same binds `orch-planner` when it calls

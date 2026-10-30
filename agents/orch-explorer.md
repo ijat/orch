@@ -81,23 +81,41 @@ say so in one clause. No marker: go on.
     "${ORCH_INDEX_BIN:-orch-index}" stats [--repo DIR]   </dev/null
 
 (`--repo DIR` when the caller names a repository; the binary comes from `$ORCH_INDEX_BIN` or `PATH`.)
-It prints `commit <sha>` and row counts. Then, exactly one of:
+It prints `commit <sha>` and row counts. The state is decided by `commit`, HEAD and `merge-base`,
+not by the note on a query's count line: whenever `commit` differs from HEAD, every query's count
+line carries ``(index at <sha>, HEAD is <sha>: results may be stale; run `orch-index index`)``,
+ancestor or not, so that note alone is never a stale signal. Then, exactly one of:
 
 - **Current** — `commit` is a sha equal to `git -C <dir> rev-parse HEAD` (or the caller asked about
-  that commit). Answer from the index.
+  that commit). Answer from the index, unless the count line of your first query (read it before
+  using its rows) contains the text `index built by an older orch-index`: then it is **Stale**.
 - **Behind** — `commit` is a sha that differs from HEAD, and
   `git -C <dir> merge-base --is-ancestor <sha> HEAD` succeeds (HEAD is the indexed commit plus later
-  commits, as in a task worktree). The index is still usable, with a **mandatory delta search**: list
-  the changed files with `git -C <dir> diff --name-only <sha>` (the working tree against the indexed
-  commit, so committed and uncommitted changes) and `git -C <dir> ls-files --others --exclude-standard`;
-  search those files for the same name or path with the scoped search below; and for those files
-  prefer the search result over any index row (the index's line numbers and edges there are old).
-  Start the reply with `index at <sha> + delta search`. Do not suggest a refresh.
-- **Stale** — `commit` is a sha that is not an ancestor of HEAD, or the count line of your first query (read it
-  before using its rows) carries a note ending ``run `orch-index index` `` (an index built by an older `orch-index`). Start the reply
-  with `index unavailable: stale (<reason>) (refresh: orch-graph)` (one short line; the caller decides
-  whether to run `orch-graph`), then answer by scoped search (`git grep` / `rg`, always with a path
-  argument and `</dev/null`) as you would without an index.
+  commits, as in a task worktree). The `index at …, HEAD is …` note is expected here. The index is
+  still usable, with a **mandatory delta search**: list the changed files with
+  `git -C <dir> diff --name-only --no-renames <sha>` (the working tree against the indexed commit, so
+  committed and uncommitted changes; `--no-renames` keeps the old path of a renamed file) and
+  `git -C <dir> ls-files --others --exclude-standard`; search those files for the same name or path
+  with the scoped search below; and for those files use the search result instead of any index row
+  (the index's line numbers and edges there are old), dropping index rows for a listed file that no
+  longer exists. Start the reply with `index at <sha> + delta search`. Do not suggest a refresh.
+  Limit: in this state `orch-index` prints only the HEAD note, never the older-extractor note, so an
+  index built by an older `orch-index` cannot be seen here; it shows once the index is rebuilt at a
+  commit equal to HEAD.
+- **Stale** — `commit` is a sha that is not an ancestor of HEAD (reason: `index from another
+  branch`), or the Current case above found `index built by an older orch-index` (reason: `built by
+  an older orch-index`). If `<dir>` is the main checkout, start the reply with
+  `index unavailable: stale (<reason>) (refresh: orch-graph)` (one short line; the caller decides
+  whether to run `orch-graph`). If `<dir>` is a linked worktree, start it with
+  `index unavailable: stale (<reason>)` and no refresh hint: the index is shared with the main
+  checkout, and rebuilding it at the worktree's HEAD would make it stale there. Tell them apart with
+
+      [ "$(git -C <dir> rev-parse --path-format=absolute --git-dir)" = \
+        "$(git -C <dir> rev-parse --path-format=absolute --git-common-dir)" ] && echo main-checkout
+
+  (prints `main-checkout` in the main checkout, nothing in a linked worktree). Either way, then answer
+  by scoped search (`git grep` / `rg`, always with a path argument and `</dev/null`) as you would
+  without an index.
 - **Absent** — the binary is not found, the command fails, or `commit (none)` (no index). Start the
   reply with a bare `index unavailable: <reason>` (no refresh hint: nobody asked for an index), then
   answer by scoped search as you would without one. If the caller did not ask about the index, keep
@@ -118,8 +136,8 @@ Queries (after a usable `stats`; use the same binary you ran `stats` with):
 
 All take `--path PREFIX` (scope), `--lang cpp|rust|javascript|typescript|csharp`, `--repo DIR`, and
 `--limit N` (default 30; `--limit 0` = all). If the question asks *which files*, add
-`--files --limit 0`. Output: a count line (with a note when the index is stale or was built by an
-older `orch-index`), then
+`--files --limit 0`. Output: a count line (with a note when the index commit differs from HEAD,
+or, only when it equals HEAD, when an older `orch-index` built it), then
 `path:line [label] detail | source line`. Sources come from the git object store, so a sparse
 checkout is fully covered.
 
