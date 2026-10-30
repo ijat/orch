@@ -2,6 +2,8 @@
 # install.sh: copy orch into ~/.claude.
 #   ./install.sh            install; before overwriting a file that differs, back it up to ~/.claude/.orch-backup-<UTC stamp>/
 #   ./install.sh --dry-run  only list what would change
+# Refuses (exit 2, in both modes, before listing or writing anything) when ~/.claude/.orch-sync exists:
+# that install is managed by scripts/sync-live.py, and this script would overwrite it.
 # It never edits settings.json. The README shows the hook and statusline entries to add yourself.
 set -euo pipefail
 dry=0; [ "${1:-}" = "--dry-run" ] && dry=1
@@ -9,6 +11,10 @@ repo="$(cd "$(dirname "$0")" && pwd)"
 dest="$HOME/.claude"
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 backup="$dest/.orch-backup-$stamp"
+if [ -d "$dest/.orch-sync" ]; then
+  echo "install.sh: $dest is managed by scripts/sync-live.py ($dest/.orch-sync exists); sync with it instead." >&2
+  exit 2
+fi
 new=0; same=0; changed=0
 
 while IFS= read -r rel; do

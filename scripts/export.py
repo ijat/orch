@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Sync this repo from a live ~/.claude install.
+"""Map a live ~/.claude install back to this repo's form.
 
-The live install is the source of truth. This script copies the orchestration files into the repo,
-applies the few edits listed in EDITS (dropping pointers to maintainer-only files, making examples
-generic), and then checks the result.
+The repo is the source of truth. scripts/sync-live.py writes the owner's live install from it plus a
+private overlay; this script is the inverse. It copies the orchestration files from a live install
+into the repo tree it sits in, applies the few edits listed below (dropping pointers to maintainer-only
+files, making examples generic), and then checks the result. sync-live runs it as a round-trip proof:
+the repo commit, written to a stage and exported back, must reproduce the commit byte for byte.
 
-Usage: scripts/export.py [--src ~/.claude] [--denylist FILE]
+Usage: scripts/export.py [--src ~/.claude] [--denylist FILE] [--private FILE]
 
 - Every edit must match exactly once. When upstream text changes, the script fails instead of
   shipping something half-sanitised.
@@ -23,7 +25,7 @@ import argparse, json, os, re, shutil, subprocess, sys
 FILES = [
     "skills/orchestrate/SKILL.md", "skills/orchestrate/PROGRAM.md", "skills/orchestrate/TIERS.md",
     *[f"skills/orchestrate/templates/{n}.md" for n in (
-        "journal", "log", "notes", "plan", "policy", "questions", "retro", "review", "review-visual",
+        "guide", "journal", "log", "notes", "plan", "policy", "questions", "retro", "review", "review-visual",
         "roadmap", "security-ledger", "security-review", "sketch", "status")],
     *[f"agents/{n}.md" for n in (
         "orch-planner", "orch-implementer", "orch-code-reviewer", "orch-security-reviewer",
@@ -48,6 +50,8 @@ TREE_ALL = ("tests/fixtures",)
 # (the source key has an @@KEY@@ token, filled from the private file)
 MOVED = {"skills/@@AUDIT@@/scripts/role-cost.py": "bin/role-cost.py"}
 
+# Each edit below has an inverse in the owner's private overlay (outside this repo); sync-live's round
+# trip fails if the two drift apart.
 # (repo path, old, new): each old must occur exactly once in the copied file. `@@KEY@@` in old or new is
 # filled from the private file; these are the only entries that need a private word.
 PRIVATE_EDITS = [
@@ -60,24 +64,15 @@ PRIVATE_EDITS = [
     ("skills/orchestrate/PROGRAM.md", " Why each rule exists: `@@WHY_DOC@@.md`, \"Program mode\".", ""),
     ("skills/orchestrate/PROGRAM.md", "`~/.claude/skills/@@AUDIT@@/scripts/role-cost.py --by tier`",
      "`~/.claude/bin/role-cost.py --by tier`"),
-    ("skills/orchestrate/templates/journal.md",
-     '"repo":"@@PRIVATE_REPO@@","task":"p2-ext-ux"', '"repo":"myapp","task":"add-login"'),
-    ("bin/orch-stats.sh", "(e.g. @@PRIVATE_TASK@@'s \"orch-planner\" ran on sonnet)",
-     "(e.g. an \"orch-planner\" spawn that ran on sonnet)"),
-    ("bin/role-cost.py", " (for the @@AUDIT@@ skill)", ""),
     ("skills/orchestrate/TIERS.md", " Reasons: @@WHY_DOC@@.md \"Why the planner may continue\".", ""),
     ("bin/orchlib/tests/test_cont.py",
      'ROLE_COST = os.path.join(BIN, "..", "skills", "@@AUDIT@@", "scripts", "role-cost.py")',
      'ROLE_COST = os.path.join(BIN, "role-cost.py")'),
-    ("bin/usage-check.sh", "# Reads ONLY local files written by ~/.claude/@@STATUSLINE@@.",
-     "# Reads ONLY local files written by orch-ratelimit-cache.sh (from the statusline)."),
 ]
 
 # Edits that need no private word.
 EDITS = [
     ("skills/orchestrate/TIERS.md", "(`role-cost.py`)", "(`~/.claude/bin/role-cost.py`)"),
-    ("bin/orchlib/tests/test_dashboard_page.mjs",
-     "// The font name is built from parts so this file carries no word the public export removes.\n", ""),
     ("bin/orchlib/tests/test_dashboard_page.mjs", '  assert.equal(count(html, "<link"), 2);\n',
      '  assert.equal(count(html, "<link"), 0);\n'),
     ("bin/orchlib/tests/test_dashboard_page.mjs",

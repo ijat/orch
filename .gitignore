@@ -4,3 +4,4 @@ __pycache__/
 .orch-backup-*/
 .backup-*/
 .claude/
+CLAUDE.local.md
