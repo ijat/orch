@@ -331,8 +331,7 @@ Two roles use it, and only two:
 - **`orch-graph` keeps it fresh.** It checks the index (`fresh`, `fresh-enough` when the index commit
   is an ancestor of `HEAD`, `stale`, `missing`, or `binary not found`) and, when it is stale or
   missing, rebuilds it (incremental when an index exists), then reports the state before and after.
-  When the binary is missing and the caller did not ask for check only, it runs the pinned installer
-  script once (see below).
+  When the binary is missing it may install it once (conditions below).
   It leaves a `fresh-enough` index alone unless asked to bring it to `HEAD`, and it rebuilds only in
   the main checkout: from a linked worktree it reports the state and the main checkout's path. It answers no code
   questions. Only you, the orchestrator and the planner call it: the orchestrator or planner when the
@@ -351,18 +350,23 @@ rule, is not blocked.
 You do not need the index. The binary is `$ORCH_INDEX_BIN` if set, else `orch-index` on `PATH`, else
 `$HOME/.claude/bin/orch-index`.
 
-**Automatic install.** The planner's pre-plan call to `orch-graph` (on a repository of 100K or more
-tracked files), or your own call to it, installs a missing binary once, by running
-`~/.claude/bin/orch-install-code-index.sh`. It supports macOS and Linux (x86_64 and arm64). The script
-downloads the pinned release over HTTPS from `github.com/ijat/orch-index`, checks the archive's SHA-256
+**Automatic install.** `orch-graph` installs a missing binary only when the caller did not ask for check only,
+`ORCH_INDEX_AUTOINSTALL` is not `0`, `ORCH_INDEX_BIN` is unset or empty, no `orch-index` is on `PATH`,
+and `~/.claude/bin/orch-index` does not exist; it then runs `~/.claude/bin/orch-install-code-index.sh`
+once (Bash timeout 300 s) and, if `stats` still fails after that, reports the script's last line and
+stops. The calls that can install are the planner's pre-plan call (on a repository of 100K or more
+tracked files) and your own. The script supports macOS and Linux (x86_64 and arm64). It downloads the
+pinned release over HTTPS from `github.com/ijat/orch-index`, checks the archive's SHA-256
 against hashes committed in this repository (it does not trust the release's own checksum file), accepts
 only the one expected binary from the archive, checks that `--version` matches the pin, and writes it to
 `~/.claude/bin/orch-index` (no `sudo`, an existing binary is never overwritten). If `gh` is present it
 also reports whether the archive's build attestation verifies. Small repositories are not touched, and
-the explorer never installs anything. To avoid the install: call `orch-graph` as check only (it then only
-reports `binary not found`), set `ORCH_INDEX_BIN` to your own build, or delete
-`~/.claude/bin/orch-install-code-index.sh` after you have the binary. Windows and other platforms
-install by hand.
+the explorer never installs anything. To avoid the install: set `ORCH_INDEX_AUTOINSTALL=0` (the script
+then exits 3 without network access and `orch-graph` reports `install disabled`), or provide your own
+binary (`ORCH_INDEX_BIN` set to a working path, `orch-index` on `PATH`, or a file at
+`~/.claude/bin/orch-index`, which is never overwritten). `ORCH_INDEX_AUTOINSTALL=0` only stops
+installs; an existing binary is still used. Your own check-only calls never install, but the planner's
+pre-plan call is not check only. Windows and other platforms install by hand.
 
 Manual steps:
 
