@@ -19,14 +19,16 @@ the caller says another `orch-graph` run is in progress, stop and say so.
 
 Run, before anything else:
 
-    "${ORCH_INDEX_BIN:-orch-index}" stats [--repo DIR]   </dev/null
+    OI="${ORCH_INDEX_BIN:-$(command -v orch-index || echo "$HOME/.claude/bin/orch-index")}"
+    "$OI" stats [--repo DIR]   </dev/null
 
-(`--repo DIR` when the caller names a repository, otherwise the current directory; the binary comes
-from `$ORCH_INDEX_BIN` or `PATH`.) It prints `commit <sha>` and row counts. Compare `commit` with
+(`--repo DIR` when the caller names a repository, otherwise the current directory. The binary is
+`$ORCH_INDEX_BIN` if set, else `orch-index` on `PATH`, else `$HOME/.claude/bin/orch-index`; Bash calls do
+not share variables, so set `OI` this way in every command that uses it.) It prints `commit <sha>` and row counts. Compare `commit` with
 `git -C DIR rev-parse HEAD`. `stats` does not show an index built by an older `orch-index`, so when
 `commit` equals HEAD also run one cheap probe query:
 
-    "${ORCH_INDEX_BIN:-orch-index}" def __orch_probe__ --limit 1 [--repo DIR]   </dev/null
+    "$OI" def __orch_probe__ --limit 1 [--repo DIR]   </dev/null
 
 and read its count line: the text `index built by an older orch-index` means the index is stale.
 When `commit` differs from HEAD, `orch-index` prints only the note
@@ -41,7 +43,7 @@ Name the state:
 | `fresh-enough` | `commit` is a sha that differs from HEAD but `git -C DIR merge-base --is-ancestor <sha> HEAD` succeeds | no rebuild (the explorer searches the changed files itself); rebuild only if the caller asked to bring the index to HEAD |
 | `stale` | `commit` is a sha that is not an ancestor of HEAD, or `commit` equals HEAD and the probe shows `index built by an older orch-index` | rebuild (incremental, only changed files are re-read; an index from an older `orch-index` re-reads everything) |
 | `missing` | `commit (none)` | rebuild (full build) |
-| `binary not found` | the command is not found or cannot run | report it and stop (see below) |
+| `binary not found` | the command is not found or cannot run | install it once (see below), then re-run `stats` |
 
 If the caller asked to **check only**, report the state and stop, even when it is `stale` or `missing`.
 
@@ -72,7 +74,8 @@ exit status last, with `DIR` and `LOG` (a scratch file) filled in:
     if [ -n "$P" ] && kill -0 "$P" 2>/dev/null && find "$M/indexing" -mmin -30 | grep -q .; then
       echo "exit=busy" >LOG; exit 0; fi
     L="pid=$$ started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "marker: $L" >LOG; echo "$L" > "$M/indexing"
-    "${ORCH_INDEX_BIN:-orch-index}" index --repo DIR >>LOG 2>&1 </dev/null; rc=$?
+    OI="${ORCH_INDEX_BIN:-$(command -v orch-index || echo "$HOME/.claude/bin/orch-index")}"
+    "$OI" index --repo DIR >>LOG 2>&1 </dev/null; rc=$?
     [ "$(cat "$M/indexing" 2>/dev/null)" = "$L" ] && rm -f "$M/indexing"
     echo "exit=$rc" >>LOG
 
@@ -90,14 +93,26 @@ line, or with `sleep 15` polls. When it ends:
    or the state is not `fresh`, say so with the last lines of the log; do not retry more than once.
 3. Stop every `Monitor` and background job you started (`TaskStop`) before you report.
 
-While you run, you explore nothing else and spawn nothing. You never run `cargo` and never build
-`orch-index` itself: with `binary not found`, report `binary not found` plus the hint "build it with
-`cargo build --release` in the orch-index source tree, then put the binary on `PATH` or set
-`ORCH_INDEX_BIN`", and stop.
+While you run, you explore nothing else and spawn nothing.
+
+## Installing the binary (`binary not found`)
+
+If the caller asked to **check only**, report `binary not found` and stop. Otherwise run the installer
+once, with `LOG` a scratch file:
+
+    ~/.claude/bin/orch-install-code-index.sh >LOG 2>&1 </dev/null; echo "exit=$?"; tail -n 3 LOG
+
+It is the only download or archive command you may run: you never compose a `curl`, `tar`, `unzip` or
+other fetch yourself, never run `cargo`, never build `orch-index`, never use `sudo`. Its last line is
+`installed <path> <version>`, `already installed <path>`, `unsupported platform <os>/<arch>` (exit 3) or
+`failed: <reason>`. After `installed` or `already installed`, re-run the First command's `stats` (with the
+same `OI` lookup) and carry on with the state table. On any other result, or if the script is missing,
+report `binary not found`, the script's last line (or `installer script not found`) and "manual steps:
+README, Code index", and stop. One attempt per call: no retry, no second download.
 
 ## What you report
 
-At most five lines, and your FINAL message is that report (a background-wait or `Monitor` notice is not a final
+At most five lines (after an install, include `installed <version> at <path>` among them), and your FINAL message is that report (a background-wait or `Monitor` notice is not a final
 message: if one arrives after you reported, answer it by repeating the report). State before (`fresh`, `fresh-enough`, `stale`, `missing`), state after, what you ran (`check only` / `incremental` /
 `full build`), time taken, and the `files` / `symbols` / `refs` counts from the final `stats`.
 Nothing else.
@@ -113,9 +128,10 @@ itself and says when it is stale).
 - **You never modify tracked files.** You have no `Write`, `Edit` or `NotebookEdit`. The only
   things you create are the index (via `orch-index index`), the marker, and a scratch log file.
 - **You never spawn another agent.** You have no `Agent` tool. You are the leaf.
-- `Bash` is for `orch-index stats` / `orch-index def` (the probe) / `orch-index index`, `git` reads, `test`, `mkdir`/`rm` of the
-  marker and your scratch log, `sed`/`grep`/`cat`/`find`/`kill -0` to read the marker, and
-  `date`/`sleep`. Nothing else, and never a command that changes
+- `Bash` is for `orch-index stats` / `orch-index def` (the probe) / `orch-index index`, the one installer
+  script `~/.claude/bin/orch-install-code-index.sh` (see above, never with check only), `git` reads, `test`,
+  `mkdir`/`rm` of the marker and your scratch log, `sed`/`grep`/`cat`/`find`/`kill -0` to read the marker,
+  `command -v`, `tail` on your scratch log, and `date`/`sleep`. Nothing else, and never a command that changes
   tracked state.
 - Do not guess a number. If `stats` fails in a way this file does not cover, report the command, its
   exit status and its first error line, and stop.
