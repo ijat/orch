@@ -3,7 +3,8 @@
 # Usage: orch-install-code-index.sh [--dest DIR] [--dry-run] [--print-target]   (default DIR: $HOME/.claude/bin)
 # Trust root: the SHA-256 pins below, committed in this repo; the release's own SHA256SUMS is not used.
 # Never overwrites an existing <DIR>/orch-index, never uses sudo, refuses to run as root.
-# Exit: 0 installed or already there, 1 failure, 2 bad usage, 3 unsupported platform (install by hand).
+# ORCH_INDEX_AUTOINSTALL=0 disables it (exit 3, checked first, no network).
+# Exit: 0 installed or already there, 1 failure, 2 bad usage, 3 unsupported platform or disabled.
 set -euo pipefail
 
 # --- pins (begin) ---
@@ -26,12 +27,14 @@ while [ $# -gt 0 ]; do
     --dest) [ $# -ge 2 ] && [ -n "$2" ] || usage; dest="$2"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
     --print-target) print_target=1; shift ;;
-    -h|--help) sed -n 2,6p "$0" | sed 's/^# //'; exit 0 ;;
+    -h|--help) sed -n 2,7p "$0" | sed 's/^# //'; exit 0 ;;
     *) usage ;;
   esac
 done
 
 fail() { echo "failed: $*"; exit 1; }
+
+if [ "${ORCH_INDEX_AUTOINSTALL-}" = 0 ]; then echo "disabled by ORCH_INDEX_AUTOINSTALL"; exit 3; fi
 
 [ "$(id -u)" != 0 ] || fail "refusing to run as root"
 
@@ -190,17 +193,19 @@ if total != found.size:
 print("archive ok")
 PY
 
+if [ ! -d "$dest" ]; then (umask 022 && mkdir -p "$dest") || fail "cannot create $dest"; fi
+staged=$(mktemp "$dest/.orch-index.XXXXXX") || fail "cannot write to $dest"
+install -m 755 "$tmp/orch-index" "$staged" || fail "cannot write to $dest"
+
+# Run the version check on the staged file in <dest>, not in the temp dir (which may be mounted noexec);
+# a failure removes the staged file (cleanup trap).
 want=${ORCH_INDEX_VERSION#v}
-ver_out=$("$tmp/orch-index" --version 2>/dev/null) || fail "binary does not run"
+ver_out=$("$staged" --version 2>/dev/null) || fail "binary does not run"
 ok=0
 read -r -a words <<< "$(printf '%s' "$ver_out" | tr '\n' ' ')"
 for word in ${words[@]+"${words[@]}"}; do [ "$word" = "$want" ] && ok=1; done
 [ "$ok" = 1 ] || fail "binary reports a version other than $want"
 echo "version ok $want"
-
-if [ ! -d "$dest" ]; then (umask 022 && mkdir -p "$dest") || fail "cannot create $dest"; fi
-staged=$(mktemp "$dest/.orch-index.XXXXXX") || fail "cannot write to $dest"
-install -m 755 "$tmp/orch-index" "$staged" || fail "cannot write to $dest"
 if [ -e "$final" ] || [ -L "$final" ]; then echo "already installed $final"; exit 0; fi
 mv -n "$staged" "$final" 2>/dev/null || true
 if [ -e "$staged" ]; then
