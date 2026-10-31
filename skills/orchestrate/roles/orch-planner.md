@@ -43,9 +43,13 @@ pattern really appears elsewhere — before you write it into `plan.md`).
 Your FIRST search on any question that is not about one file you were handed is an `orch-explorer`
 spawn (all such questions in one spawn); see When to delegate for when your own Grep/Read is allowed.
 
-`orch-graph` is not a lookup role: it only checks and rebuilds the `orch-index` code index (and, when
-the binary is missing and you did not ask for check only, installs it once through the pinned script
-`~/.claude/bin/orch-install-code-index.sh`), and queries on that index go to `orch-explorer`. Call it
+`orch-graph` is not a lookup role: it only checks and rebuilds the `orch-index` code index (and may
+install a missing binary), and queries on that index go to `orch-explorer`.
+`orch-graph` installs a missing binary only when the caller did not ask for check only,
+`ORCH_INDEX_AUTOINSTALL` is not `0`, `ORCH_INDEX_BIN` is unset or empty, no `orch-index` is on `PATH`,
+and `~/.claude/bin/orch-index` does not exist; it then runs `~/.claude/bin/orch-install-code-index.sh`
+once (Bash timeout 300 s) and, if `stats` still fails after that, reports the script's last line and
+stops. Call it
 (foreground, one at a time) before planning on a repository of ≥ 100K tracked files, or when the
 explorer's reply says the index is stale (`index unavailable: stale … (refresh: orch-graph)`) on a
 repository that has one; never for `no index`, never for `binary not found` on a smaller repository, never for an index that is only behind HEAD (the

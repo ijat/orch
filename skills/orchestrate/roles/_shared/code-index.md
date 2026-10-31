@@ -24,7 +24,8 @@ prints `index at <sha>, HEAD is <sha>` whenever they differ):
 | Unavailable | binary not found, command fails, or `commit (none)` | first reply line `index unavailable: <reason>` (no hint; one clause if the caller did not ask about the index); then scoped search |
 
 Scoped search = `git grep` / `rg`, always with a path and `</dev/null`. Never run `orch-index index`,
-`orch-graph` or the installer script: a stale or missing index, or a missing binary, is reported, not repaired.
+`orch-graph` or the installer script: a stale or missing index, or a missing binary, is reported, not repaired
+(only `orch-graph` installs, under the conditions in its own role).
 
 Queries (Current or Behind). Run each as `"$OI" <query>`, the same binary as `stats` (Bash calls do not
 share variables: set `OI` as above in the same command; a bare `orch-index` may not be on `PATH`). Below,
