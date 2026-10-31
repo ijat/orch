@@ -4,7 +4,8 @@ No real network: every run gets a throwaway HOME and TMPDIR and a PATH whose fir
 (`uname`, `gh`, `curl`; `id` for the root case). The `curl` stub logs its arguments and either runs the
 real curl (file:// URLs only, via ORCH_INSTALL_TEST_BASE) or refuses. Runs use a copy of the script whose
 pin block is rewritten to the test archive's hash; `test_pins_are_real` checks the shipped pins and is
-expected to fail until the v0.2.0 release hashes are filled in."""
+expected to fail until the v0.2.0 release hashes are filled in. The `test_mutant_*` tests remove one guard
+from a copy of the script and check that the guard's own test then fails."""
 import hashlib
 import io
 import os
@@ -28,6 +29,9 @@ ARCHIVE = TOP + '.tar.gz'
 GOOD_BIN = b'#!/bin/sh\necho "orch-index 0.2.0"\n'
 TARGETS = ('AARCH64_APPLE_DARWIN', 'X86_64_APPLE_DARWIN', 'X86_64_UNKNOWN_LINUX_MUSL',
            'AARCH64_UNKNOWN_LINUX_MUSL')
+PLATFORMS = {'aarch64-apple-darwin': ('Darwin', 'arm64'), 'x86_64-apple-darwin': ('Darwin', 'x86_64'),
+             'x86_64-unknown-linux-musl': ('Linux', 'x86_64'), 'aarch64-unknown-linux-musl': ('Linux', 'aarch64')}
+CURL_FLAGS = ('-q', '--proto', '--proto-redir', '--tlsv1.2', '--max-filesize', '67108864')
 
 
 def make_tar(path, members):
@@ -46,6 +50,10 @@ def make_tar(path, members):
             tf.addfile(ti)
 
 
+def pin_var(target):
+    return target.upper().replace('-', '_')
+
+
 def sha256(path):
     with open(path, 'rb') as f:
         return hashlib.sha256(f.read()).hexdigest()
@@ -55,9 +63,31 @@ STUBS = {
     'uname': '#!/bin/sh\ncase "$1" in -s) echo "${FAKE_OS:-Darwin}" ;; -m) echo "${FAKE_ARCH:-arm64}" ;; '
              '*) echo "${FAKE_OS:-Darwin}" ;; esac\n',
     'gh': '#!/bin/sh\necho "$@" >> "$GH_LOG"\nexit "${FAKE_GH_RC:-1}"\n',
+    # FAKE_CURL_NOMAX=1 drops `--max-filesize N`, standing in for a transfer curl cannot cap up front.
     'curl': '#!/bin/sh\nprintf "%%s\\n" "$@" >> "$CURL_LOG"\n'
-            '[ "${FAKE_CURL_BLOCK:-0}" = 1 ] && exit 99\nexec "%s" "$@"\n' % REAL_CURL,
+            '[ "${FAKE_CURL_BLOCK:-0}" = 1 ] && exit 99\n'
+            'if [ "${FAKE_CURL_NOMAX:-0}" = 1 ]; then skip=0\n'
+            '  for a; do shift; if [ "$skip" = 1 ]; then skip=0; continue; fi\n'
+            '    if [ "$a" = --max-filesize ]; then skip=1; continue; fi; set -- "$@" "$a"; done\nfi\n'
+            'exec "%s" "$@"\n' % REAL_CURL,
     'id': '#!/bin/sh\necho 0\n',
+    # Runs the installer's Python block with every archive member reading one byte short of its header size.
+    'python3-short': '#!/bin/sh\n[ "$1" = -I ] && [ "$2" = - ] || exec "%s" "$@"\nshift 2\nexec "%s" -I -c \''
+                     'import sys, tarfile\n'
+                     '_orig = tarfile.TarFile.extractfile\n'
+                     'class Short:\n'
+                     '    def __init__(s, f, n): s.f, s.n = f, n\n'
+                     '    def read(s, k=-1):\n'
+                     '        k = s.n if k < 0 else min(k, s.n)\n'
+                     '        d = s.f.read(k) if k > 0 else b""\n'
+                     '        s.n -= len(d)\n'
+                     '        return d\n'
+                     'def short(self, m):\n'
+                     '    f = _orig(self, m)\n'
+                     '    return None if f is None else Short(f, m.size - 1)\n'
+                     'tarfile.TarFile.extractfile = short\n'
+                     'exec(compile(sys.stdin.read(), "<stdin>", "exec"))\' "$@"\n'
+                     % (sys.executable, sys.executable),
 }
 
 
@@ -76,27 +106,34 @@ class InstallerTest(unittest.TestCase):
         self.curl_log = os.path.join(self.tmp, 'curl.log')
         self.gh_log = os.path.join(self.tmp, 'gh.log')
 
-    def stub(self, name):
-        p = os.path.join(self.fakebin, name)
+    def stub(self, name, as_name=None):
+        p = os.path.join(self.fakebin, as_name or name)
+        if os.path.lexists(p):
+            os.remove(p)
         with open(p, 'w') as f:
             f.write(STUBS[name])
         os.chmod(p, 0o755)
 
-    def script(self, pin):
-        """A copy of the installer with every pin set to `pin`."""
+    def script(self, pin=None, pins=None, mutate=()):
+        """A copy of the installer with every pin set to `pin` (or per target from `pins`, keyed by pin
+        variable suffix), and each (old, new) in `mutate` applied once."""
         with open(SCRIPT) as f:
             text = f.read()
-        text = re.sub(r'^(readonly SHA256_[A-Z0-9_]+=)\S+$', lambda m: m.group(1) + pin, text, flags=re.M)
+        text = re.sub(r'^(readonly SHA256_([A-Z0-9_]+)=)\S+$',
+                      lambda m: m.group(1) + (pins[m.group(2)] if pins else pin), text, flags=re.M)
+        for old, new in mutate:
+            self.assertEqual(text.count(old), 1, 'mutation target not found once: %r' % old)
+            text = text.replace(old, new)
         p = os.path.join(self.tmp, 'bin', 'orch-install-code-index.sh')
         with open(p, 'w') as f:
             f.write(text)
         os.chmod(p, 0o755)
         return p
 
-    def serve(self, members, pin_from=None):
+    def serve(self, members, pin_from=None, mutate=()):
         """Write the served archive; return the pinned script (pinned to `pin_from`'s hash, else the archive's)."""
         make_tar(self.served, members)
-        return self.script(sha256(pin_from or self.served))
+        return self.script(sha256(pin_from or self.served), mutate=mutate)
 
     def run_it(self, script, *args, test_base=True, **env_extra):
         env = {'PATH': self.fakebin + ':' + SYS_PATH, 'HOME': os.path.join(self.tmp, 'home'),
@@ -141,11 +178,89 @@ class InstallerTest(unittest.TestCase):
             self.assertEqual(f.read(), GOOD_BIN)
         self.assertEqual(os.stat(final).st_mode & 0o777, 0o755)
         self.assertFalse(os.path.exists(os.path.join(self.tmp, 'scratch', TOP)))  # nothing else unpacked
-        calls = self.curl_calls()
-        for flag in ('-q', '--tlsv1.2', '--max-filesize', '67108864', '--proto', '=file'):
-            self.assertIn(flag + '\n', calls)
-        self.assertIn('file://', calls)
+        self.assertEqual(self.curl_flag_problems(), [])
+        self.assertIn('=file\n', self.curl_calls())
+        self.assertIn('file://', self.curl_calls())
         self.assert_clean(installed=True)
+
+    def curl_flag_problems(self):
+        calls = self.curl_calls().splitlines()
+        return [flag for flag in CURL_FLAGS if flag not in calls]
+
+    def test_mutant_without_proto_redir_is_caught(self):
+        s = self.serve(self.good_members(), mutate=[(' --proto-redir "$proto"', '')])
+        r = self.run_it(s)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(self.curl_flag_problems(), ['--proto-redir'])
+
+    def test_version_check_runs_in_dest(self):
+        run_log = os.path.join(self.tmp, 'run.log')
+        binary = b'#!/bin/sh\necho "$0" >> "$RUN_LOG"\necho "orch-index 0.2.0"\n'
+        s = self.serve(self.good_members(binary=binary))
+        r = self.run_it(s, RUN_LOG=run_log)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with open(run_log) as f:
+            ran = f.read().split()
+        self.assertEqual(len(ran), 1, ran)
+        self.assertEqual(os.path.dirname(ran[0]), self.dest)
+        self.assertTrue(os.path.basename(ran[0]).startswith('.orch-index.'), ran)
+        self.assert_clean(installed=True)
+
+    # -- each pin belongs to its own target -----------------------------------------------------------
+
+    def serve_all_targets(self):
+        """Serve one archive per target (each with its own top directory); return {pin var: its hash}."""
+        pins = {}
+        for target in PLATFORMS:
+            top = 'orch-index-%s-%s' % (VERSION, target)
+            path = os.path.join(self.tmp, 'release', VERSION, top + '.tar.gz')
+            make_tar(path, [(top, 'dir', None), (top + '/orch-index', 'file', GOOD_BIN)])
+            pins[pin_var(target)] = sha256(path)
+        self.assertEqual(len(set(pins.values())), 4)
+        return pins
+
+    def installs_every_target(self, script):
+        """True when every target installs from its own archive."""
+        for target, (os_, arch) in PLATFORMS.items():
+            dest = os.path.join(self.tmp, 'dest-' + target)
+            r = self.run_it(script, '--dest', dest, FAKE_OS=os_, FAKE_ARCH=arch)
+            if (r.returncode, r.last) != (0, 'installed %s %s' % (os.path.join(dest, 'orch-index'), VERSION)):
+                return False
+        return True
+
+    def test_each_pin_tied_to_its_target(self):
+        pins = self.serve_all_targets()
+        self.assertTrue(self.installs_every_target(self.script(pins=pins)))
+
+    def test_swapped_pins_fail_closed(self):
+        pins = self.serve_all_targets()
+        pins['AARCH64_APPLE_DARWIN'], pins['X86_64_APPLE_DARWIN'] = pins['X86_64_APPLE_DARWIN'], pins['AARCH64_APPLE_DARWIN']
+        r = self.run_it(self.script(pins=pins), FAKE_OS='Darwin', FAKE_ARCH='arm64')
+        self.assertEqual((r.returncode, r.last), (1, 'failed: checksum mismatch'))
+        self.assert_clean()
+
+    def test_mutant_wrong_pin_variable_is_caught(self):
+        pins = self.serve_all_targets()
+        s = self.script(pins=pins, mutate=[('pin=$SHA256_X86_64_APPLE_DARWIN', 'pin=$SHA256_AARCH64_APPLE_DARWIN')])
+        self.assertFalse(self.installs_every_target(s))
+
+    # -- opt-out ---------------------------------------------------------------------------------------
+
+    def test_autoinstall_0_disables_without_network(self):
+        s = self.serve(self.good_members())
+        r = self.run_it(s, FAKE_CURL_BLOCK='1', ORCH_INDEX_AUTOINSTALL='0')
+        self.assertEqual((r.returncode, r.stdout), (3, 'disabled by ORCH_INDEX_AUTOINSTALL\n'))
+        self.assertEqual(self.curl_calls(), '')
+        self.assertFalse(os.path.exists(self.dest))
+        self.assert_clean()
+
+    def test_autoinstall_other_values_install(self):
+        s = self.serve(self.good_members())
+        for value in ('1', '', 'false', 'no', '00'):
+            dest = os.path.join(self.tmp, 'dest-%r' % value)
+            r = self.run_it(s, '--dest', dest, ORCH_INDEX_AUTOINSTALL=value)
+            self.assertEqual((r.returncode, r.last), (0, 'installed %s %s' % (os.path.join(dest, 'orch-index'), VERSION)),
+                             value)
 
     def test_attested_when_gh_verifies(self):
         s = self.serve(self.good_members())
@@ -195,6 +310,34 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertEqual(r.last, 'failed: checksum mismatch')
         self.assert_clean()
+
+    SIZE_CAP = ('readonly MAX_BYTES=67108864 ', 'readonly MAX_BYTES=64 ')
+    SIZE_CHECK = ('[ "$size" -le "$MAX_BYTES" ] || fail "download larger than $MAX_BYTES bytes"\n', '')
+
+    def refuses_oversize(self, script):
+        r = self.run_it(script, FAKE_CURL_NOMAX='1')
+        return (r.returncode, r.last) == (1, 'failed: download larger than 64 bytes') and not os.path.exists(self.dest)
+
+    def test_oversize_download_refused_after_transfer(self):
+        self.assertTrue(self.refuses_oversize(self.serve(self.good_members(), mutate=[self.SIZE_CAP])))
+        self.assert_clean()
+
+    def test_mutant_without_size_check_is_caught(self):
+        self.assertFalse(self.refuses_oversize(self.serve(self.good_members(), mutate=[self.SIZE_CAP, self.SIZE_CHECK])))
+
+    SHORT_CHECK = ('if total != found.size:\n    die("short binary member")\n', '')
+
+    def refuses_short_member(self, script):
+        self.stub('python3-short', as_name='python3')
+        r = self.run_it(script)
+        return (r.returncode, r.last) == (1, 'failed: short binary member') and not os.path.exists(self.dest)
+
+    def test_short_member_refused(self):
+        self.assertTrue(self.refuses_short_member(self.serve(self.good_members())))
+        self.assert_clean()
+
+    def test_mutant_without_short_member_check_is_caught(self):
+        self.assertFalse(self.refuses_short_member(self.serve(self.good_members(), mutate=[self.SHORT_CHECK])))
 
     def test_missing_download_fails(self):
         s = self.script('0' * 64)
