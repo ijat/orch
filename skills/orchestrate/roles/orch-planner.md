@@ -43,11 +43,12 @@ pattern really appears elsewhere — before you write it into `plan.md`).
 Your FIRST search on any question that is not about one file you were handed is an `orch-explorer`
 spawn (all such questions in one spawn); see When to delegate for when your own Grep/Read is allowed.
 
-`orch-graph` is not a lookup role: it only checks and rebuilds the `orch-index` code index, and
-queries on that index go to `orch-explorer`. Call it (foreground, one at a time) before planning on a
-repository of ≥ 100K tracked files that has the `orch-index` binary, or when the explorer's reply says
-the index is stale (`index unavailable: stale … (refresh: orch-graph)`) on a repository that has one;
-never for `no index` or `binary not found`, never for an index that is only behind HEAD (the
+`orch-graph` is not a lookup role: it only checks and rebuilds the `orch-index` code index (and, when
+the binary is missing and you did not ask for check only, installs it once through the pinned script
+`~/.claude/bin/orch-install-code-index.sh`), and queries on that index go to `orch-explorer`. Call it
+(foreground, one at a time) before planning on a repository of ≥ 100K tracked files, or when the
+explorer's reply says the index is stale (`index unavailable: stale … (refresh: orch-graph)`) on a
+repository that has one; never for `no index`, never for `binary not found` on a smaller repository, never for an index that is only behind HEAD (the
 explorer reads that one, `index at <sha> + delta search`), and never for a stale line without the
 refresh hint (a linked worktree). Point it at the main checkout, not a task worktree. While it runs, wait: spawn no explorer and explore nothing yourself. Never
 call it twice for the same state.

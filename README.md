@@ -299,6 +299,7 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `bin/orch-index.sh`, `bin/orch-index-hook.sh` | Keep `~/.claude/orchestrations/ACTIVE.md`, the list of unfinished tasks |
 | `bin/orch-stats.sh`, `bin/role-cost.py` | Analytics over the journals and transcripts |
 | `bin/orch-program-check.py` | Checks a program roadmap against its rules |
+| `bin/orch-install-code-index.sh` | Installs the pinned `orch-index` release binary (macOS and Linux) for `orch-graph`, see Code index below |
 | `bin/orch`, `bin/orchlib/` | The `orch` command: one call per state change (`spawn`, `return`, `role`, `journal`, `ask`), role briefs, plan checks (including guides), the guarded `merge`, and `migrate` for old task directories. Python 3.9+ standard library only; `orchlib/tests/` holds its tests |
 | `bin/orchlib/dashboard.py`, `bin/orchlib/dashboard.html` | `orch dashboard`: a read-only page of active tasks, questions waiting for you and recent events, served on 127.0.0.1 only |
 | `skills/orchestrate/templates/policy.md`, `…/questions.md` | Per-repo stop policy (`~/.claude/orchestrations/<repo>/policy.md`) and the queue of parked questions in a task |
@@ -330,11 +331,14 @@ Two roles use it, and only two:
 - **`orch-graph` keeps it fresh.** It checks the index (`fresh`, `fresh-enough` when the index commit
   is an ancestor of `HEAD`, `stale`, `missing`, or `binary not found`) and, when it is stale or
   missing, rebuilds it (incremental when an index exists), then reports the state before and after.
+  When the binary is missing and the caller did not ask for check only, it runs the pinned installer
+  script once (see below).
   It leaves a `fresh-enough` index alone unless asked to bring it to `HEAD`, and it rebuilds only in
   the main checkout: from a linked worktree it reports the state and the main checkout's path. It answers no code
   questions. Only you, the orchestrator and the planner call it: the orchestrator or planner when the
   explorer reports a stale index (`… (refresh: orch-graph)`) on a repository that has one, and the
-  planner also before planning on a repository of 100K or more tracked files; the other roles do not.
+  planner also before planning on a repository of 100K or more tracked files (the call that may install
+  a missing binary); the other roles do not.
 
 While `orch-graph` rebuilds, it writes a marker file, `<git-common-dir>/orch-index/indexing`, and
 removes it afterwards, only if the file still holds its own line; if a live marker from another run
@@ -344,10 +348,28 @@ marker before it queries. A marker whose process is gone, or that is over 30 min
 This is a rule the roles follow, not a lock: another person's session, or a role that never reads the
 rule, is not blocked.
 
-You do not need the index. Nothing in orch builds or installs it. To use it:
+You do not need the index. The binary is `$ORCH_INDEX_BIN` if set, else `orch-index` on `PATH`, else
+`$HOME/.claude/bin/orch-index`.
 
-1. Build `orch-index` from its source with `cargo build --release`.
-2. Put the binary on `PATH`, or set `ORCH_INDEX_BIN` to its full path.
+**Automatic install.** The planner's pre-plan call to `orch-graph` (on a repository of 100K or more
+tracked files), or your own call to it, installs a missing binary once, by running
+`~/.claude/bin/orch-install-code-index.sh`. It supports macOS and Linux (x86_64 and arm64). The script
+downloads the pinned release over HTTPS from `github.com/ijat/orch-index`, checks the archive's SHA-256
+against hashes committed in this repository (it does not trust the release's own checksum file), accepts
+only the one expected binary from the archive, checks that `--version` matches the pin, and writes it to
+`~/.claude/bin/orch-index` (no `sudo`, an existing binary is never overwritten). If `gh` is present it
+also reports whether the archive's build attestation verifies. Small repositories are not touched, and
+the explorer never installs anything. To avoid the install: call `orch-graph` as check only (it then only
+reports `binary not found`), set `ORCH_INDEX_BIN` to your own build, or delete
+`~/.claude/bin/orch-install-code-index.sh` after you have the binary. Windows and other platforms
+install by hand.
+
+Manual steps:
+
+1. Build `orch-index` from its source with `cargo build --release` (or download a release from
+   `github.com/ijat/orch-index`).
+2. Put the binary on `PATH`, or set `ORCH_INDEX_BIN` to its full path (or place it at
+   `~/.claude/bin/orch-index`).
 3. Ask for `orch-graph` once per repository (or run `orch-index index` yourself inside it); later
    calls only re-read changed files.
 
