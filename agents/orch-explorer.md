@@ -35,7 +35,9 @@ prints `index at <sha>, HEAD is <sha>` whenever they differ):
 Scoped search = `git grep` / `rg`, always with a path and `</dev/null`. Never run `orch-index index` or
 `orch-graph`: a stale or missing index is reported, not repaired.
 
-Queries (Current or Behind; same binary as `stats`):
+Queries (Current or Behind). Run each as `"${ORCH_INDEX_BIN:-orch-index}" <query>`, the same binary as
+`stats`; a bare `orch-index` is not on `PATH` when only `$ORCH_INDEX_BIN` is set. Below, `orch-index`
+stands for that:
 
     orch-index def NAME [--kind class,struct,function,method,macro,...]  # NAME may be Class::Method
     orch-index callers NAME | refs NAME [--kind call|type|use] | includers FILE | importers MODULE
