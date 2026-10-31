@@ -18,7 +18,10 @@ the question (`D` = the repository the caller names, else `.`):
     D=.; M="$(git -C $D rev-parse --path-format=absolute --git-common-dir)/orch-index/indexing"
     P=$(sed -n 's/^pid=\([0-9]*\).*/\1/p' "$M" 2>/dev/null)
     if [ ! -f "$M" ]; then echo marker: none; elif [ -n "$P" ] && kill -0 "$P" 2>/dev/null && find "$M" -mmin -30 | grep -q .; then echo marker: live; else echo marker: stale; fi
-    "${ORCH_INDEX_BIN:-orch-index}" stats --repo $D </dev/null 2>&1 | head -4; git -C $D rev-parse HEAD
+    OI="${ORCH_INDEX_BIN:-$(command -v orch-index || echo "$HOME/.claude/bin/orch-index")}"
+    "$OI" stats --repo $D </dev/null 2>&1 | head -4; git -C $D rev-parse HEAD
+
+The binary is `$ORCH_INDEX_BIN` if set, else `orch-index` on `PATH`, else `$HOME/.claude/bin/orch-index`.
 
 `marker: live` = a rebuild is running: re-run the marker lines every `sleep 15`, at most 5 minutes; still
 live → reply `index busy`, use scoped search. `marker: stale` (dead pid or over 30 min): ignore it,
@@ -32,12 +35,13 @@ prints `index at <sha>, HEAD is <sha>` whenever they differ):
 | Stale | `commit` not an ancestor of HEAD (reason `index from another branch`), or older extractor | first reply line `index unavailable: stale (<reason>) (refresh: orch-graph)`; omit the hint in a linked worktree (`git -C $D rev-parse --path-format=absolute --git-dir` ≠ `… --git-common-dir`; the index is shared and a rebuild there would stale the main checkout); then scoped search |
 | Unavailable | binary not found, command fails, or `commit (none)` | first reply line `index unavailable: <reason>` (no hint; one clause if the caller did not ask about the index); then scoped search |
 
-Scoped search = `git grep` / `rg`, always with a path and `</dev/null`. Never run `orch-index index` or
-`orch-graph`: a stale or missing index is reported, not repaired.
+Scoped search = `git grep` / `rg`, always with a path and `</dev/null`. Never run `orch-index index`,
+`orch-graph` or the installer script: a stale or missing index, or a missing binary, is reported, not repaired
+(only `orch-graph` installs, under the conditions in its own role).
 
-Queries (Current or Behind). Run each as `"${ORCH_INDEX_BIN:-orch-index}" <query>`, the same binary as
-`stats`; a bare `orch-index` is not on `PATH` when only `$ORCH_INDEX_BIN` is set. Below, `orch-index`
-stands for that:
+Queries (Current or Behind). Run each as `"$OI" <query>`, the same binary as `stats` (Bash calls do not
+share variables: set `OI` as above in the same command; a bare `orch-index` may not be on `PATH`). Below,
+`orch-index` stands for that:
 
     orch-index def NAME [--kind class,struct,function,method,macro,...]  # NAME may be Class::Method
     orch-index callers NAME | refs NAME [--kind call|type|use] | includers FILE | importers MODULE

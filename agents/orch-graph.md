@@ -19,14 +19,16 @@ the caller says another `orch-graph` run is in progress, stop and say so.
 
 Run, before anything else:
 
-    "${ORCH_INDEX_BIN:-orch-index}" stats [--repo DIR]   </dev/null
+    OI="${ORCH_INDEX_BIN:-$(command -v orch-index || echo "$HOME/.claude/bin/orch-index")}"
+    "$OI" stats [--repo DIR]   </dev/null
 
-(`--repo DIR` when the caller names a repository, otherwise the current directory; the binary comes
-from `$ORCH_INDEX_BIN` or `PATH`.) It prints `commit <sha>` and row counts. Compare `commit` with
+(`--repo DIR` when the caller names a repository, otherwise the current directory. The binary is
+`$ORCH_INDEX_BIN` if set, else `orch-index` on `PATH`, else `$HOME/.claude/bin/orch-index`; Bash calls do
+not share variables, so set `OI` this way in every command that uses it.) It prints `commit <sha>` and row counts. Compare `commit` with
 `git -C DIR rev-parse HEAD`. `stats` does not show an index built by an older `orch-index`, so when
 `commit` equals HEAD also run one cheap probe query:
 
-    "${ORCH_INDEX_BIN:-orch-index}" def __orch_probe__ --limit 1 [--repo DIR]   </dev/null
+    "$OI" def __orch_probe__ --limit 1 [--repo DIR]   </dev/null
 
 and read its count line: the text `index built by an older orch-index` means the index is stale.
 When `commit` differs from HEAD, `orch-index` prints only the note
@@ -41,7 +43,7 @@ Name the state:
 | `fresh-enough` | `commit` is a sha that differs from HEAD but `git -C DIR merge-base --is-ancestor <sha> HEAD` succeeds | no rebuild (the explorer searches the changed files itself); rebuild only if the caller asked to bring the index to HEAD |
 | `stale` | `commit` is a sha that is not an ancestor of HEAD, or `commit` equals HEAD and the probe shows `index built by an older orch-index` | rebuild (incremental, only changed files are re-read; an index from an older `orch-index` re-reads everything) |
 | `missing` | `commit (none)` | rebuild (full build) |
-| `binary not found` | the command is not found or cannot run | report it and stop (see below) |
+| `binary not found` | the command is not found or cannot run | install it once if every install condition holds (see below), else report it |
 
 If the caller asked to **check only**, report the state and stop, even when it is `stale` or `missing`.
 
@@ -52,10 +54,12 @@ commit and makes it stale there. Check DIR:
     [ "$(git -C DIR rev-parse --path-format=absolute --git-dir)" = \
       "$(git -C DIR rev-parse --path-format=absolute --git-common-dir)" ] && echo main-checkout
 
-If it prints nothing, DIR is a linked worktree: report the state only (as **check only**), whatever
-the state and whatever the caller asked, and add the main checkout's path
+If it prints nothing, DIR is a linked worktree: never rebuild there; report the index state (as for
+**check only**), whatever the state and whatever the caller asked, and add the main checkout's path
 (`git -C DIR worktree list --porcelain | sed -n '1s/^worktree //p'`) with one line: "to rebuild,
-call orch-graph with `--repo <that path>`". You rebuild only when DIR is the main checkout.
+call orch-graph with `--repo <that path>`". You rebuild only when DIR is the main checkout. A linked
+worktree does not block the install below: the binary does not depend on the repository, so only the
+caller's own check-only request does.
 
 ## Rebuilding (main checkout only: `stale` or `missing`, or asked to bring `fresh-enough` to HEAD)
 
@@ -72,7 +76,8 @@ exit status last, with `DIR` and `LOG` (a scratch file) filled in:
     if [ -n "$P" ] && kill -0 "$P" 2>/dev/null && find "$M/indexing" -mmin -30 | grep -q .; then
       echo "exit=busy" >LOG; exit 0; fi
     L="pid=$$ started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "marker: $L" >LOG; echo "$L" > "$M/indexing"
-    "${ORCH_INDEX_BIN:-orch-index}" index --repo DIR >>LOG 2>&1 </dev/null; rc=$?
+    OI="${ORCH_INDEX_BIN:-$(command -v orch-index || echo "$HOME/.claude/bin/orch-index")}"
+    "$OI" index --repo DIR >>LOG 2>&1 </dev/null; rc=$?
     [ "$(cat "$M/indexing" 2>/dev/null)" = "$L" ] && rm -f "$M/indexing"
     echo "exit=$rc" >>LOG
 
@@ -90,14 +95,51 @@ line, or with `sleep 15` polls. When it ends:
    or the state is not `fresh`, say so with the last lines of the log; do not retry more than once.
 3. Stop every `Monitor` and background job you started (`TaskStop`) before you report.
 
-While you run, you explore nothing else and spawn nothing. You never run `cargo` and never build
-`orch-index` itself: with `binary not found`, report `binary not found` plus the hint "build it with
-`cargo build --release` in the orch-index source tree, then put the binary on `PATH` or set
-`ORCH_INDEX_BIN`", and stop.
+While you run, you explore nothing else and spawn nothing.
+
+## Installing the binary (`binary not found`)
+
+`orch-graph` installs a missing binary only when the caller did not ask for check only,
+`ORCH_INDEX_AUTOINSTALL` is not `0`, `ORCH_INDEX_BIN` is unset or empty, no `orch-index` is on `PATH`,
+and `~/.claude/bin/orch-index` does not exist; it then runs `~/.claude/bin/orch-install-code-index.sh`
+once (Bash timeout 300 s) and, if `stats` still fails after that, reports the script's last line and
+stops.
+
+Check the conditions in this order, and stop at the first that fails:
+
+1. The caller asked to **check only**: report `binary not found` and stop.
+2. Read them in one command:
+
+       echo "autoinstall=${ORCH_INDEX_AUTOINSTALL-} bin=${ORCH_INDEX_BIN-} path=$(command -v orch-index)"
+       if [ -e "$HOME/.claude/bin/orch-index" ] || [ -L "$HOME/.claude/bin/orch-index" ]; then echo home=present; else echo home=absent; fi
+
+3. `autoinstall=0`: report `install disabled (ORCH_INDEX_AUTOINSTALL=0)` and "manual steps: README,
+   Code index", and stop.
+4. `bin=` is not empty, `path=` is not empty, or `home=present`: a binary is already configured and
+   cannot run, and an install would not change which binary the lookup picks. Report `binary not found`
+   (`cannot run` when the file exists), the resolved `OI` path, the first error line of `stats` and
+   "manual steps: README, Code index", and stop.
+
+Otherwise run the installer once, with `LOG` a scratch file and the Bash tool's `timeout` set to
+`300000`:
+
+    ~/.claude/bin/orch-install-code-index.sh >LOG 2>&1 </dev/null; echo "exit=$?"; tail -n 3 LOG
+
+It is the only download or archive command you may run: you never compose a `curl`, `tar`, `unzip` or
+other fetch yourself, never run `cargo`, never build `orch-index`, never use `sudo`. Its last line is
+`installed <path> <version>`, `already installed <path>`, `unsupported platform <os>/<arch>` (exit 3),
+`disabled by ORCH_INDEX_AUTOINSTALL` (exit 3) or `failed: <reason>`. After `installed` or
+`already installed`, re-run the First command's `stats` (with the same `OI` lookup) once: if it works,
+carry on with the state table; if it still fails, report `binary not found`, the resolved `OI` path,
+the script's last line and "manual steps: README, Code index", and stop. On any other last line, if the
+script is missing, or if the command timed out (report `install timed out`), report `binary not found`,
+the script's last line (or `installer script not found`) and "manual steps: README, Code index", and
+stop. One attempt per call: no retry, no second download.
 
 ## What you report
 
-At most five lines, and your FINAL message is that report (a background-wait or `Monitor` notice is not a final
+At most five lines (after an install, include `installed <version> at <path>` among them; when you
+did not install, the reason from the section above), and your FINAL message is that report (a background-wait or `Monitor` notice is not a final
 message: if one arrives after you reported, answer it by repeating the report). State before (`fresh`, `fresh-enough`, `stale`, `missing`), state after, what you ran (`check only` / `incremental` /
 `full build`), time taken, and the `files` / `symbols` / `refs` counts from the final `stats`.
 Nothing else.
@@ -113,9 +155,11 @@ itself and says when it is stale).
 - **You never modify tracked files.** You have no `Write`, `Edit` or `NotebookEdit`. The only
   things you create are the index (via `orch-index index`), the marker, and a scratch log file.
 - **You never spawn another agent.** You have no `Agent` tool. You are the leaf.
-- `Bash` is for `orch-index stats` / `orch-index def` (the probe) / `orch-index index`, `git` reads, `test`, `mkdir`/`rm` of the
-  marker and your scratch log, `sed`/`grep`/`cat`/`find`/`kill -0` to read the marker, and
-  `date`/`sleep`. Nothing else, and never a command that changes
+- `Bash` is for `orch-index stats` / `orch-index def` (the probe) / `orch-index index`, the one installer
+  script `~/.claude/bin/orch-install-code-index.sh` (only when every install condition above holds, never
+  with check only), `git` reads, `test`, `mkdir`/`rm` of the marker and your scratch log,
+  `sed`/`grep`/`cat`/`find`/`kill -0` to read the marker, `command -v`, `echo`, `tail` on your scratch
+  log, and `date`/`sleep`. Nothing else, and never a command that changes
   tracked state.
 - Do not guess a number. If `stats` fails in a way this file does not cover, report the command, its
   exit status and its first error line, and stop.

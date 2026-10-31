@@ -53,7 +53,7 @@ below it).
 | Plan reviewer | `orch-plan-reviewer` | `sonnet/high` | — roadmaps and `opus/max` plans only (`PROGRAM.md` §1) |
 | Director | `orch-director` | `opus/high` | → `opus/max` after the user reverses an accepted verdict — plan steps marked `visual:` only (step 7) |
 | Explorer | `orch-explorer` | `haiku/low` | read-only lookups and claim checks |
-| Graph | `orch-graph` | `haiku/low` | keeps the code index (orch-index) fresh (check; rebuild when stale or missing); you, the planner or the user call it, never the explorer. The explorer is the only role that queries the index |
+| Graph | `orch-graph` | `haiku/low` | keeps the code index (orch-index) fresh (check; rebuild when stale or missing; install a missing binary once, only under its install conditions); you, the planner or the user call it, never the explorer. The explorer is the only role that queries the index |
 | Executor | `orch-executor` | `haiku/low` | runs builds/tests/lint, returns a digest |
 
 Always pass both `model` and `effort` for planners and implementers, even at the default tier, so the
@@ -206,9 +206,14 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
 or a stale line without the refresh hint (the explorer omits it in a linked worktree, where a rebuild
 would make the main checkout's index stale), never automatically, never two at once, and never while another index run is in progress (a live
 `<git-common-dir>/orch-index/indexing` marker, or a running `orch-graph` spawn). The pre-planning
-call on a repository of ≥ 100K tracked files that has the `orch-index` binary is the planner's, not
-yours. Point it at the repository's main checkout, never a task worktree (from a linked worktree it
-only reports). Spawn it in the **foreground** (it writes
+call on a repository of ≥ 100K tracked files is the planner's, not yours; it is also the call that may
+install a missing `orch-index` binary, and you add no trigger of your own for that.
+`orch-graph` installs a missing binary only when the caller did not ask for check only,
+`ORCH_INDEX_AUTOINSTALL` is not `0`, `ORCH_INDEX_BIN` is unset or empty, no `orch-index` is on `PATH`,
+and `~/.claude/bin/orch-index` does not exist; it then runs `~/.claude/bin/orch-install-code-index.sh`
+once (Bash timeout 300 s) and, if `stats` still fails after that, reports the script's last line and
+stops. Point it at the repository's main checkout, never a task worktree (from a linked worktree it
+does not rebuild). Spawn it in the **foreground** (it writes
 `<git-common-dir>/orch-index/indexing` for the rebuild, removes it after, and the explorer's first
 command waits on that marker). While an `orch-graph` spawn runs, spawn nothing else (no explorer, no
 implementer, no reviewer) and do no exploring of your own. The same binds `orch-planner` when it calls
