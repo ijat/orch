@@ -326,7 +326,7 @@ Two roles use it, and only two:
   `index unavailable: stale (<reason>) (refresh: orch-graph)`, without the refresh hint in a linked
   worktree (the index is shared with the main checkout); when the binary is missing
   or the repository has no index, it opens with a bare `index unavailable: <reason>`. In both cases the
-  answer comes from scoped search, so nothing is lost without an index. The explorer never builds or refreshes the index.
+  answer comes from scoped search, so answers are the same without an index; the first command costs one extra call per request (on small repositories the index is roughly a tie with grep). The explorer never builds or refreshes the index.
 - **`orch-graph` keeps it fresh.** It checks the index (`fresh`, `fresh-enough` when the index commit
   is an ancestor of `HEAD`, `stale`, `missing`, or `binary not found`) and, when it is stale or
   missing, rebuilds it (incremental when an index exists), then reports the state before and after.
