@@ -53,6 +53,7 @@ below it).
 | Plan reviewer | `orch-plan-reviewer` | `sonnet/high` | — roadmaps and `opus/max` plans only (`PROGRAM.md` §1) |
 | Director | `orch-director` | `opus/high` | → `opus/max` after the user reverses an accepted verdict — plan steps marked `visual:` only (step 7) |
 | Explorer | `orch-explorer` | `haiku/low` | read-only lookups and claim checks |
+| Graph | `orch-graph` | `haiku/low` | keeps the code index (orch-index) fresh (check; rebuild when stale or missing); you, the planner or the user call it, never the explorer. The explorer is the only role that queries the index |
 | Executor | `orch-executor` | `haiku/low` | runs builds/tests/lint, returns a digest |
 
 Always pass both `model` and `effort` for planners and implementers, even at the default tier, so the
@@ -71,11 +72,15 @@ Records before 2026-10-08 name tiers by agent file; map them when resuming (`orc
 `…-max` / `…-opus-max` → `opus/max`, `…-fable[-max]` → `fable/max`; `orch-implementer` / `…-sonnet` →
 `sonnet/high`, `…-expert` / `…-opus` → `opus/medium`, `…-fable` → `fable/high`).
 
-Every role (and you) may nest-call `orch-explorer` and `orch-executor`, and nothing else (instruction-enforced,
-not tool-gated: a real boundary; each role's file says so). A role needing other help stops and reports to you.
+Every role (and you) may nest-call `orch-explorer` and `orch-executor`, and nothing else; you and `orch-planner`
+may also call `orch-graph` (instruction-enforced, not tool-gated: a real boundary; each role's file says so).
+A role needing other help stops and reports to you.
 
 **Verify, don't assume — every role, you included.** State a claim only once you or `orch-explorer`
 read the thing it's about. What genuinely can't be checked gets labelled an assumption.
+
+**Your own lookups go to `orch-explorer`** ("where is X", "does Y exist", "who uses Z"): your first search
+on any question that is not about one file you were handed is an explorer spawn (batch several per spawn). You read plan, status, brief and task files yourself.
 
 ### Tier selection
 
@@ -194,6 +199,21 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
    nothing lands within one tick, `TaskStop` it and checkpoint from its files yourself, then work the
    rung ladder with a sharper brief (a tier raise: `post-failure`, trigger `blocker`).
    Journal a `checkin` line either way. Check-ins read files, never the transcript.
+
+**Index rebuild pause.** Call `orch-graph` only when the explorer's reply says the index is stale
+(`index unavailable: stale … (refresh: orch-graph)`) on a repository that has an index; never for
+`no index`, `binary not found`, an index that is only behind HEAD (`index at <sha> + delta search`)
+or a stale line without the refresh hint (the explorer omits it in a linked worktree, where a rebuild
+would make the main checkout's index stale), never automatically, never two at once, and never while another index run is in progress (a live
+`<git-common-dir>/orch-index/indexing` marker, or a running `orch-graph` spawn). The pre-planning
+call on a repository of ≥ 100K tracked files that has the `orch-index` binary is the planner's, not
+yours. Point it at the repository's main checkout, never a task worktree (from a linked worktree it
+only reports). Spawn it in the **foreground** (it writes
+`<git-common-dir>/orch-index/indexing` for the rebuild, removes it after, and the explorer's first
+command waits on that marker). While an `orch-graph` spawn runs, spawn nothing else (no explorer, no
+implementer, no reviewer) and do no exploring of your own. The same binds `orch-planner` when it calls
+`orch-graph`. This is instruction-level: another person's session, or a role that never reads this
+rule, is not blocked.
 
 ### Pause on STOP
 
@@ -638,7 +658,7 @@ worktree and task directory plus the branch name.
 - Spawn without the pre-flight (`orch spawn`); treat `STALE`/`UNKNOWN` as safe; let a subagent run
   past `STOP`; poll usage on a timer while a wait is armed; arm `usage-watch.sh`; leave a `Monitor` armed past
   its subagent; claim a crash will auto-resume.
-- Let a role spawn anything but `orch-explorer`/`orch-executor`, or guess inside a sensitive area.
+- Let a role spawn anything but `orch-explorer`/`orch-executor` (the planner and you also `orch-graph`), or guess inside a sensitive area.
 - Assert what could have been verified; go to the user before trying rungs 1 and 2.
 - Let a subagent write to `LESSONS.md`; log non-critical findings as lessons; leave a
   behaviour-changing lesson unpromoted.

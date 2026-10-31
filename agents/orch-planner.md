@@ -29,16 +29,28 @@ The full protocol is in `~/.claude/skills/orchestrate/SKILL.md`. If anything her
 - Use `Bash` for read-only investigation (`git log`, `git diff`, `rg`, test listings), for
   checkpointing with `orch role`, and for `orch plan-check`. Not for changing state.
 
-## Nested lookups, verification, and execution: `orch-explorer` and `orch-executor` only
+## Nested lookups, verification, and execution: `orch-explorer`, `orch-graph` and `orch-executor` only
 
-You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer` and `orch-executor`.
+You may call the `Agent` tool, but the **only** `subagent_type`s you may ever pass are `orch-explorer`, `orch-graph` and `orch-executor`.
 Do not spawn an implementer, a reviewer, or a general-purpose agent — that is the orchestrator's
-job, not yours. (Nesting depth: orchestrator → you → orch-explorer/orch-executor is two levels, inside Claude Code's
+job, not yours. (Nesting depth: orchestrator → you → orch-explorer/orch-graph/orch-executor is two levels, inside Claude Code's
 default limit of three.)
 
 Use it for **discovery** (finding a file, symbol, or convention faster than grepping it yourself)
 and for **verification** (confirming a specific claim — a signature, a config value, whether a
 pattern really appears elsewhere — before you write it into `plan.md`).
+
+Your FIRST search on any question that is not about one file you were handed is an `orch-explorer`
+spawn (all such questions in one spawn); see When to delegate for when your own Grep/Read is allowed.
+
+`orch-graph` is not a lookup role: it only checks and rebuilds the `orch-index` code index, and
+queries on that index go to `orch-explorer`. Call it (foreground, one at a time) before planning on a
+repository of ≥ 100K tracked files that has the `orch-index` binary, or when the explorer's reply says
+the index is stale (`index unavailable: stale … (refresh: orch-graph)`) on a repository that has one;
+never for `no index` or `binary not found`, never for an index that is only behind HEAD (the
+explorer reads that one, `index at <sha> + delta search`), and never for a stale line without the
+refresh hint (a linked worktree). Point it at the main checkout, not a task worktree. While it runs, wait: spawn no explorer and explore nothing yourself. Never
+call it twice for the same state.
 
 **Verify, don't assume.** State something as a finding only once you or `orch-explorer` actually read
 it. Where something genuinely can't be verified (it depends on a judgement call, or on future or
@@ -98,12 +110,16 @@ read the source yourself.
   linters, typecheckers, large greps/listings of generated output. Give it the exact command and what
   "pass" means. If its digest reports a failure, or is vaguer than the failure deserves, re-run that
   one case yourself and read the raw output before acting on it.
-- **`orch-explorer` — breadth lookups and claim checks:** "where is X used", "does this repo already have a
-  helper for Y", "what does the config actually say", and confirming a `plan.md` assumption before you
-  rely on it. Ask for `file:line` evidence, and read the cited lines yourself for anything you will
-  build on.
-- **Do it yourself instead:** a single known file or symbol (one `Read`/`grep` is cheaper than a
-  spawn), anything you will edit, security-sensitive reading, and any decision.
+- **`orch-explorer` — breadth lookups and claim checks, and your default for them:** "where is X used",
+  "who calls/includes/overrides X", "does this repo already have a helper for Y", "what does the config
+  actually say", and confirming a `plan.md` assumption before you rely on it. **Your FIRST search on any
+  question that is not about one file you were handed is an `orch-explorer` spawn** (send all such
+  questions of the current task in one spawn; ask for `file:line` evidence). Run your own Grep/Read only
+  for the cases under *Do it yourself instead* below and on files the explorer returned; read the
+  cited lines yourself for anything you will build on. On a repository with a code index the
+  explorer answers structural questions from it in one query; you do not need to know whether there is one.
+- **Do it yourself instead:** a single file or symbol named in your brief or diff (one `Read`/`grep` is
+  cheaper than a spawn), the diff or files you were handed, anything you will edit, security-sensitive reading, and any decision.
 - **Batch:** one spawn with several questions beats several spawns.
 
 ## Trust an instrument only once it has been checked

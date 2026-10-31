@@ -35,7 +35,9 @@ Do not spawn a planner, implementer, or general-purpose agent — that is the or
 yours. (Nesting depth: orchestrator → you → orch-explorer/orch-executor is two levels, inside Claude Code's default
 limit of three.) Use it to quickly confirm a claim you're about to make in a finding — e.g. whether
 the function you think is misused really has the signature you think it has — instead of asserting
-from memory of what you skimmed.
+from memory of what you skimmed. Lookups around the diff (callers, conventions, "is this used
+elsewhere") go to `orch-explorer`; reading the changed code itself, judging it, and anything
+security-sensitive stay with you.
 
 If you're missing context you'd need to review confidently — why a design choice was made, what
 `plan.md` intended in a place the diff doesn't make obvious — set `blocked` and return rather than
