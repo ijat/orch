@@ -366,12 +366,14 @@ then exits 3 without network access and `orch-graph` reports `install disabled`)
 binary (`ORCH_INDEX_BIN` set to a working path, `orch-index` on `PATH`, or a file at
 `~/.claude/bin/orch-index`, which is never overwritten). `ORCH_INDEX_AUTOINSTALL=0` only stops
 installs; an existing binary is still used. Your own check-only calls never install, but the planner's
-pre-plan call is not check only. Windows and other platforms install by hand.
+pre-plan call is not check only. The installer does not handle Windows: each orch-index release carries
+a prebuilt Windows zip, which you download and unzip yourself (the orch-index README has a PowerShell
+recipe). Other platforms install by hand too.
 
 Manual steps:
 
-1. Build `orch-index` from its source with `cargo build --release` (or download a release from
-   `github.com/ijat/orch-index`).
+1. Download the archive for your platform from the release page at `github.com/ijat/orch-index`
+   (Windows: the zip) and unpack it.
 2. Put the binary on `PATH`, or set `ORCH_INDEX_BIN` to its full path (or place it at
    `~/.claude/bin/orch-index`).
 3. Ask for `orch-graph` once per repository (or run `orch-index index` yourself inside it); later

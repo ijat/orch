@@ -3,9 +3,10 @@
 No real network: every run gets a throwaway HOME and TMPDIR and a PATH whose first entry holds stubs
 (`uname`, `gh`, `curl`; `id` for the root case). The `curl` stub logs its arguments and either runs the
 real curl (file:// URLs only, via ORCH_INSTALL_TEST_BASE) or refuses. Runs use a copy of the script whose
-pin block is rewritten to the test archive's hash; `test_pins_are_real` checks the shipped pins and is
-expected to fail until the v0.2.0 release hashes are filled in. The `test_mutant_*` tests remove one guard
-from a copy of the script and check that the guard's own test then fails."""
+pin block is rewritten to the test archive's hash; `test_pins_are_real` checks the shipped pins, and
+`test_real_v020_archives` (needs ORCH_INSTALL_REAL_ARCHIVES_DIR) runs the shipped script, pins untouched,
+on the real release archives. The `test_mutant_*` tests remove one guard from a copy of the script and
+check that the guard's own test then fails."""
 import hashlib
 import io
 import os
@@ -472,10 +473,47 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual((r.returncode, r.last), (1, 'failed: test base must be a file:/// URL'))
         self.assertEqual(self.curl_calls(), '')
 
+    # -- the shipped script on the real release archives ----------------------------------------------
+
+    @unittest.skipUnless(os.environ.get('ORCH_INSTALL_REAL_ARCHIVES_DIR'),
+                         'set ORCH_INSTALL_REAL_ARCHIVES_DIR to a dir holding the four real archives')
+    def test_real_v020_archives(self):
+        """The shipped script (real pins, no rewrite) on each real archive, via the file:/// test hook and a
+        fake `uname` that selects the target. Every target must pass the pin, the archive whitelist and
+        reach the --version check. Only a target this host can execute is also required to install;
+        any other must install or fail exactly at `binary does not run` with nothing left behind."""
+        src = os.path.realpath(os.environ['ORCH_INSTALL_REAL_ARCHIVES_DIR'])
+        host = (os.uname().sysname, os.uname().machine.replace('arm64', 'aarch64'))
+        covered = {}
+        for target, (os_name, arch) in PLATFORMS.items():
+            with self.subTest(target=target):
+                name = 'orch-index-%s-%s.tar.gz' % (VERSION, target)
+                self.assertTrue(os.path.isfile(os.path.join(src, name)), name)
+                shutil.copyfile(os.path.join(src, name), os.path.join(self.tmp, 'release', VERSION, name))
+                dest = os.path.join(self.tmp, 'dest-' + target)
+                r = self.run_it(SCRIPT, '--dest', dest, FAKE_OS=os_name, FAKE_ARCH=arch)
+                lines = r.stdout.splitlines()
+                for step in ('target ' + target, 'checksum ok', 'archive ok'):
+                    self.assertIn(step, lines, r.stdout)
+                self.assertEqual(os.listdir(os.path.join(self.tmp, 'scratch')), [], 'temp dir left behind')
+                runs_here = (os_name, arch.replace('arm64', 'aarch64')) == host
+                if r.returncode == 0:
+                    self.assertEqual(r.last, 'installed %s %s' % (os.path.join(dest, 'orch-index'), VERSION))
+                    self.assertIn('version ok 0.2.0', lines)
+                    self.assertEqual(os.listdir(dest), ['orch-index'])
+                    covered[target] = 'installed, version ok (executed here)'
+                else:
+                    self.assertFalse(runs_here, 'host-native target must install: %s' % r.stdout)
+                    self.assertEqual((r.returncode, r.last), (1, 'failed: binary does not run'))
+                    self.assertEqual(os.listdir(dest), [])
+                    covered[target] = 'pin + archive whitelist ok; stopped at --version (cannot execute here)'
+        for target, what in sorted(covered.items()):
+            print('real archive %s: %s' % (target, what), file=sys.stderr)
+
 
 class PinsTest(unittest.TestCase):
     def test_pins_are_real(self):
-        """Expected to FAIL until orch-index v0.2.0 is published and its hashes are pinned."""
+        """The shipped pin block has a version and one 64-hex hash per target, no placeholder."""
         with open(SCRIPT) as f:
             text = f.read()
         m = re.search(r'^# --- pins \(begin\) ---\n(.*?)^# --- pins \(end\) ---$', text, re.M | re.S)
