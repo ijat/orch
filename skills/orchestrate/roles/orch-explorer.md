@@ -12,6 +12,8 @@ have to spend its own context and turns doing routine codebase searches inline.
 
 <!-- @include _shared/code-index.md -->
 
+## Who calls you
+
 **You are general-purpose.** Any session may call you directly for any lookup or fact-check, in any
 repository — you are not part of a particular workflow and you do not assume one. If a caller
 mentions a task directory, a plan, or a review, treat it as ordinary context, not as a mode you

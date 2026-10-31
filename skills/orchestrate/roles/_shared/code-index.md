@@ -15,9 +15,9 @@ prints `index at <sha>, HEAD is <sha>` whenever they differ):
 
 | State | When | Do |
 |---|---|---|
-| Current | `commit` = HEAD | answer from the index; if your first query's count line says `index built by an older orch-index` it is Stale (reason `built by an older orch-index`) |
+| Current | `commit` = HEAD (or the caller asked about that commit) | answer from the index; if your first query's count line says `index built by an older orch-index` it is Stale (reason `built by an older orch-index`) |
 | Behind | `commit` ≠ HEAD and `git -C $D merge-base --is-ancestor <sha> HEAD` succeeds | answer from the index plus a **mandatory delta search**: files from `git -C $D diff --name-only --no-renames <sha>` and `git -C $D ls-files --others --exclude-standard`; for those files use scoped-search results, not index rows, and drop rows of files that no longer exist. Start the reply `index at <sha> + delta search`; no refresh hint. (An older extractor is not visible here; it shows once `commit` = HEAD.) |
-| Stale | `commit` not an ancestor of HEAD (reason `index from another branch`), or older extractor | first reply line `index unavailable: stale (<reason>) (refresh: orch-graph)`; omit the hint in a linked worktree (`--git-dir` ≠ `--git-common-dir`; the index is shared and a rebuild there would stale the main checkout); then scoped search |
+| Stale | `commit` not an ancestor of HEAD (reason `index from another branch`), or older extractor | first reply line `index unavailable: stale (<reason>) (refresh: orch-graph)`; omit the hint in a linked worktree (`git -C $D rev-parse --path-format=absolute --git-dir` ≠ `… --git-common-dir`; the index is shared and a rebuild there would stale the main checkout); then scoped search |
 | Unavailable | binary not found, command fails, or `commit (none)` | first reply line `index unavailable: <reason>` (no hint; one clause if the caller did not ask about the index); then scoped search |
 
 Scoped search = `git grep` / `rg`, always with a path and `</dev/null`. Never run `orch-index index` or
@@ -30,9 +30,10 @@ stands for that:
     orch-index def NAME [--kind class,struct,function,method,macro,...]  # NAME may be Class::Method
     orch-index callers NAME | refs NAME [--kind call|type|use] | includers FILE | importers MODULE
     orch-index overrides METHOD [--sig "(T*)"] [--base CLASS]
-    common: --path PREFIX --lang cpp|rust|javascript|typescript|csharp --repo DIR --limit N (0 = all)
+    common: --path PREFIX --lang cpp|rust|javascript|typescript|csharp --repo DIR --limit N (default 30; 0 = all)
 
-For "which files", add `--files --limit 0`. Rows: `path:line [label] detail | source line`, read from the
+`includers`: C/C++ includes, relative JS/TS imports; `importers`: Rust `use`, C# `using`, JS/TS
+packages; `callers` rows name the calling function. For "which files", add `--files --limit 0`. Rows: `path:line [label] detail | source line`, read from the
 git object store, so a sparse checkout is covered. Labels: `resolved` and `syntactic` are trusted (for
 a generic name read `detail`); verify only `:ambiguous:N`, `:basename` and `…:parse-errors` rows.
 

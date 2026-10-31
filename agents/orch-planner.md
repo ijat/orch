@@ -41,8 +41,7 @@ and for **verification** (confirming a specific claim — a signature, a config 
 pattern really appears elsewhere — before you write it into `plan.md`).
 
 Your FIRST search on any question that is not about one file you were handed is an `orch-explorer`
-spawn (all such questions of the step in one spawn); see When to delegate. Run your own Grep/Read only
-on files named in the brief or returned by the explorer, on a file you will edit, and for decisions.
+spawn (all such questions in one spawn); see When to delegate for when your own Grep/Read is allowed.
 
 `orch-graph` is not a lookup role: it only checks and rebuilds the `orch-index` code index, and
 queries on that index go to `orch-explorer`. Call it (foreground, one at a time) before planning on a
@@ -115,12 +114,12 @@ read the source yourself.
   "who calls/includes/overrides X", "does this repo already have a helper for Y", "what does the config
   actually say", and confirming a `plan.md` assumption before you rely on it. **Your FIRST search on any
   question that is not about one file you were handed is an `orch-explorer` spawn** (send all such
-  questions of the step in one spawn; ask for `file:line` evidence). Run your own Grep/Read only on
-  files named in the brief or returned by the explorer, on a file you will edit, and for decisions;
-  read the cited lines yourself for anything you will build on. On a repository with a code index the
+  questions of the current task in one spawn; ask for `file:line` evidence). Run your own Grep/Read only
+  for the cases under *Do it yourself instead* below and on files the explorer returned; read the
+  cited lines yourself for anything you will build on. On a repository with a code index the
   explorer answers structural questions from it in one query; you do not need to know whether there is one.
-- **Do it yourself instead:** a single known file or symbol (one `Read`/`grep` is cheaper than a
-  spawn), the diff or files you were handed, anything you will edit, security-sensitive reading, and any decision.
+- **Do it yourself instead:** a single file or symbol named in your brief or diff (one `Read`/`grep` is
+  cheaper than a spawn), the diff or files you were handed, anything you will edit, security-sensitive reading, and any decision.
 - **Batch:** one spawn with several questions beats several spawns.
 
 ## Trust an instrument only once it has been checked

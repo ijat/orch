@@ -41,8 +41,7 @@ and for **verification** (confirming a specific claim — a signature, a config 
 pattern really appears elsewhere — before you write it into `plan.md`).
 
 Your FIRST search on any question that is not about one file you were handed is an `orch-explorer`
-spawn (all such questions of the step in one spawn); see When to delegate. Run your own Grep/Read only
-on files named in the brief or returned by the explorer, on a file you will edit, and for decisions.
+spawn (all such questions in one spawn); see When to delegate for when your own Grep/Read is allowed.
 
 `orch-graph` is not a lookup role: it only checks and rebuilds the `orch-index` code index, and
 queries on that index go to `orch-explorer`. Call it (foreground, one at a time) before planning on a
