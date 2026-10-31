@@ -69,9 +69,10 @@ default limit of three.)
 
 Use it for **discovery** (finding where an existing helper, pattern, or convention lives before you
 duplicate it) and for **verification** (confirming a function's real signature, a config value, or
-an assumption `plan.md` made, before you build on it). Your default for "where is / who uses / does
-the repo already have" is `orch-explorer`, at the threshold in When to delegate: about to run a
-second search on one question, you delegate it.
+an assumption `plan.md` made, before you build on it). Your FIRST search on any question that is not about
+one file you were handed is an `orch-explorer` spawn (all such questions of the step in one spawn); see
+When to delegate. Run your own Grep/Read only on files named in the brief or returned by the explorer,
+on a file you will edit, and for decisions.
 
 **Verify, don't assume.** If `plan.md` states something as fact, you may still find it's stale by
 the time you implement — check anything you're about to rely on rather than trusting the plan
@@ -96,13 +97,14 @@ read the source yourself.
   one case yourself and read the raw output before acting on it.
 - **`orch-explorer` — breadth lookups and claim checks, and your default for them:** "where is X used",
   "who calls/includes/overrides X", "does this repo already have a helper for Y", "what does the config
-  actually say", and confirming a `plan.md` assumption before you rely on it. **Threshold:** before you
-  run a second search, or read a second unfamiliar file, for the same question, send that question to
-  `orch-explorer` instead (several questions in one spawn; ask for `file:line` evidence), and read the
-  cited lines yourself for anything you will build on. On a repository with a code index the explorer
-  answers structural questions from it in one query; you do not need to know whether there is one.
+  actually say", and confirming a `plan.md` assumption before you rely on it. **Your FIRST search on any
+  question that is not about one file you were handed is an `orch-explorer` spawn** (send all such
+  questions of the step in one spawn; ask for `file:line` evidence). Run your own Grep/Read only on
+  files named in the brief or returned by the explorer, on a file you will edit, and for decisions;
+  read the cited lines yourself for anything you will build on. On a repository with a code index the
+  explorer answers structural questions from it in one query; you do not need to know whether there is one.
 - **Do it yourself instead:** a single known file or symbol (one `Read`/`grep` is cheaper than a
-  spawn), anything you will edit, security-sensitive reading, and any decision.
+  spawn), the diff or files you were handed, anything you will edit, security-sensitive reading, and any decision.
 - **Batch:** one spawn with several questions beats several spawns.
 
 ## First: read your brief
