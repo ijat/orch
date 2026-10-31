@@ -289,11 +289,11 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `skills/orchestrate/PROGRAM.md` | Program mode: a roadmap of milestones for big features |
 | `skills/orchestrate/TIERS.md` | Guide for choosing each role's model and effort, including the implementer routing procedure (guided Haiku, Sonnet default, when Opus) |
 | `skills/orchestrate/templates/` | One template per task file: plan, status, log, review, journal, sketch, guide, … |
-| `agents/orch-*.md` | Roles: planner, implementer, code reviewer, security reviewer, plan reviewer, director (visual judgement), explorer, executor. **Generated**, do not edit |
+| `agents/orch-*.md` | Roles: planner, implementer, code reviewer, security reviewer, plan reviewer, director (visual judgement), explorer, graph (code-index maintainer), executor. **Generated**, do not edit |
 | `skills/orchestrate/roles/` | Role sources; `_shared/` holds blocks every role includes |
 | `bin/orch-build-agents.py` | Renders `roles/` into `~/.claude/agents/orch-*.md`. Agent files can't import other files at runtime, so shared rules are inlined at build time |
 | `bin/orch-build-hook.sh` | PostToolUse hook: re-runs the build whenever a Write, Edit or Bash call touches `roles/`, and reports a failed build back to Claude |
-| `agents/orch-explorer.md`, `agents/orch-executor.md` | Cheap helpers that any role (or any session) can call: read-only lookups, and builds/tests that report a digest. Named `explorer`/`executor` before 2026-10-22 |
+| `agents/orch-explorer.md`, `agents/orch-graph.md`, `agents/orch-executor.md` | Cheap helpers that any role (or any session) can call: read-only lookups (using an optional code index when there is one, see Code index below), keeping that index fresh (`orch-graph`: the orchestrator, planner or you call it, not the other roles), and builds/tests that report a digest. Named `explorer`/`executor` before 2026-10-22 |
 | `bin/usage-check.sh`, `bin/usage-watch.sh` | One-shot wrapper around `orch usage` (the live estimate and dynamic stop line), and a legacy fixed-threshold watchdog. Local files only, no network |
 | `bin/orch-ratelimit-cache.sh` | Writes that cache, and the shared sample log, from the statusline input |
 | `bin/orch-index.sh`, `bin/orch-index-hook.sh` | Keep `~/.claude/orchestrations/ACTIVE.md`, the list of unfinished tasks |
@@ -302,6 +302,54 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `bin/orch`, `bin/orchlib/` | The `orch` command: one call per state change (`spawn`, `return`, `role`, `journal`, `ask`), role briefs, plan checks (including guides), the guarded `merge`, and `migrate` for old task directories. Python 3.9+ standard library only; `orchlib/tests/` holds its tests |
 | `bin/orchlib/dashboard.py`, `bin/orchlib/dashboard.html` | `orch dashboard`: a read-only page of active tasks, questions waiting for you and recent events, served on 127.0.0.1 only |
 | `skills/orchestrate/templates/policy.md`, `…/questions.md` | Per-repo stop policy (`~/.claude/orchestrations/<repo>/policy.md`) and the queue of parked questions in a task |
+
+## Code index (optional)
+
+`orch-index` is a separate command-line code index. It reads a repository's committed tree (C/C++,
+Rust, JS/TS, C#) and answers structural questions (where a symbol is defined, who calls it, every
+reference, which files include or import a file, which classes override a method) as compact
+`path:line [label]` rows, each with a trust label (`resolved`, `syntactic`, or an
+`ambiguous`/`basename`/`parse-errors` mark that says to check the row). On a large repository one
+query replaces many text searches (per `orch-index`'s own benchmark).
+
+Two roles use it, and only two:
+
+- **`orch-explorer` queries it.** Its first command is `orch-index stats`; when the index is current it
+  answers structural questions from it, and it searches with `git grep` / `rg` for everything else
+  (other languages, rows marked as uncertain). When the index commit is `HEAD`'s ancestor (for
+  example in a task worktree after its first commit), the index is still used: the explorer also
+  searches the files changed since that commit (renames included) and says
+  `index at <sha> + delta search`. The `index at …, HEAD is …` note `orch-index` prints on such a
+  query is expected there, not a stale signal. When the index is stale (its commit is not an ancestor
+  of `HEAD`, or its commit equals `HEAD` and the query note says `index built by an older orch-index`;
+  `orch-index` shows that note only when the commit equals `HEAD`), the reply opens with
+  `index unavailable: stale (<reason>) (refresh: orch-graph)`, without the refresh hint in a linked
+  worktree (the index is shared with the main checkout); when the binary is missing
+  or the repository has no index, it opens with a bare `index unavailable: <reason>`. In both cases the
+  answer comes from scoped search, so answers are the same without an index; the first command adds about one call per request (in this task's probes on small repositories: +15-30% tokens without an index, and +20-50% with one, where grep alone is cheaper). The explorer never builds or refreshes the index.
+- **`orch-graph` keeps it fresh.** It checks the index (`fresh`, `fresh-enough` when the index commit
+  is an ancestor of `HEAD`, `stale`, `missing`, or `binary not found`) and, when it is stale or
+  missing, rebuilds it (incremental when an index exists), then reports the state before and after.
+  It leaves a `fresh-enough` index alone unless asked to bring it to `HEAD`, and it rebuilds only in
+  the main checkout: from a linked worktree it reports the state and the main checkout's path. It answers no code
+  questions. Only you, the orchestrator and the planner call it: the orchestrator or planner when the
+  explorer reports a stale index (`… (refresh: orch-graph)`) on a repository that has one, and the
+  planner also before planning on a repository of 100K or more tracked files; the other roles do not.
+
+While `orch-graph` rebuilds, it writes a marker file, `<git-common-dir>/orch-index/indexing`, and
+removes it afterwards, only if the file still holds its own line; if a live marker from another run
+is already there, it reports `index busy` and stops. During the rebuild the orchestrator and the planner start no other agent and
+do no exploring of their own, and the explorer's first command waits (up to five minutes) for a live
+marker before it queries. A marker whose process is gone, or that is over 30 minutes old, is ignored.
+This is a rule the roles follow, not a lock: another person's session, or a role that never reads the
+rule, is not blocked.
+
+You do not need the index. Nothing in orch builds or installs it. To use it:
+
+1. Build `orch-index` from its source with `cargo build --release`.
+2. Put the binary on `PATH`, or set `ORCH_INDEX_BIN` to its full path.
+3. Ask for `orch-graph` once per repository (or run `orch-index index` yourself inside it); later
+   calls only re-read changed files.
 
 ## Install
 
