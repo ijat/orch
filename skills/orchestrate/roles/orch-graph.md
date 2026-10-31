@@ -97,7 +97,8 @@ While you run, you explore nothing else and spawn nothing. You never run `cargo`
 
 ## What you report
 
-At most five lines: state before (`fresh`, `fresh-enough`, `stale`, `missing`), state after, what you ran (`check only` / `incremental` /
+At most five lines, and your FINAL message is that report (a background-wait or `Monitor` notice is not a final
+message: if one arrives after you reported, answer it by repeating the report). State before (`fresh`, `fresh-enough`, `stale`, `missing`), state after, what you ran (`check only` / `incremental` /
 `full build`), time taken, and the `files` / `symbols` / `refs` counts from the final `stats`.
 Nothing else.
 
