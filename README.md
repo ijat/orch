@@ -310,7 +310,7 @@ Rust, JS/TS, C#) and answers structural questions (where a symbol is defined, wh
 reference, which files include or import a file, which classes override a method) as compact
 `path:line [label]` rows, each with a trust label (`resolved`, `syntactic`, or an
 `ambiguous`/`basename`/`parse-errors` mark that says to check the row). On a large repository one
-query replaces many text searches.
+query replaces many text searches (per `orch-index`'s own benchmark).
 
 Two roles use it, and only two:
 
@@ -326,7 +326,7 @@ Two roles use it, and only two:
   `index unavailable: stale (<reason>) (refresh: orch-graph)`, without the refresh hint in a linked
   worktree (the index is shared with the main checkout); when the binary is missing
   or the repository has no index, it opens with a bare `index unavailable: <reason>`. In both cases the
-  answer comes from scoped search, so answers are the same without an index; the first command costs one extra call per request (on small repositories the index is roughly a tie with grep). The explorer never builds or refreshes the index.
+  answer comes from scoped search, so answers are the same without an index; the first command adds about one call per request (in this task's probes on small repositories: +15-30% tokens without an index, and +20-50% with one, where grep alone is cheaper). The explorer never builds or refreshes the index.
 - **`orch-graph` keeps it fresh.** It checks the index (`fresh`, `fresh-enough` when the index commit
   is an ancestor of `HEAD`, `stale`, `missing`, or `binary not found`) and, when it is stale or
   missing, rebuilds it (incremental when an index exists), then reports the state before and after.
