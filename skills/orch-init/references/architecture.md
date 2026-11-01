@@ -142,8 +142,7 @@ Do not swallow; do not use errors for normal control flow.
 missing or malformed required key, a documented default for every optional key, `.env.example` committed,
 real `.env*` gitignored and denied to the agent (<https://12factor.net/config>; `templates/snippets.md`).
 Secrets arrive only through config and are a non-printing type. Budget or scope limits that matter
-(a free-tier cap, offline-only) go in CLAUDE.md as hard rules and in a check where one can exist
-(`infra-monitor/CLAUDE.md:11`).
+(a free-tier cap, offline-only) go in CLAUDE.md as hard rules and in a check where one can exist.
 
 ## 6. What the agent writes from this file
 
