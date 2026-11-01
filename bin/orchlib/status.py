@@ -305,7 +305,7 @@ class Status(object):
                     raise OrchError("row %r has %d cells but the header has %d; nothing written"
                                     % (role, len(c[1]), lay.ncols), 1)
             if validate and not re.match(r"^(orchestrator|planner|implementer|director|plan-reviewer|code-reviewer|"
-                                         r"security-reviewer)(:[A-Za-z0-9._-]+)?$", role):
+                                         r"security-reviewer|init)(:[A-Za-z0-9._-]+)?$", role):
                 raise OrchError("cannot insert a row for unknown role %r" % role, 1)
             hl, _, ht, _ = self._cells(self.lines[lay.header])
             cells = [" "] * lay.ncols
