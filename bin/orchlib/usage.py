@@ -4,19 +4,23 @@ est = window high-water sample + k x API-equivalent cost of every transcript (al
 since that sample; k (5h points per $) is calibrated per window from the samples themselves.
 line = clamp(100 - S - R - U, LINE_MIN, LINE_MAX): R = what stopping everything still costs, U = uncertainty.
 
-Reads only local files under H = $ORCH_USAGE_HOME or ~/.claude; writes only its state dir
-($ORCH_USAGE_STATE or H/.orch-usage/, atomic writes, never required). No network.
-I/O loaders are separate from compute(), which is pure (no files, no clock) so replays can drive it.
+Reads only local files under H = $ORCH_USAGE_HOME or ~/.claude, plus the .claude.json beside H (~/.claude.json: the
+logged-in account); writes only its state dir ($ORCH_USAGE_STATE or H/.orch-usage/, atomic writes, never required).
+No network. I/O loaders are separate from compute(), which is pure (no files, no clock) so replays can drive it.
 
 Account rule: the samples of one account only. Every log line may carry the account (7th field: first 8 chars of
-oauthAccount.accountUuid, '-' or absent = untagged). The current account is the tag of the newest log line; its tagged
-lines are kept whenever they were written (A -> B -> A keeps A's earlier window), other accounts' lines are dropped,
-and untagged log lines and legacy-cache samples count only from T, the first tagged line of the current account's latest
-run (a run is ended only by a line of another account; untagged lines never break it); a legacy sample is also dropped when
-another account's log line from the same render (LEGACY_MATCH) has the same value. A newest line that is untagged filters
-nothing. The writer tags a line from the payload's own history (an unchanged payload keeps its sid's last tag), so a stale
-render after /login stays with the old account; the file's account is only a guess for a payload never seen before. k history (k.json) is kept per account
-(`by_acct`); a tagged account never reads or writes the top-level k, which stays the untagged fallback.
+oauthAccount.accountUuid, '-' or absent = untagged). The current account is the logged-in one: oauthAccount.accountUuid
+in the .claude.json beside H (same 8-char rule); only when that gives no valid id, the tag of the newest log line (an
+untagged newest line then filters nothing). A log with no tagged line at all filters nothing either. The current
+account's tagged lines are kept whenever they were written (A -> B -> A keeps A's earlier window), other accounts' lines
+are dropped, and untagged log lines and legacy-cache samples count only from T, the first line of the current account's
+latest run (walking back from its newest line, a run is ended only by a line of another account; untagged lines never
+break it; no line of the current account yet = no untagged or legacy sample counts); a legacy sample is also dropped when
+another account's log line from the same render (LEGACY_MATCH) has the same value. The writer tags a line from the
+payload's own history (an unchanged payload keeps its sid's last tag, looked up over the whole log), so a stale render
+after /login stays with the old account even when it is the newest line; the file's account is only a guess for a payload
+never seen before. k history (k.json) is kept per account (`by_acct`); a tagged account never reads or writes the
+top-level k, which stays the untagged fallback.
 
 Known limit: usage made outside this machine's transcripts (claude.ai, other devices) is invisible
 until the next sample shows it; U and the window high-water bound it, nothing more.
@@ -412,20 +416,38 @@ def _drop_other_account(legacy, others):
     return out
 
 
-def by_account(log5, log7, legacy5, legacy7):
+def load_account(home):
+    """The logged-in account: the first 8 chars of oauthAccount.accountUuid (a string) in the .claude.json beside H
+    (~/.claude -> ~/.claude.json), or None when the file, the key or the id is missing or invalid. Never raises."""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(home)), '.claude.json'), encoding='utf-8') as fh:
+            d = json.load(fh)
+        u = d.get('oauthAccount', {}).get('accountUuid') if isinstance(d, dict) else None
+    except (OSError, ValueError, AttributeError):
+        return None
+    return _acct(u[:8]) if isinstance(u, str) else None
+
+
+def by_account(log5, log7, legacy5, legacy7, current=None):
     """Pure. Apply the account rule (module docstring) to log samples carrying a trailing acct and to legacy samples.
-    -> (acct, log5, log7, legacy5, legacy7): acct is None when the newest log line is untagged or there is none (nothing is
-    filtered then); the log lists come back without the acct element, in compute()'s shapes."""
+    current = the logged-in account (load_account), or None to fall back to the newest log line's tag.
+    -> (acct, log5, log7, legacy5, legacy7): acct is None when nothing is filtered (no tagged line in the log, or no
+    current account and the newest line is untagged); the log lists come back without the acct element, in compute()'s shapes."""
     ev = sorted([(s[0], s[-1]) for s in log5] + [(s[0], s[-1]) for s in log7], key=lambda e: e[0])
-    acct = ev[-1][1] if ev else None
+    if current is not None and any(a is not None for _, a in ev):
+        acct = current
+    else:
+        acct = ev[-1][1] if ev else None
     if acct is None:
         return None, [s[:-1] for s in log5], [s[:-1] for s in log7], legacy5, legacy7
-    t0 = ev[-1][0]
-    for t, a in reversed(ev):          # back to the last line of another account; untagged lines don't break the run
-        if a is not None and a != acct:
-            break
-        if a == acct:
-            t0 = t
+    mine = [i for i, (_, a) in enumerate(ev) if a == acct]
+    t0 = float('inf')                  # no line of this account yet: no untagged or legacy sample is known to be its
+    if mine:
+        for t, a in reversed(ev[:mine[-1] + 1]):   # back from its newest line to another account's; untagged don't break it
+            if a is not None and a != acct:
+                break
+            if a == acct:
+                t0 = t
     keep = lambda s: s[-1] == acct or (s[-1] is None and s[0] >= t0)
     # A legacy sample carries the reset file's value at read time: when another account's log line from the same render
     # has the same value, it is that account's stale view and must not set this account's high-water.
@@ -843,7 +865,7 @@ def estimate(home=None, state=None, now=None, line=None, warn=None, session=None
     now = time.time() if now is None else now
     a5, a7 = load_log(home, with_acct=True)
     b5, b7 = load_legacy(home, now)
-    acct, a5, a7, b5, b7 = by_account(a5, a7, b5, b7)
+    acct, a5, a7, b5, b7 = by_account(a5, a7, b5, b7, current=load_account(home))
     s5, s7 = a5 + drop_stale_legacy(a5, b5), a7 + drop_stale_legacy(a7, b7)
     r5, rolled = _window(s5, now)
     ws = (max(r5, now - WINDOW) if rolled else r5 - WINDOW) if r5 else now
