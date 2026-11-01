@@ -4,6 +4,7 @@ the new log line. Neutral names only; every run uses a throwaway HOME, never the
 
 The writer scripts are found via ORCH_TEST_STATUSLINE (the statusline script) and ORCH_TEST_CACHE_SCRIPT
 (default: orch-ratelimit-cache.sh next to bin/); a writer that cannot be found is skipped."""
+import json
 import os
 import re
 import shutil
@@ -66,6 +67,15 @@ def make_writer_tests(label):
             self.assertEqual(p.returncode, 0, p.stderr)
             return p
 
+        def set_acct(self, uuid):
+            """Write a fake $HOME/.claude.json; a str is the accountUuid, anything else is written raw."""
+            body = uuid if not isinstance(uuid, str) else json.dumps({'oauthAccount': {'accountUuid': uuid}})
+            with open(os.path.join(self.home, '.claude.json'), 'w') as fh:
+                fh.write(body if isinstance(body, str) else json.dumps(body))
+
+        def accts(self):
+            return [l.split()[6] for l in self.lines()]
+
         def lines(self):
             try:
                 with open(self.log) as fh:
@@ -78,12 +88,46 @@ def make_writer_tests(label):
             ls = self.lines()
             self.assertEqual(len(ls), 1, ls)
             f = ls[0].split()
-            self.assertEqual(len(f), 6)
+            self.assertEqual(len(f), 7)
             self.assertAlmostEqual(float(f[1]), 53.0)
-            self.assertEqual((f[2], f[3], f[4], f[5]), (str(self.r5), '57', str(self.r7), 'sid-a'))
-            s5, s7 = usage.load_log(os.path.join(self.home, '.claude'))
-            self.assertEqual([(round(p), r, s) for _, p, r, s in s5], [(53, self.r5, 'sid-a')])
-            self.assertEqual([(p, r) for _, p, r in s7], [(57.0, self.r7)])
+            self.assertEqual((f[2], f[3], f[4], f[5], f[6]), (str(self.r5), '57', str(self.r7), 'sid-a', '-'))
+
+        def test_acct_is_first_8_chars_of_uuid(self):
+            self.set_acct('0a1b2c3d-1111-2222-3333-444455556666')
+            self.run_writer()
+            self.assertEqual(self.accts(), ['0a1b2c3d'])
+
+        def test_missing_or_invalid_acct_is_dash(self):
+            for i, body in enumerate(('{"oauthAccount":{}}', '{}', 'not json', '', '{"oauthAccount":{"accountUuid":"ZZZZZZZZ-1"}}',
+                                      '{"oauthAccount":{"accountUuid":"abc"}}', '{"oauthAccount":{"accountUuid":12345678}}',
+                                      '{"oauthAccount":{"accountUuid":"ab cd 12 99"}}')):
+                self.set_acct(body if body else '\n')
+                self.run_writer(p5=50.0 + i)           # a changed field, so every run appends
+            self.assertEqual(self.accts(), ['-'] * 8)
+            os.unlink(os.path.join(self.home, '.claude.json'))
+            self.run_writer(p5=99.0)
+            self.assertEqual(self.accts()[-1], '-')
+
+        def test_same_acct_twice_within_60s_is_one_line(self):
+            self.set_acct('0a1b2c3d-1111')
+            self.run_writer()
+            self.run_writer()
+            self.assertEqual(self.accts(), ['0a1b2c3d'])
+
+        def test_acct_change_within_60s_appends(self):
+            self.set_acct('0a1b2c3d-1111')
+            self.run_writer()
+            self.set_acct('ffeedd00-2222')
+            self.run_writer()                          # same sid and numbers, other account
+            self.assertEqual(self.accts(), ['0a1b2c3d', 'ffeedd00'])
+            self.run_writer()
+            self.assertEqual(len(self.lines()), 2)
+
+        def test_untagged_last_line_dedups_against_dash(self):
+            with open(self.log, 'w') as fh:
+                fh.write('%d 53.0 %d 57 %d sid-a\n' % (int(time.time()) - 5, self.r5, self.r7))
+            self.run_writer()                          # no .claude.json -> acct '-': same as an untagged line
+            self.assertEqual(len(self.lines()), 1)
 
         def test_same_json_twice_within_60s_is_one_line(self):
             self.run_writer()

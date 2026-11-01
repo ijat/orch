@@ -9,8 +9,9 @@
 #   ~/.claude/.statusline-ratelimit-7d   (pruned to the last 6 h)
 #   ~/.claude/.statusline-reset-5h       (one line: the epoch when the 5h window resets)
 # and one line per change (60 s heartbeat) to the shared sample log that `orch usage` reads:
-#   ~/.claude/.statusline-usage-log      "<epoch> <p5> <reset5> <p7> <reset7> <sid>" ('-' = unknown;
-#                                         pruned to 26 h above 256 KB)
+#   ~/.claude/.statusline-usage-log      "<epoch> <p5> <reset5> <p7> <reset7> <sid> <acct>" ('-' = unknown;
+#                                         acct = first 8 chars of oauthAccount.accountUuid in
+#                                         ~/.claude.json; pruned to 26 h above 256 KB)
 #
 # Use it in either of two ways:
 #   - as the whole statusline:  "statusLine": {"type": "command", "command": "~/.claude/bin/orch-ratelimit-cache.sh --print"}
@@ -53,12 +54,13 @@ if [ -n "$r5" ]; then
 fi
 
 # Shared sample log for `orch usage`: one line per change per session, plus a 60 s heartbeat.
-#   <epoch> <p5> <reset5_epoch|-> <p7|-> <reset7_epoch|-> <sid|->
-# Appended only when the fields differ from the last line of the same sid (last ~20 lines) or
+#   <epoch> <p5> <reset5_epoch|-> <p7|-> <reset7_epoch|-> <sid|-> <acct|->
+# acct = first 8 hex/dash chars of oauthAccount.accountUuid in $HOME/.claude.json, '-' when unreadable.
+# Appended only when the fields (acct included) differ from the last line of the same sid (last ~20 lines) or
 # >= 60 s passed; pruned to 26 h (atomic tmp + mv) above 256 KB. The legacy caches above keep
 # their own prune/wipe rules. Never fails the caller: the call site swallows errors.
-orch_usage_log() {  # <epoch> <p5> <reset5_epoch> <p7> <reset7_epoch> <sid>
-  local f="$HOME/.claude/.statusline-usage-log" now="$1" p5="${2:-}" r5="${3:-}" p7="${4:-}" r7="${5:-}" sid="${6:-}"
+orch_usage_log() {  # <epoch> <p5> <reset5_epoch> <p7> <reset7_epoch> <sid> <acct>
+  local f="$HOME/.claude/.statusline-usage-log" now="$1" p5="${2:-}" r5="${3:-}" p7="${4:-}" r7="${5:-}" sid="${6:-}" acct="${7:-}"
   local key skip sz tmp
   [[ "$now" =~ ^[0-9]+$ ]] || return 0
   [[ "$p5" =~ ^[0-9]+(\.[0-9]+)?$ ]] || p5="-"
@@ -66,15 +68,16 @@ orch_usage_log() {  # <epoch> <p5> <reset5_epoch> <p7> <reset7_epoch> <sid>
   [[ "$r5" =~ ^[0-9]+$ ]] || r5="-"
   [[ "$r7" =~ ^[0-9]+$ ]] || r7="-"
   [[ "$sid" =~ ^[A-Za-z0-9._-]+$ ]] || sid="-"
+  [[ "$acct" =~ ^[0-9a-f-]{8}$ ]] || acct="-"
   [ "$p5" = "-" ] && [ "$p7" = "-" ] && return 0
-  key="$p5 $r5 $p7 $r7"
+  key="$p5 $r5 $p7 $r7 $acct"
   if [ -f "$f" ]; then
     skip=$(tail -n 20 "$f" 2>/dev/null | awk -v s="$sid" -v k="$key" -v n="$now" '
-      $6 == s { lt = $1; lk = $2 " " $3 " " $4 " " $5; seen = 1 }
+      $6 == s { lt = $1; lk = $2 " " $3 " " $4 " " $5 " " ($7 == "" ? "-" : $7); seen = 1 }
       END { if (seen && lk == k && n - lt < 60) print 1 }')
     [ "$skip" = "1" ] && return 0
   fi
-  echo "$now $key $sid" >> "$f"
+  echo "$now $p5 $r5 $p7 $r7 $sid $acct" >> "$f"
   sz=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
   if [ "${sz:-0}" -gt 262144 ]; then
     tmp="$f.tmp.$$"
@@ -87,7 +90,8 @@ if [ -n "$r7" ] && ! [[ "$r7" =~ ^[0-9]+$ ]]; then
   c="${r7%%.*}"; c="${c%Z}"; c="${c/T/ }"
   r7=$(date -j -u -f "%Y-%m-%d %H:%M:%S" "$c" +%s 2>/dev/null || date -u -d "$r7" +%s 2>/dev/null)
 fi
-orch_usage_log "$now" "$p5" "${e:-}" "$p7" "${r7:-}" "$(j '.session_id // empty')" >/dev/null 2>&1 || true
+acct=$(jq -r '(.oauthAccount.accountUuid // "") | tostring | .[0:8]' "$HOME/.claude.json" 2>/dev/null || true)
+orch_usage_log "$now" "$p5" "${e:-}" "$p7" "${r7:-}" "$(j '.session_id // empty')" "$acct" >/dev/null 2>&1 || true
 
 if [ "${1:-}" = "--print" ]; then
   out=""
