@@ -19,15 +19,15 @@
 - review_round: 0/3
 - usage_override: none | <what the user allowed, and when>
 
-| role | state | timestamp (UTC) | last completed step | notes |
-|---|---|---|---|---|
-| orchestrator | in_progress | | task dir created | |
-| planner | pending | | | |
-| implementer | pending | | | |
-| director | n/a | | | <pending if the plan has visual steps> |
-| plan-reviewer | n/a | | | <pending for roadmaps and opus/max plans> |
-| code-reviewer | pending | | | |
-| security-reviewer | not_offered | | | <one-line reason, or pending / declined> |
+| role | state | timestamp (UTC) | last completed step | progress | notes |
+|---|---|---|---|---|---|
+| orchestrator | in_progress | | task dir created | | |
+| planner | pending | | | | |
+| implementer | pending | | | | |
+| director | n/a | | | | <pending if the plan has visual steps> |
+| plan-reviewer | n/a | | | | <pending for roadmaps and opus/max plans> |
+| code-reviewer | pending | | | | |
+| security-reviewer | not_offered | | | | <one-line reason, or pending / declined> |
 
 <!-- Row states: pending | in_progress | waiting | blocked | failed | done. `waiting` = idle inside the
      director loop until a message arrives; not a return. Roles set only their own row; task_state is

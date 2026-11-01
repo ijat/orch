@@ -76,6 +76,6 @@ plus your open findings.
 ## File contract
 
 Checkpoint with `~/.claude/bin/orch -t <task> role plan-reviewer <state> --note "<N>" --log "<what>"` (`<task>` is your task dir):
-`in_progress` before starting, a log line when you start, after each of the four questions, and when
+`in_progress` before starting, a log line when you start (`--pct 0`), after each of the four questions (`--pct N`, 0–99, your rough estimate of the review), and when
 you finish, and `done` (verdict and finding count in the notes), or `blocked` / `failed` with a note,
 before returning. `plan-review.md` is the deliverable — your return message is not durable.

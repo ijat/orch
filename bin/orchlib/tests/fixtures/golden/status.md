@@ -19,15 +19,15 @@
 - review_round: 1/3
 - usage_override: none
 
-| role | state | timestamp (UTC) | last completed step | notes |
-|---|---|---|---|---|
-| orchestrator | in_progress | 2026-03-01T10:00Z | task dir created | |
-| planner | done | 2026-03-01T10:05Z | plan written | plan.md ready |
-| implementer | done | 2026-03-01T11:00Z | step 2 | 2 commits |
-| director | n/a | | | <pending if the plan has visual steps> |
-| plan-reviewer | n/a | | | <pending for roadmaps and opus/max plans> |
-| code-reviewer | done | 2026-03-01T11:30Z | round 1 | 1 should-fix |
-| security-reviewer | not_offered | | | <one-line reason, or pending / declined> |
+| role | state | timestamp (UTC) | last completed step | progress | notes |
+|---|---|---|---|---|---|
+| orchestrator | in_progress | 2026-03-01T10:00Z | task dir created | | |
+| planner | done | 2026-03-01T10:05Z | plan written | | plan.md ready |
+| implementer | done | 2026-03-01T11:00Z | step 2 | | 2 commits |
+| director | n/a | | | | <pending if the plan has visual steps> |
+| plan-reviewer | n/a | | | | <pending for roadmaps and opus/max plans> |
+| code-reviewer | done | 2026-03-01T11:30Z | round 1 | | 1 should-fix |
+| security-reviewer | not_offered | | | | <one-line reason, or pending / declined> |
 
 <!-- Row states: pending | in_progress | waiting | blocked | failed | done. `waiting` = idle inside the
      director loop until a message arrives; not a return. Roles set only their own row; task_state is
