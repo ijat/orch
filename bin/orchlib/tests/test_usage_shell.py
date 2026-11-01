@@ -159,6 +159,21 @@ def make_writer_tests(label):
             self.run_writer(sid='sid-a')                                 # appended with the file's account
             self.assertEqual(self.accts(), ['-', 'ffeedd00'])
 
+        def test_inherit_looks_past_many_other_sid_lines(self):
+            # an idle session: its last line is far back, behind other sessions' lines (the old tail -n 20 window missed it)
+            t = int(time.time()) - 3600
+            with open(self.log, 'w') as fh:
+                fh.write('%d 53.0 %d 57 %d sid-a 0a1b2c3d\n' % (t, self.r5, self.r7))
+                for i in range(200):
+                    fh.write('%d %d %d 10 %d sid-b ffeedd00\n' % (t + 10 + i, i % 90, self.r5 + 7, self.r7))
+            self.set_acct('ffeedd00-2222')
+            self.run_writer(sid='sid-a')                                 # same payload as sid-a's last line: still A's
+            self.assertEqual(self.lines()[-1].split()[5:], ['sid-a', '0a1b2c3d'])
+            # dedup over the whole file too: sid-a's last line now is the one just written (< 60 s), so no new line
+            n = len(self.lines())
+            self.run_writer(sid='sid-a')
+            self.assertEqual(len(self.lines()), n)
+
         def test_untagged_last_line_dedups_against_dash(self):
             with open(self.log, 'w') as fh:
                 fh.write('%d 53.0 %d 57 %d sid-a\n' % (int(time.time()) - 5, self.r5, self.r7))

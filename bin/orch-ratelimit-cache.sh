@@ -57,9 +57,10 @@ fi
 # Shared sample log for `orch usage`: one line per change per session, plus a 60 s heartbeat.
 #   <epoch> <p5> <reset5_epoch|-> <p7|-> <reset7_epoch|-> <sid|-> <acct|->
 # acct = first 8 hex/dash chars of oauthAccount.accountUuid in $HOME/.claude.json, '-' when unreadable.
-# Appended only when the fields (acct included) differ from the last line of the same sid (last ~20 lines) or
-# >= 60 s passed. When that last line has the same four numbers and a real tag, its tag is reused (the payload is
-# unchanged, so it is still that account's, whatever $HOME/.claude.json says now); pruned to 26 h (atomic tmp + mv) above 256 KB. The legacy caches above keep
+# Appended only when the fields (acct included) differ from the last line of the same sid (looked up over the whole
+# log, one awk pass) or >= 60 s passed. When that last line has the same four numbers and a real tag, its tag is reused
+# (the payload is unchanged, so it is still that account's, whatever $HOME/.claude.json says now, however many lines
+# other sessions wrote since); pruned to 26 h (atomic tmp + mv) above 256 KB. The legacy caches above keep
 # their own prune/wipe rules. Never fails the caller: the call site swallows errors.
 orch_usage_log() {  # <epoch> <p5> <reset5_epoch> <p7> <reset7_epoch> <sid> <acct>
   local f="$HOME/.claude/.statusline-usage-log" now="$1" p5="${2:-}" r5="${3:-}" p7="${4:-}" r7="${5:-}" sid="${6:-}" acct="${7:-}"
@@ -75,12 +76,13 @@ orch_usage_log() {  # <epoch> <p5> <reset5_epoch> <p7> <reset7_epoch> <sid> <acc
   if [ -f "$f" ]; then
     # res = "<skip 0|1> <acct>". Unchanged numbers on this sid's last line mean the same payload, hence the same account: a
     # stale render after /login must not take the new account's tag from the file, so a real tag on that line is inherited.
-    res=$(tail -n 20 "$f" 2>/dev/null | awk -v s="$sid" -v k4="$p5 $r5 $p7 $r7" -v a="$acct" -v n="$now" '
+    # The whole file: an idle session's last line can be hundreds of lines back (<= 256 KB, a few ms).
+    res=$(awk -v s="$sid" -v k4="$p5 $r5 $p7 $r7" -v a="$acct" -v n="$now" '
       $6 == s { lt = $1; l4 = $2 " " $3 " " $4 " " $5; la = ($7 == "" ? "-" : $7); seen = 1 }
       END {
         if (seen && l4 == k4 && la != "-") a = la
         print ((seen && l4 == k4 && la == a && n - lt < 60) ? 1 : 0), a
-      }')
+      }' "$f" 2>/dev/null)
     case "$res" in
       "1 "*) return 0 ;;
       "0 "*) acct="${res#0 }"; [[ "$acct" =~ ^[0-9a-f-]{8}$ ]] || acct="-" ;;

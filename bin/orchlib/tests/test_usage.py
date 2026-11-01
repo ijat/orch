@@ -72,9 +72,11 @@ class Home(unittest.TestCase):
     """A temp ~/.claude-like home with writers for the log, legacy caches, transcripts and the registry."""
 
     def setUp(self):
-        self.home = tempfile.mkdtemp(prefix='usage-home-')
+        base = tempfile.mkdtemp(prefix='usage-home-')      # base/.claude = H; base/.claude.json is the account file
+        self.home = os.path.join(base, '.claude')
+        os.mkdir(self.home)
         self.state = tempfile.mkdtemp(prefix='usage-state-')
-        self.addCleanup(shutil.rmtree, self.home, True)
+        self.addCleanup(shutil.rmtree, base, True)
         self.addCleanup(shutil.rmtree, self.state, True)
         self.addCleanup(_reap)
         self.now = time.time()
@@ -299,9 +301,77 @@ class TestAccount(Home):
         self.assertEqual((g5, g7), ([(105, 90, 1, None)], [(105, 97, 9)]))
 
     def test_replay_without_account_rule_would_give_99(self):
-        with mock.patch.object(usage, 'by_account', lambda a5, a7, b5, b7: (None, [s[:-1] for s in a5], [s[:-1] for s in a7], b5, b7)):
+        with mock.patch.object(usage, 'by_account', lambda a5, a7, b5, b7, current=None: (None, [s[:-1] for s in a5], [s[:-1] for s in a7], b5, b7)):
             e = self.replay(None)
         self.assertEqual(e.p7, 99)       # the instrument sees the bug when the rule is off
+
+    def set_acct(self, body):
+        """A fake .claude.json beside H: a str is the accountUuid, anything else is written verbatim (bytes)."""
+        with open(os.path.join(os.path.dirname(self.home), '.claude.json'), 'wb') as fh:
+            fh.write(json.dumps({'oauthAccount': {'accountUuid': body}}).encode() if isinstance(body, str) else body)
+
+    def stale_newest(self):
+        """The review's F4 probe: idle sid-y renders its stale A payload (inherited tag A) after B's latest line."""
+        self.line(1793452715, 49, 1793467200, 97, self.R7, self.A, 'sid-y')
+        self.line(1793510000, 20, 1793526000, 14, self.R7, self.B, 'sid-x')
+        self.line(1793520000, 48, 1793526000, 21, self.R7, self.B, 'sid-x')
+        self.line(1793520100, 49, 1793467200, 97, self.R7, self.A, 'sid-y')
+
+    def test_logged_in_account_beats_a_stale_newest_line(self):
+        self.stale_newest()
+        self.set_acct(self.B + '-1111-2222')
+        for now in (1793520150, 1793520400):
+            e = self.at(now)
+            self.assertEqual((e.p7, e.p5), (21, 48))
+
+    def test_no_account_file_falls_back_to_the_newest_line(self):
+        self.stale_newest()
+        self.assertEqual(self.at(1793520150).p7, 97)       # the old rule, and the instrument sees F4 without the file
+        for bad in (b'', b'not json', b'[1]', b'{"oauthAccount": "x"}', b'{"oauthAccount": {"accountUuid": 12345678}}',
+                    b'{"oauthAccount": {"accountUuid": "BBBBBBBB-1"}}', b'{"oauthAccount": {"accountUuid": "bbbb"}}'):
+            self.set_acct(bad)
+            self.assertEqual(self.at(1793520150).p7, 97, bad)
+
+    def test_load_account(self):
+        self.assertIsNone(usage.load_account(self.home))
+        self.set_acct(self.B + '-1111')
+        self.assertEqual(usage.load_account(self.home), self.B)
+        self.assertEqual(usage.load_account(self.home + os.sep), self.B)
+        self.set_acct(b'{"oauthAccount": null}')
+        self.assertIsNone(usage.load_account(self.home))
+
+    def test_logged_in_account_with_untagged_log_changes_nothing(self):
+        r5, now = self.r5, self.now
+        self.line(now - 900, 60, r5, 50, self.R7, None)
+        self.line(now - 60, 30, r5, 5, self.R7, None)
+        self.legacy('5h', r5, [(now - 30, 31)])
+        before = self.est()
+        self.set_acct(self.B + '-1111')
+        after = self.est()
+        self.assertEqual((after.p5, after.p7, after.age5), (before.p5, before.p7, before.age5))
+        self.assertEqual((after.p5, after.p7), (60, 50))
+
+    def test_logged_in_account_without_its_own_line_counts_nothing_else(self):
+        r5, now = self.r5, self.now
+        self.line(now - 900, 60, r5, 50, self.R7, self.A)
+        self.line(now - 60, 30, r5, 52, self.R7, None)                 # untagged: not known to be B's
+        self.legacy('5h', r5, [(now - 30, 31)])
+        self.set_acct(self.B + '-1111')
+        e = self.est()
+        self.assertEqual((e.p5, e.p7), (None, None))
+        self.line(now - 20, 5, r5, 3, self.R7, self.B)                # B's first line: its run starts, T = now - 20
+        e = self.est()
+        self.assertEqual((e.p5, e.p7), (5, 3))
+
+    def test_by_account_current_and_t_after_stale_lines(self):
+        A, B = self.A, self.B
+        log7 = [(100, 97, 9, A), (200, 5, 9, B), (210, 97, 9, A), (220, 6, 9, B), (230, 7, 9, None), (300, 97, 9, A)]
+        leg7 = [(205, 8, 9), (225, 9, 9), (305, 97, 9)]
+        acct, _, l7, _, g7 = usage.by_account([], log7, [], leg7, current=B)
+        self.assertEqual(acct, B)
+        self.assertEqual(l7, [(200, 5, 9), (220, 6, 9), (230, 7, 9)])  # B's run back from 220 stops at A's 210: T = 220
+        self.assertEqual(g7, [(225, 9, 9)])                             # 205 before T; 305 matches A's stale 97
+        self.assertEqual(usage.by_account([], log7, [], leg7)[0], A)   # no current: newest line (the old rule)
 
     def test_a_b_a_keeps_earlier_a_window(self):
         r5, now = self.r5, self.now
