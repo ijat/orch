@@ -4,9 +4,23 @@ est = window high-water sample + k x API-equivalent cost of every transcript (al
 since that sample; k (5h points per $) is calibrated per window from the samples themselves.
 line = clamp(100 - S - R - U, LINE_MIN, LINE_MAX): R = what stopping everything still costs, U = uncertainty.
 
-Reads only local files under H = $ORCH_USAGE_HOME or ~/.claude; writes only its state dir
-($ORCH_USAGE_STATE or H/.orch-usage/, atomic writes, never required). No network.
-I/O loaders are separate from compute(), which is pure (no files, no clock) so replays can drive it.
+Reads only local files under H = $ORCH_USAGE_HOME or ~/.claude, plus the .claude.json beside H (~/.claude.json: the
+logged-in account); writes only its state dir ($ORCH_USAGE_STATE or H/.orch-usage/, atomic writes, never required).
+No network. I/O loaders are separate from compute(), which is pure (no files, no clock) so replays can drive it.
+
+Account rule: the samples of one account only. Every log line may carry the account (7th field: first 8 chars of
+oauthAccount.accountUuid, '-' or absent = untagged). The current account is the logged-in one: oauthAccount.accountUuid
+in the .claude.json beside H (same 8-char rule); only when that gives no valid id, the tag of the newest log line (an
+untagged newest line then filters nothing). A log with no tagged line at all filters nothing either. The current
+account's tagged lines are kept whenever they were written (A -> B -> A keeps A's earlier window), other accounts' lines
+are dropped, and untagged log lines and legacy-cache samples count only from T, the first line of the current account's
+latest run (walking back from its newest line, a run is ended only by a line of another account; untagged lines never
+break it; no line of the current account yet = no untagged or legacy sample counts); a legacy sample is also dropped when
+another account's log line from the same render (LEGACY_MATCH) has the same value. The writer tags a line from the
+payload's own history (an unchanged payload keeps its sid's last tag, looked up over the whole log), so a stale render
+after /login stays with the old account even when it is the newest line; the file's account is only a guess for a payload
+never seen before. k history (k.json) is kept per account (`by_acct`); a tagged account never reads or writes the
+top-level k, which stays the untagged fallback.
 
 Known limit: usage made outside this machine's transcripts (claude.ai, other devices) is invisible
 until the next sample shows it; U and the window high-water bound it, nothing more.
@@ -351,8 +365,15 @@ def _num(s):
     return v
 
 
-def load_log(home):
-    """The sample log: '<epoch> <p5> <reset5> <p7> <reset7> <sid>', '-' = unknown; malformed lines skipped."""
+def _acct(tok):
+    """The log's 7th field -> account id, or None (untagged: '-', absent or malformed)."""
+    ok = tok and len(tok) == 8 and all(c in '0123456789abcdef-' for c in tok) and tok != '-' * 8
+    return tok if ok else None
+
+
+def load_log(home, with_acct=False):
+    """The sample log: '<epoch> <p5> <reset5> <p7> <reset7> <sid> [<acct>]', '-' = unknown; malformed lines skipped.
+    6 fields = untagged. with_acct appends the account (or None) to every sample: (t, p5, r5, sid, acct), (t, p7, r7, acct)."""
     s5, s7 = [], []
     try:
         fh = open(os.path.join(home, '.statusline-usage-log'), encoding='utf-8', errors='replace')
@@ -361,7 +382,7 @@ def load_log(home):
     with fh:
         for line in fh:
             parts = line.split()
-            if len(parts) != 6 or not parts[0].isdigit():
+            if len(parts) not in (6, 7) or not parts[0].isdigit():
                 continue
             try:
                 t = float(parts[0])
@@ -369,11 +390,72 @@ def load_log(home):
             except ValueError:
                 continue
             sid = None if parts[5] == '-' else parts[5]
+            extra = (_acct(parts[6] if len(parts) == 7 else None),) if with_acct else ()
             if p5 is not None and r5 is not None:
-                s5.append((t, p5, r5, sid))
+                s5.append((t, p5, r5, sid) + extra)
             if p7 is not None and r7 is not None:
-                s7.append((t, p7, r7))
+                s7.append((t, p7, r7) + extra)
     return s5, s7
+
+
+LEGACY_MATCH = (120, 10)   # a log line within [t - 120, t + 10] of a legacy sample can be the same render
+
+
+def _drop_other_account(legacy, others):
+    """Legacy samples minus those matching a log sample of another account: same value, log line within LEGACY_MATCH.
+    others = sorted [(t, p)] of that kind from other accounts' lines."""
+    if not others or not legacy:
+        return legacy
+    ts = [o[0] for o in others]
+    out = []
+    for s in legacy:
+        lo = bisect.bisect_left(ts, s[0] - LEGACY_MATCH[0])
+        hi = bisect.bisect_right(ts, s[0] + LEGACY_MATCH[1])
+        if not any(abs(o[1] - s[1]) < 0.01 for o in others[lo:hi]):
+            out.append(s)
+    return out
+
+
+def load_account(home):
+    """The logged-in account: the first 8 chars of oauthAccount.accountUuid (a string) in the .claude.json beside H
+    (~/.claude -> ~/.claude.json), or None when the file, the key or the id is missing or invalid. Never raises."""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(home)), '.claude.json'), encoding='utf-8') as fh:
+            d = json.load(fh)
+        u = d.get('oauthAccount', {}).get('accountUuid') if isinstance(d, dict) else None
+    except (OSError, ValueError, AttributeError):
+        return None
+    return _acct(u[:8]) if isinstance(u, str) else None
+
+
+def by_account(log5, log7, legacy5, legacy7, current=None):
+    """Pure. Apply the account rule (module docstring) to log samples carrying a trailing acct and to legacy samples.
+    current = the logged-in account (load_account), or None to fall back to the newest log line's tag.
+    -> (acct, log5, log7, legacy5, legacy7): acct is None when nothing is filtered (no tagged line in the log, or no
+    current account and the newest line is untagged); the log lists come back without the acct element, in compute()'s shapes."""
+    ev = sorted([(s[0], s[-1]) for s in log5] + [(s[0], s[-1]) for s in log7], key=lambda e: e[0])
+    if current is not None and any(a is not None for _, a in ev):
+        acct = current
+    else:
+        acct = ev[-1][1] if ev else None
+    if acct is None:
+        return None, [s[:-1] for s in log5], [s[:-1] for s in log7], legacy5, legacy7
+    mine = [i for i, (_, a) in enumerate(ev) if a == acct]
+    t0 = float('inf')                  # no line of this account yet: no untagged or legacy sample is known to be its
+    if mine:
+        for t, a in reversed(ev[:mine[-1] + 1]):   # back from its newest line to another account's; untagged don't break it
+            if a is not None and a != acct:
+                break
+            if a == acct:
+                t0 = t
+    keep = lambda s: s[-1] == acct or (s[-1] is None and s[0] >= t0)
+    # A legacy sample carries the reset file's value at read time: when another account's log line from the same render
+    # has the same value, it is that account's stale view and must not set this account's high-water.
+    o5 = sorted((s[0], s[1]) for s in log5 if s[-1] not in (None, acct))
+    o7 = sorted((s[0], s[1]) for s in log7 if s[-1] not in (None, acct))
+    return (acct, [s[:-1] for s in log5 if keep(s)], [s[:-1] for s in log7 if keep(s)],
+            _drop_other_account([s for s in legacy5 if s[0] >= t0], o5),
+            _drop_other_account([s for s in legacy7 if s[0] >= t0], o7))
 
 
 def _read_reset(path):
@@ -419,9 +501,6 @@ def load_legacy(home, now):
             elif reset > now:
                 dst.append((t, p, reset))
     return s5, s7
-
-
-LEGACY_MATCH = (120, 10)   # a log line within [t - 120, t + 10] of a legacy sample can be the same render
 
 
 def drop_stale_legacy(log5, legacy5):
@@ -743,13 +822,29 @@ def load_k(state):
         return {}
 
 
-def save_k(state, k_hist, persist):
-    """Record (r5, k) for the trailing distribution; atomic; failures are silent (state is never required)."""
+def k_for(k_hist, acct):
+    """The k history one run uses: the top-level entry (untagged), or that account's by_acct entry ({} when new)."""
+    if acct is None:
+        return k_hist
+    by = k_hist.get('by_acct')
+    e = by.get(acct) if isinstance(by, dict) else None
+    return e if isinstance(e, dict) else {}
+
+
+def save_k(state, k_hist, persist, acct=None):
+    """Record (r5, k) for the trailing distribution; atomic; failures are silent (state is never required).
+    k_hist is the whole k.json; a tagged run writes only its by_acct entry, an untagged one only the top level."""
     r5, k = persist
-    wins = [w for w in (k_hist.get('windows') or []) if isinstance(w, list) and len(w) == 2 and abs(w[0] - r5) > GROUP]
+    mine = k_for(k_hist, acct)
+    wins = [w for w in (mine.get('windows') or []) if isinstance(w, list) and len(w) == 2 and abs(w[0] - r5) > GROUP]
     wins.append([r5, round(k, 4)])
     wins = sorted(wins)[-K_TRAIL:]
-    data = {'k': round(k, 4), 'windows': wins}
+    entry = {'k': round(k, 4), 'windows': wins}
+    if acct is None:
+        data = dict(k_hist, **entry)
+    else:
+        by = k_hist.get('by_acct')
+        data = dict(k_hist, by_acct=dict(by if isinstance(by, dict) else {}, **{acct: entry}))
     if data == k_hist:
         return
     try:
@@ -768,8 +863,9 @@ def estimate(home=None, state=None, now=None, line=None, warn=None, session=None
     home = home or home_dir()
     state = state or state_dir(home)
     now = time.time() if now is None else now
-    a5, a7 = load_log(home)
+    a5, a7 = load_log(home, with_acct=True)
     b5, b7 = load_legacy(home, now)
+    acct, a5, a7, b5, b7 = by_account(a5, a7, b5, b7, current=load_account(home))
     s5, s7 = a5 + drop_stale_legacy(a5, b5), a7 + drop_stale_legacy(a7, b7)
     r5, rolled = _window(s5, now)
     ws = (max(r5, now - WINDOW) if rolled else r5 - WINDOW) if r5 else now
@@ -781,9 +877,9 @@ def estimate(home=None, state=None, now=None, line=None, warn=None, session=None
     if session and os.environ.get('CLAUDE_PID') and claude_pid_live(home, os.environ['CLAUDE_PID']):
         keys = dict((p, KeyInfo(False, v.sid, True, True) if (not v.sub and v.sid == session) else v)
                     for p, v in keys.items())
-    e = compute(s5, s7, reqs, keys, now, k_hist, line, warn, session)
+    e = compute(s5, s7, reqs, keys, now, k_for(k_hist, acct), line, warn, session)
     if e.persist:
-        save_k(state, k_hist, e.persist)
+        save_k(state, k_hist, e.persist, acct)
     return e
 
 
