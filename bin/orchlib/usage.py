@@ -8,6 +8,13 @@ Reads only local files under H = $ORCH_USAGE_HOME or ~/.claude; writes only its 
 ($ORCH_USAGE_STATE or H/.orch-usage/, atomic writes, never required). No network.
 I/O loaders are separate from compute(), which is pure (no files, no clock) so replays can drive it.
 
+Account rule: the samples of one account only. Every log line may carry the account (7th field: first 8 chars of
+oauthAccount.accountUuid, '-' or absent = untagged). The current account is the tag of the newest log line; its tagged
+lines are kept whenever they were written (A -> B -> A keeps A's earlier window), other accounts' lines are dropped,
+and untagged log lines and legacy-cache samples count only from T, the first tagged line of the current account's latest
+run (a run is ended only by a line of another account; untagged lines never break it). A newest line that is untagged filters nothing. k history (k.json) is kept per account
+(`by_acct`); a tagged account never reads or writes the top-level k, which stays the untagged fallback.
+
 Known limit: usage made outside this machine's transcripts (claude.ai, other devices) is invisible
 until the next sample shows it; U and the window high-water bound it, nothing more.
 """
@@ -351,8 +358,15 @@ def _num(s):
     return v
 
 
-def load_log(home):
-    """The sample log: '<epoch> <p5> <reset5> <p7> <reset7> <sid>', '-' = unknown; malformed lines skipped."""
+def _acct(tok):
+    """The log's 7th field -> account id, or None (untagged: '-', absent or malformed)."""
+    ok = tok and len(tok) == 8 and all(c in '0123456789abcdef-' for c in tok) and tok != '-' * 8
+    return tok if ok else None
+
+
+def load_log(home, with_acct=False):
+    """The sample log: '<epoch> <p5> <reset5> <p7> <reset7> <sid> [<acct>]', '-' = unknown; malformed lines skipped.
+    6 fields = untagged. with_acct appends the account (or None) to every sample: (t, p5, r5, sid, acct), (t, p7, r7, acct)."""
     s5, s7 = [], []
     try:
         fh = open(os.path.join(home, '.statusline-usage-log'), encoding='utf-8', errors='replace')
@@ -361,7 +375,7 @@ def load_log(home):
     with fh:
         for line in fh:
             parts = line.split()
-            if len(parts) != 6 or not parts[0].isdigit():
+            if len(parts) not in (6, 7) or not parts[0].isdigit():
                 continue
             try:
                 t = float(parts[0])
@@ -369,11 +383,31 @@ def load_log(home):
             except ValueError:
                 continue
             sid = None if parts[5] == '-' else parts[5]
+            extra = (_acct(parts[6] if len(parts) == 7 else None),) if with_acct else ()
             if p5 is not None and r5 is not None:
-                s5.append((t, p5, r5, sid))
+                s5.append((t, p5, r5, sid) + extra)
             if p7 is not None and r7 is not None:
-                s7.append((t, p7, r7))
+                s7.append((t, p7, r7) + extra)
     return s5, s7
+
+
+def by_account(log5, log7, legacy5, legacy7):
+    """Pure. Apply the account rule (module docstring) to log samples carrying a trailing acct and to legacy samples.
+    -> (acct, log5, log7, legacy5, legacy7): acct is None when the newest log line is untagged or there is none (nothing is
+    filtered then); the log lists come back without the acct element, in compute()'s shapes."""
+    ev = sorted([(s[0], s[-1]) for s in log5] + [(s[0], s[-1]) for s in log7], key=lambda e: e[0])
+    acct = ev[-1][1] if ev else None
+    if acct is None:
+        return None, [s[:-1] for s in log5], [s[:-1] for s in log7], legacy5, legacy7
+    t0 = ev[-1][0]
+    for t, a in reversed(ev):          # back to the last line of another account; untagged lines don't break the run
+        if a is not None and a != acct:
+            break
+        if a == acct:
+            t0 = t
+    keep = lambda s: s[-1] == acct or (s[-1] is None and s[0] >= t0)
+    return (acct, [s[:-1] for s in log5 if keep(s)], [s[:-1] for s in log7 if keep(s)],
+            [s for s in legacy5 if s[0] >= t0], [s for s in legacy7 if s[0] >= t0])
 
 
 def _read_reset(path):
@@ -743,13 +777,29 @@ def load_k(state):
         return {}
 
 
-def save_k(state, k_hist, persist):
-    """Record (r5, k) for the trailing distribution; atomic; failures are silent (state is never required)."""
+def k_for(k_hist, acct):
+    """The k history one run uses: the top-level entry (untagged), or that account's by_acct entry ({} when new)."""
+    if acct is None:
+        return k_hist
+    by = k_hist.get('by_acct')
+    e = by.get(acct) if isinstance(by, dict) else None
+    return e if isinstance(e, dict) else {}
+
+
+def save_k(state, k_hist, persist, acct=None):
+    """Record (r5, k) for the trailing distribution; atomic; failures are silent (state is never required).
+    k_hist is the whole k.json; a tagged run writes only its by_acct entry, an untagged one only the top level."""
     r5, k = persist
-    wins = [w for w in (k_hist.get('windows') or []) if isinstance(w, list) and len(w) == 2 and abs(w[0] - r5) > GROUP]
+    mine = k_for(k_hist, acct)
+    wins = [w for w in (mine.get('windows') or []) if isinstance(w, list) and len(w) == 2 and abs(w[0] - r5) > GROUP]
     wins.append([r5, round(k, 4)])
     wins = sorted(wins)[-K_TRAIL:]
-    data = {'k': round(k, 4), 'windows': wins}
+    entry = {'k': round(k, 4), 'windows': wins}
+    if acct is None:
+        data = dict(k_hist, **entry)
+    else:
+        by = k_hist.get('by_acct')
+        data = dict(k_hist, by_acct=dict(by if isinstance(by, dict) else {}, **{acct: entry}))
     if data == k_hist:
         return
     try:
@@ -768,8 +818,9 @@ def estimate(home=None, state=None, now=None, line=None, warn=None, session=None
     home = home or home_dir()
     state = state or state_dir(home)
     now = time.time() if now is None else now
-    a5, a7 = load_log(home)
+    a5, a7 = load_log(home, with_acct=True)
     b5, b7 = load_legacy(home, now)
+    acct, a5, a7, b5, b7 = by_account(a5, a7, b5, b7)
     s5, s7 = a5 + drop_stale_legacy(a5, b5), a7 + drop_stale_legacy(a7, b7)
     r5, rolled = _window(s5, now)
     ws = (max(r5, now - WINDOW) if rolled else r5 - WINDOW) if r5 else now
@@ -781,9 +832,9 @@ def estimate(home=None, state=None, now=None, line=None, warn=None, session=None
     if session and os.environ.get('CLAUDE_PID') and claude_pid_live(home, os.environ['CLAUDE_PID']):
         keys = dict((p, KeyInfo(False, v.sid, True, True) if (not v.sub and v.sid == session) else v)
                     for p, v in keys.items())
-    e = compute(s5, s7, reqs, keys, now, k_hist, line, warn, session)
+    e = compute(s5, s7, reqs, keys, now, k_for(k_hist, acct), line, warn, session)
     if e.persist:
-        save_k(state, k_hist, e.persist)
+        save_k(state, k_hist, e.persist, acct)
     return e
 
 
