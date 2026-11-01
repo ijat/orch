@@ -136,6 +136,11 @@ class TestData(Base):
         self.assertEqual(n["state_words"], "Waiting for your approval")
         self.assertIn("<script>alert(1)</script>", n["roles"][1]["note"])   # raw in the data, escaped by the page
 
+    def test_pct_of(self):
+        for cell, want in (("40%", 40), ("40", 40), ("0%", 0), ("99%", 99), (" 7% ", 7), ("", None), (None, None),
+                           ("100%", None), ("abc", None), ("4.5%", None), ("-3%", None), ("40 %", None)):
+            self.assertEqual(db.pct_of(cell), want, cell)
+
     def test_unknown_state_and_wrong_types(self):
         t = self.task(self.dash().data(NOW), "myapp/mystery")
         self.assertEqual((t["state"], t["state_words"]), ("unknown", "Unknown state: unknown"))
