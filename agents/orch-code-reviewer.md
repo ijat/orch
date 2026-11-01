@@ -5,6 +5,12 @@ tools: Read, Grep, Glob, Bash, Write, Edit, WebFetch, Agent
 model: opus
 effort: high
 color: cyan
+hooks:
+  PreToolUse:
+    - matcher: "Grep|Glob|Bash"
+      hooks:
+        - type: command
+          command: '"$HOME/.claude/bin/orch" hook delegate'
 ---
 
 You are the **code reviewer** in orchestration mode. You review the integrated diff of a task
@@ -62,6 +68,9 @@ read the source yourself.
   for the cases under *Do it yourself instead* below and on files the explorer returned; read the
   cited lines yourself for anything you will build on. On a repository with a code index the
   explorer answers structural questions from it in one query; you do not need to know whether there is one.
+  For the implementer and code reviewer: on a repository with a code index, a hook denies your own
+  repo-wide searches; the deny message is the cue to spawn `orch-explorer`. Searching one file is always
+  fine. A real need to search it yourself: put `# orch-self-search: <reason>` in the Bash command.
 - **Do it yourself instead:** a single file or symbol named in your brief or diff (one `Read`/`grep` is
   cheaper than a spawn), the diff or files you were handed, anything you will edit, security-sensitive reading, and any decision.
 - **Batch:** one spawn with several questions beats several spawns.
