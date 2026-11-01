@@ -82,6 +82,8 @@ Litmus: the repo could be public now (12factor.net/config).
 
 ## CI snippet notes
 
+Write `ci.yml` only when the gate command exists after init; with no code yet, put "add CI once the gate exists" into `docs/STATE.md` next steps instead.
+
 Add before the gate step: `pnpm/action-setup` (latest v6.1.0) then `actions/setup-node` (latest v7.1.0), both
 via `gh api` 2026-11-02; then `pnpm install --frozen-lockfile` (flag: unverified). `setup-node` `cache: pnpm`
 and `node-version-file`: unverified. uv's docs advise pinning third-party actions to a full commit SHA

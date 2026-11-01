@@ -77,6 +77,8 @@ One `load_config(environ)` returning a frozen dataclass (stdlib), called in `mai
 
 ## CI snippet notes
 
+Write `ci.yml` only when the gate command exists after init; with no code yet, put "add CI once the gate exists" into `docs/STATE.md` next steps instead.
+
 `astral-sh/setup-uv` latest is v10.3.3 (`gh api` 2026-11-02; the uv docs example still shows v9.0.0, so check).
 Then `uv sync --locked --all-extras --dev` and the gate (both from the uv GitHub integration page). The uv docs
 recommend pinning actions to a full commit SHA with a version comment; do so for `setup-uv`.

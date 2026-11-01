@@ -76,6 +76,8 @@ committed, `.env*` ignored and denied (`templates/snippets.md`). Litmus: 12facto
 
 ## CI snippet notes
 
+Write `ci.yml` only when the gate command exists after init; with no code yet, put "add CI once the gate exists" into `docs/STATE.md` next steps instead.
+
 `actions/setup-go` latest v7.0.0 (`gh api` 2026-11-02); `go-version-file: go.mod` input: unverified. Install staticcheck at
 the pinned version, then the gate. Add `go mod verify` / `go mod tidy` diff check: unverified.
 

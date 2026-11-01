@@ -65,7 +65,9 @@ instead. Never overwrite an existing `CLAUDE.md`.
    1. *Ecosystem*: the stack, or non-code (docs, design, data). If it has no
       `references/<ecosystem>.md`, say the agent will run at `opus/medium` and research it from
       primary docs.
-   2. *Extras* (multi-select, all opt-in): gate command and CI; `.claude/settings.json` (deny rules,
+   2. *Extras* (multi-select, all opt-in): gate command and CI (the CI workflow is written only when the
+      gate command exists after init; with no code yet, "add CI once the gate exists" goes into
+      `docs/STATE.md` next steps instead, so there is no red CI from day 0); `.claude/settings.json` (deny rules,
       allow the gate) with format hook and secret scan; README and LICENSE; `CLAUDE.local.md`.
    3. *Workflow rules that differ per project*: worktree per task (always / never / ask), commit per
       change vs per task, deploy or mutate-confirmation gates. Never default these: past projects
@@ -73,6 +75,9 @@ instead. Never overwrite an existing `CLAUDE.md`.
    4. *Project facts*: name, one-line purpose, license type (only if LICENSE was picked), budget or
       scope hard limits (free-tier cap, offline only, ...).
    Ask the git remote and any push **separately and never as part of this batch** (hard stops, below).
+   "No remote" or "don't push" means *not now*: init writes no `git push`/`git remote` deny rule and no
+   "nothing is pushed" CLAUDE.md rule for it. Only if the user explicitly asks for a permanent ban, write
+   that rule and mark it `Override:` (the global file allows push after asking).
 4. **Phase 1 — proposal.** Spawn the `orch-init` agent (model `sonnet`, effort `high`; `opus`/`medium`
    when no reference file) per the Dispatch protocol, with the brief: repo path, mode `new`, the base
    branch (the one `orch init --base` recorded; outside orchestration, the repo's current or intended
@@ -172,6 +177,8 @@ Content rules:
 ## What it never does
 
 - Add a remote, push, or choose a LICENSE type without asking (each is asked separately).
+- Turn "no remote / don't push now" into a deny rule or a standing project rule unless the user asked for a permanent ban (then it is marked `Override:`).
+- Write a CI workflow that would fail on day 0 because its gate command does not exist yet.
 - Overwrite an existing `CLAUDE.md` or `AGENTS.md`; in `new` mode that switches to `audit`.
 - Copy global rules into the project (global-rule dedup, above), or duplicate CLAUDE.md into AGENTS.md.
 - Write the repo in `audit` mode, or before the user approved the proposal.

@@ -90,6 +90,8 @@ in `appsettings.json`; `.env*`/secrets files ignored and denied (`templates/snip
 
 ## CI snippet notes
 
+Write `ci.yml` only when the gate command exists after init; with no code yet, put "add CI once the gate exists" into `docs/STATE.md` next steps instead.
+
 `actions/setup-dotnet` latest v6.0.0 (`gh api` 2026-11-02); `global-json-file` input: unverified. Then `dotnet restore`
 and the gate. Windows-only projects (WPF/WinForms) need `runs-on: windows-latest` (unverified).
 

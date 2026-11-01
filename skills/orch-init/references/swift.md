@@ -80,6 +80,8 @@ repo, `Info.plist` or logs. `.env*` ignored and denied (`templates/snippets.md`)
 
 ## CI snippet notes
 
+Write `ci.yml` only when the gate command exists after init; with no code yet, put "add CI once the gate exists" into `docs/STATE.md` next steps instead.
+
 macOS runners carry Xcode and so `swift`; Linux needs a toolchain step. `swift-actions/setup-swift` latest release v2.4.0
 (published 2025-11-19, `gh api`); whether it supports the current Swift is unverified, so check its README before use.
 Runner image names and installed Xcode versions: unverified.

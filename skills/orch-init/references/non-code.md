@@ -20,8 +20,8 @@ Pick folders by the kind of work, name them in CLAUDE.md in one line each:
 - **Research / strategy:** `README.md` as the index, `strategy/` (positioning, formats), `research/`
   (dated findings, evidence, tool comparisons, limits, sources), `plans/` (proposals, not commitments), `workflows/`
   (repeatable steps), `templates/` (reusable briefs), `admin/` (private notes, never in shareable docs).
-- **Creative production:** a shared source of truth (`playbooks/base-prompt.md`), a per-item template
-  (`playbooks/track-template.md`), one file per item (`tracks/NN-slug.md`), an index (`album.md`). Rule: a compiled item =
+- **Creative production:** a shared source of truth (`playbooks/base.md`), a per-item template
+  (`playbooks/item-template.md`), one file per item (`items/NN-slug.md`), an index (`index.md`). Rule: a compiled item =
   shared base + item prompt; any departure from the base is written down under "Deviations from base" in the item file.
 - **Scope / planning workspace:** one source document (`*.xlsx`), derived docs
   numbered `docs/00-overview.md ...`, a `glossary.md`, an `analysis/` folder for contradictions and gaps. The CLAUDE.md
@@ -34,7 +34,7 @@ Pick folders by the kind of work, name them in CLAUDE.md in one line each:
 No gate by default. Optional, ask once: Markdown link check and spell check (tool choice: unverified, research it at write
 time), a script that rebuilds derived docs from the source file (only if the project has one), a secret scan if any
 private notes or contact details exist (`templates/snippets.md`). Preserve originals: never overwrite source media or
-raw data; generated outputs go to a separate folder (for example `media/raw/` vs `media/exports/`).
+raw data; generated outputs go to a separate folder (for example `source/` vs `exports/`).
 
 ## Strictness from day 0
 
@@ -57,7 +57,7 @@ dated entries in `research/` or `docs/DECISIONS.md`.
 ## Errors
 
 Not applicable. Contradictions between sources are findings: record them in an `analysis/` or `research/` file with both
-sources and the date (for example `docs/analysis/gap-analysis.md`), do not silently pick one.
+sources and the date (for example `analysis/gaps.md`), do not silently pick one.
 
 ## Config and secrets
 
@@ -73,7 +73,7 @@ step exists" under Commands.
 
 ## CI snippet notes
 
-No CI by default. A docs-only gate would run the script above in the GitHub Actions workflow from `templates/snippets.md`.
+No CI by default (and no workflow until a gate command exists; until then "add CI once the gate exists" goes into `docs/STATE.md` next steps). A docs-only gate would run the script above in the GitHub Actions workflow from `templates/snippets.md`.
 Publishing a site from the docs (Pages, static generator): unverified, only on request.
 
 ## Gotchas

@@ -450,7 +450,8 @@ seeds `status.md` (`task_state: planning`) and `log.md`, journals `task_start`, 
 ### 3a. New repository — offer orch-init
 
 Applies only when the repo is new or empty, by the `orch-init` skill's *When it runs* test (do not
-restate it here). For any other repo skip this step: nothing below changes its flow. Load the
+restate it here). For any other repo skip this step: nothing below changes its flow, and nothing about
+init is logged or journaled (only an offered-and-answered init gets `init: set up` / `init: skipped`). Load the
 `orch-init` skill (`~/.claude/skills/orch-init/SKILL.md`) and run its mode `new` through its hand-off:
 it restates the project, offers the setup with a strong "don't skip" line, asks one question batch,
 shows the proposal, and has the `orch-init` agent write the files in the repo's main checkout on the

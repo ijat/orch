@@ -80,6 +80,8 @@ One typed loader in a `<app>-config` module or crate, called in `main`, fail fas
 
 ## CI snippet notes
 
+Write `ci.yml` only when the gate command exists after init; with no code yet, put "add CI once the gate exists" into `docs/STATE.md` next steps instead.
+
 Toolchain step: `dtolnay/rust-toolchain` (latest release tag is `v1`, published 2022; branch names such as `@stable`
 and `components:` input: unverified) or the runner's preinstalled rustup (unverified). Cache: `Swatinem/rust-cache`
 latest v2.9.3 (`gh api` 2026-11-02). Then the gate command. Installing `rustfmt` and `clippy` components must be explicit.

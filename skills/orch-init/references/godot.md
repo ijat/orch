@@ -87,6 +87,8 @@ the environment from an exported build: unverified; a gitignored config resource
 
 ## CI snippet notes
 
+Write `ci.yml` only when the gate command exists after init; with no code yet, put "add CI once the gate exists" into `docs/STATE.md` next steps instead.
+
 Options: `Scony/godot-gdscript-toolkit@master` action for static checks (in its README); `chickensoft-games/setup-godot`
 latest v2.4.3 to install the engine (`gh api`; its inputs: unverified); or download the Linux headless binary. Pin the Godot
 version in CI to the one in `project.godot` features. Import the project once before tests (`godot --headless --import`,
