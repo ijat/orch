@@ -142,7 +142,7 @@ Content rules:
 - Architecture: `references/architecture.md` (swappable interfaces at every boundary, composition
   root, contract test per interface, enforced boundaries). Ecosystem commands, layout and conventions:
   `references/<ecosystem>.md` (`typescript`, `python`, `rust`, `go`, `dotnet`, `swift`, `godot`,
-  `non-code`), each stamped `verified: <date>`. A reference older than 6 months, or one for a tool
+  `non-code`), each stamped `verified: <date>`. A reference older than 90 days, or one for a tool
   version the agent finds newer, is re-verified against primary docs before use; say so in the proposal.
 
 ## What it never does
