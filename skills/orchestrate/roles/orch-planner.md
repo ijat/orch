@@ -49,10 +49,11 @@ install a missing binary), and queries on that index go to `orch-explorer`.
 `ORCH_INDEX_AUTOINSTALL` is not `0`, `ORCH_INDEX_BIN` is unset or empty, no `orch-index` is on `PATH`,
 and `~/.claude/bin/orch-index` does not exist; it then runs `~/.claude/bin/orch-install-code-index.sh`
 once (Bash timeout 300 s) and, if `stats` still fails after that, reports the script's last line and
-stops. Call it
-(foreground, one at a time) before planning on a repository of ≥ 100K tracked files, or when the
+stops. The orchestrator has already run the pre-plan index check before your spawn (it builds a
+missing index and rebuilds a stale or behind one), so you add no pre-plan call. Call it
+(foreground, one at a time) only when the
 explorer's reply says the index is stale (`index unavailable: stale … (refresh: orch-graph)`) on a
-repository that has one; never for `no index`, never for `binary not found` on a smaller repository, never for an index that is only behind HEAD (the
+repository that has one; never for `no index`, never for `binary not found`, never for an index that is only behind HEAD (the
 explorer reads that one, `index at <sha> + delta search`), and never for a stale line without the
 refresh hint (a linked worktree). Point it at the main checkout, not a task worktree. While it runs, wait: spawn no explorer and explore nothing yourself. Never
 call it twice for the same state.

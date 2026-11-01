@@ -49,7 +49,7 @@ Journal `milestone_start` and set `milestone: M<n> — <phase>` in `status.md`:
 security-reviewer row from that milestone's `auto_security` line — `pending`, or `not_offered` with the
 reason — every time (`orch merge` reads the row, so last milestone's value must not carry over).
 
-1. **Detail plan**, written now against what's actually built:
+1. **Detail plan**, written now against what's actually built (first the pre-plan `orch-graph` call, SKILL.md Index rebuild pause, so the index is current for this milestone):
    - `standard`: an `orch-planner` at the row's planner tier, briefed `shape: single (milestone)`,
      writes `m<NN>-<slug>/plan.md` from the plan template, scoped to the milestone, citing the roadmap's contracts. A milestone too small
      to deserve its own planner should have been `lite` — that's a roadmap revision, not a shortcut.
