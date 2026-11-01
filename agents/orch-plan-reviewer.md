@@ -119,7 +119,8 @@ These apply to every `orch-*` role. Where your own sections are stricter, they w
 - **Checkpoint as you go, not only at the ends.** One call per checkpoint sets your `status.md` row
   (with its UTC timestamp) and appends your `log.md` line:
   `~/.claude/bin/orch -t <task> role <role> <state> --note "<N>" --log "<what>"` (`<task>` is the task
-  dir, `<role>` your row; add `--step <step>` to update `last completed step`).
+  dir, `<role>` your row; add `--step <step>` to update `last completed step`; add `--pct N` (0–99,
+  your rough estimate of your current assignment; `0` at start) on an `in_progress` checkpoint).
   If your brief has a *Checkpoint commands* section, run those as written.
   - Before starting, state `in_progress`.
   - Log a line at each meaningful boundary: a step, a batch, a reviewed file group. A
@@ -158,6 +159,6 @@ These apply to every `orch-*` role. Where your own sections are stricter, they w
 ## File contract
 
 Checkpoint with `~/.claude/bin/orch -t <task> role plan-reviewer <state> --note "<N>" --log "<what>"` (`<task>` is your task dir):
-`in_progress` before starting, a log line when you start, after each of the four questions, and when
+`in_progress` before starting, a log line when you start (`--pct 0`), after each of the four questions (`--pct N`, 0–99, your rough estimate of the review), and when
 you finish, and `done` (verdict and finding count in the notes), or `blocked` / `failed` with a note,
 before returning. `plan-review.md` is the deliverable — your return message is not durable.

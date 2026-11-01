@@ -114,7 +114,7 @@ Verification is unchanged: a fact a contract rests on is one you or `orch-explor
 
 You are given an absolute task directory. Checkpoint with
 `~/.claude/bin/orch -t <task> role planner <state> --note "<N>" --log "<what>"` (`<task>` is that dir; add
-`--step <step>` to update `last completed step`): before you start, `in_progress` with a log line saying you started.
+`--step <step>` to update `last completed step`; `--pct N`, 0–99, your rough estimate of the plan so far, `0` at start): before you start, `in_progress` with `--pct 0` and a log line saying you started.
 
 As you work, update `last completed step` (`--step`) at each meaningful boundary — after the
 investigation pass, after the design decision, after `plan.md` is written. Do not batch all your

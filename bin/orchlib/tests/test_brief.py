@@ -190,6 +190,9 @@ class TestImplementBrief(BriefBase):
         self.assertIn("~/.claude/bin/orch -t %s role 'implementer' in_progress --note 'working on step(s) 1, 2' --log 'started step(s) 1, 2'" % q, c)
         self.assertIn("role 'implementer' done --step '2' --note '<one line>' --log 'done: <one line>'", c)
         self.assertIn("role 'implementer' blocked --note 'need: <what>' --log 'blocked: <what>'", c)
+        self.assertIn("--log 'started step(s) 1, 2' --pct 0\n", c)
+        self.assertIn("--log 'step <id> done: <what> (<commit sha>)' --pct '<0-99: your rough estimate of this assignment>'\n", c)
+        self.assertEqual([l for l in c.splitlines() if "--pct" in l and (" done " in l or " blocked " in l)], [])
         _, text = self.brief("implement", "1", "--role", "implementer:part-a")
         self.assertIn("role 'implementer:part-a' in_progress", sec(text, "Checkpoint commands"))
         self.refused(1, "implement", "1", "--role", "bad role; rm")
@@ -691,6 +694,9 @@ class TestReviewBrief(BriefBase):
         c = sec(text, "Checkpoint commands")
         self.assertIn("~/.claude/bin/orch -t '%s' role 'code-reviewer' in_progress --note 'reviewing' --log 'started review'" % self.d, c)
         self.assertIn("role 'code-reviewer' done --note '<verdict>, <N> findings' --log 'done: <verdict>'", c)
+        self.assertIn("--log 'started review' --pct 0\n", c)
+        self.assertIn("--log 'reviewed <file group>' --pct '<0-99: your rough estimate of this assignment>'\n", c)
+        self.assertEqual([l for l in c.splitlines() if "--pct" in l and (" done " in l or " blocked " in l)], [])
         _, text = self.brief("security")
         self.assertIn("role 'security-reviewer' blocked --note 'need: <what>'", sec(text, "Checkpoint commands"))
 
@@ -786,7 +792,8 @@ class TestProgramReviewBrief(BriefBase):
         cmds = [l for l in block.split("\n") if l and not l.startswith("#")]
         self.assertEqual(len(cmds), 4)
         for line in cmds:
-            argv = shlex.split(line.replace("<verdict>", "pass").replace("<N>", "0").replace("<file group>", "all")
+            argv = shlex.split(line.replace("<0-99: your rough estimate of this assignment>", "40")
+                               .replace("<verdict>", "pass").replace("<N>", "0").replace("<file group>", "all")
                                .replace("<what>", "x"))
             self.assertEqual(argv[0], "~/.claude/bin/orch")
             self.assertEqual(argv[1:3], ["-t", self.d])      # the program dir, never the milestone dir
