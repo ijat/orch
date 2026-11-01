@@ -13,5 +13,5 @@
 - worktree policy / commit cadence: {{answers}}
 - files written: {{list}}
 - commit: {{sha}} chore: initialize project (orch-init)
-- refresh: pending   <!-- pending | done | n/a ; set to done after the refresh commit -->
+- refresh: pending   <!-- pending | done | skipped | n/a ; done after the refresh commit; skipped when the user declines the refresh (set by the session). Only pending fires -->
 - refresh commit: {{sha or -}}

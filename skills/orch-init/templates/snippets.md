@@ -64,7 +64,8 @@ secret scan); every extra rule is something to maintain.
 
 ## Opt-in: format hook (PostToolUse, in the same settings.json)
 
-Merge into the file above. `{{formatter}}` is the ecosystem's formatter from `references/<eco>.md`.
+Merge into the file above. `{{formatter}}` is the ecosystem's per-file formatter from the "Per-file
+formatter for the hook" line of `references/<eco>.md`; `{{ext}}` is its source extension (for example `rs`).
 
 ```json
 {
@@ -73,7 +74,7 @@ Merge into the file above. `{{formatter}}` is the ecosystem's formatter from `re
       {
         "matcher": "Edit|Write",
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/format.sh" }
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/format.sh" }
         ]
       }
     ]
@@ -83,12 +84,14 @@ Merge into the file above. `{{formatter}}` is the ecosystem's formatter from `re
 
 `.claude/hooks/format.sh` (commit it, `chmod +x`). The hook receives JSON on stdin; the edited path is
 `tool_input.file_path` (<https://code.claude.com/docs/en/hooks>). PostToolUse cannot block the tool (it
-already ran); exit 2 shows stderr to Claude, other non-zero exits are only a notice:
+already ran); exit 2 shows stderr to Claude, other non-zero exits are only a notice. The extension
+filter keeps formatters that reject non-source files from failing on CLAUDE.md or STATE.md edits:
 
 ```bash
 #!/bin/bash
 file=$(jq -r '.tool_input.file_path // empty')
 [ -n "$file" ] || exit 0
+case "$file" in *.{{ext}}) ;; *) exit 0 ;; esac   # only source files; skip .md, .json, ...
 if ! out=$({{formatter}} "$file" 2>&1); then
   echo "$out" >&2
   exit 2

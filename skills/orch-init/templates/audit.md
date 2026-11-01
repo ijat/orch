@@ -23,6 +23,11 @@ The agent never edits the repo. Every finding has evidence and a proposed diff. 
 
 - {{size, global duplicates, stale commands, tracked local files, shared-file drift, missing STATE/DECISIONS, missing seams, rules that should be hooks}}
 
+## Not run (mutating)
+
+- {{documented commands that were only checked for existence: deploy, migrate, install, push, in-place format}}
+- `git status --porcelain` before/after: {{empty / empty, or unchanged}}
+
 ## Not checked
 
 - {{anything that could not be verified, and why}}

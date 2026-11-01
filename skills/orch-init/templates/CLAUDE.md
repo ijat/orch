@@ -18,7 +18,7 @@ same commit as the work. Decisions live in `docs/DECISIONS.md`; do not re-open o
 
 ## Commands
 
-<!-- Exact, copy-pasteable, each one actually run when this file was written. Delete lines that do not apply. -->
+<!-- Exact, copy-pasteable. Each one that can run on the repo as it is was actually run when this file was written. A command that needs code that does not exist yet is written with the suffix "(not yet runnable (no code))" and is not run. Delete lines that do not apply. -->
 - Build: `{{cmd}}`
 - Test (all): `{{cmd}}`
 - Test (one): `{{cmd with a placeholder for the test name}}`
@@ -27,11 +27,11 @@ same commit as the work. Decisions live in `docs/DECISIONS.md`; do not re-open o
 
 ## Architecture rules
 
-<!-- <= 10 lines, from references/architecture.md, named for THIS project's boundaries. -->
-- Anything external or replaceable ({{storage, network clients, third-party libs, OS, clock, randomness, logging sink}}) sits behind an interface owned by the core; implementations live in `{{adapter dir}}`.
-- One composition root (`{{file}}`) wires interfaces to implementations; nothing else constructs adapters.
-- Dependencies point inward only: `{{adapter}} -> {{core}}`, never the reverse. Enforced by `{{test or script}}`.
-- Each interface has a contract test every implementation passes (`{{path}}`) and a fake for tests.
+<!-- <= 10 lines, from references/architecture.md, named for THIS project's boundaries. Init writes docs and config only, so every path below is planned: write each as "{{path}} (to be created by the first plan)" and assert nothing exists that does not. -->
+- Anything external or replaceable ({{storage, network clients, third-party libs, OS, clock, randomness, logging sink}}) sits behind an interface owned by the core; implementations live in `{{adapter dir}}` (to be created by the first plan).
+- One composition root (`{{file}}`, to be created by the first plan) wires interfaces to implementations; nothing else constructs adapters.
+- Dependencies point inward only: `{{adapter}} -> {{core}}`, never the reverse. Enforced by `{{test or script}}` (to be created by the first plan; the gate runs it once it exists).
+- Each interface has a contract test every implementation passes (`{{path}}`, to be created by the first plan) and a fake for tests.
 - Add a new {{driver/provider/codec/...}} by adding an adapter and registering it in the composition root; the core does not change.
 {{Link `docs/ARCHITECTURE.md` here only if that file was created.}}
 

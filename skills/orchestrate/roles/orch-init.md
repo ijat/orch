@@ -17,6 +17,7 @@ boundaries and your report.
 
 - `mode`: `new`, `refresh` or `audit`; `phase`: `1` (proposal) or `2` (write) for `new` and `refresh`.
 - `repo`: absolute path of the repository (its main checkout, on the base branch).
+- `base`: the base branch name (already recorded by the session; for `new` the init commit lands on it).
 - `task dir` (when orchestrated) and the orchestrations dir `~/.claude/orchestrations/<repo-name>/`.
 - `answers`: the user's choices (ecosystem, extras, workflow rules, project facts). Never re-ask.
 - the global `CLAUDE.md` path (default `~/.claude/CLAUDE.md`), the skill dir, and for phase 2 the
@@ -31,15 +32,20 @@ with a build manifest or an instruction file), do not guess: set your row `block
 - **Phase 1 writes only the proposal** (`~/.claude/orchestrations/<repo-name>/init-proposal.md`).
   No repo write of any kind, not even `git init`.
 - **Phase 2 writes only the files the approved proposal lists**, plus `init.md` in the orchestrations
-  dir. Anything the proposal does not list is not written.
+  dir. Anything the proposal does not list is not written. **Docs and config only: no code skeleton**
+  (no `cargo new`/`npm init`, manifest, `src/`, scripts or boundary checks); the first plan creates
+  the code, and CLAUDE.md names those paths as "to be created by the first plan".
 - **`audit` never edits the repo.** It writes only `audit.md` in the orchestrations dir.
 - **Mode `new` never overwrites** an existing `CLAUDE.md`, `AGENTS.md` or `.claude/CLAUDE.md`: stop
   and report so the session switches to `audit`.
 - **Never push, add a remote, or pick a license type.** The license type comes from `answers`; if it
   is missing, leave LICENSE out and say so.
-- **`git init` only when the directory is not a repo**, and only in phase 2. One commit, message
+- **`git init -b <base>` only when the directory is not a repo**, and only in phase 2. In an existing
+  repo with no commits, `git symbolic-ref --short HEAD` must equal `<base>`; if not, set `blocked`
+  with `need: base mismatch` and stop. Never rename or switch a branch. One commit, message
   `chore: initialize project (orch-init)` (refresh: `chore: refresh project docs (orch-init)`).
-  Stage explicit paths only; never `git add -A`, `-u` or `.`.
+  Stage explicit paths only (the files you wrote plus the untracked docs the proposal listed); never
+  `git add -A`, `-u` or `.`.
 - **Never commit** a secret or real value, `.env*` (except `.env.example`), `CLAUDE.local.md` or
   `.claude/settings.local.json`.
 - **Do not install tools or change global config** on the machine; propose the command in the
@@ -63,27 +69,37 @@ Follow the skill's section for your mode. In every mode:
    `STATE.md`, `DECISIONS.md`, `snippets.md` for offered extras). Keep what an agent cannot infer:
    commands, invariants, decisions, swap points. No layout listing, dependency list or tutorial.
 3. Phase 1 (`new`, `refresh`): write the proposal from `templates/proposal.md`: file list with sizes,
-   the filled CLAUDE.md, the commands you ran and their results, the architecture (interfaces and
+   the filled CLAUDE.md (plus untracked docs already in the repo, which the init commit will include),
+   the commands you ran and their results, the planned architecture (interfaces and
    adapters named for this project), what you dropped as a global duplicate, open questions. Refresh
    proposes diffs only.
 4. Phase 2: write the approved files, verify (below), commit once, write `init.md` from
    `templates/init-record.md` (`refresh: pending` after `new`; `refresh: done` after `refresh`).
 5. `audit`: run the skill's checks (size, duplicates and contradictions with the global file, stale
    commands, tracked local/secret files, missing pieces, rules that should be hooks) and write
-   `audit.md` from `templates/audit.md`: each finding with evidence and a proposed diff.
+   `audit.md` from `templates/audit.md`: each finding with evidence and a proposed diff. For stale
+   commands (also when a `refresh` proposal re-runs commands) run only non-mutating forms (build,
+   test, lint/format in check mode, `--help`, `command -v`), and only when `git status --porcelain`
+   is empty; deploy, migrate, install, push and in-place format commands are checked for existence
+   only and listed as "not run (mutating)". Afterwards confirm `git status --porcelain` is
+   unchanged and report it.
 
 ## Verify before you report (phase 2)
 
 Evidence for each line goes in your report; a line without evidence is unchecked.
 
 - `CLAUDE.md` is at most 120 lines for a typical project (hard cap 200); `AGENTS.md` at most 5 lines.
-- Every command listed under `Commands` in `CLAUDE.md` was actually run, and its result is stated.
-  The gate command passes, or the report says exactly why it cannot yet (for example no code yet).
-- Every path `CLAUDE.md` names exists.
+- Every command listed under `Commands` in `CLAUDE.md` that can run on the repo as it is was
+  actually run, and its result is stated. A command that needs code that does not exist yet is marked
+  `not yet runnable (no code)` in CLAUDE.md and is not run; there is no gate requirement while there is
+  no code. Check only what init wrote.
+- Every file `CLAUDE.md` names as existing exists; paths marked "to be created by the first plan" are
+  exempt.
 - `git ls-files` shows no `CLAUDE.local.md`, no `.env*` other than `.env.example`, no
   `.claude/settings.local.json`; the `.gitignore` lines are present.
 - No secret or real credential in any file (grep the diff; name only the pattern, never print a value).
-- `git status` is clean after the commit and `git log -1` shows the one commit.
+- After the commit, `git status --porcelain` is empty for the paths you wrote or the proposal listed
+  (report any other untracked file instead of touching it), and `git log -1` shows the one commit.
 
 ## Delegation and nested calls
 

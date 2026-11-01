@@ -128,7 +128,7 @@ task dirs: `~/.claude/orchestrations/LESSONS.md` (global),
 (`- merge: auto | ask`, `- security: rule | always | ask`; absent = `auto`, `rule`). Never use
 `~/.claude/tasks/` or `~/.claude/plans/` — Claude Code owns those.
 
-The `orch-init` skill (step 3a) also keeps `<repo-name>/init.md` (its record) and `<repo-name>/init-proposal.md` (the proposal) beside the task dirs.
+The `orch-init` skill (step 3a) also keeps `<repo-name>/init.md` (its record), `<repo-name>/init-proposal.md` (the proposal) and `<repo-name>/audit.md` (an audit's findings) beside the task dirs.
 
 **Every file above has a template in `~/.claude/skills/orchestrate/templates/`** — the single definition of its format, including
 state vocabularies and round rules. Nobody invents another layout or
@@ -449,17 +449,16 @@ seeds `status.md` (`task_state: planning`) and `log.md`, journals `task_start`, 
 
 ### 3a. New repository — offer orch-init
 
-Applies only when the repo is new or empty, by the `orch-init` skill's test (D12: no commits, or
-tracked files only from README/LICENSE/.gitignore/.gitattributes/docs/planning `*.md`, and no build
-manifest, `CLAUDE.md` or `AGENTS.md`; a non-git directory also counts). For any other repo skip this
-step: nothing below changes its flow. Load the `orch-init` skill (`~/.claude/skills/orch-init/SKILL.md`) and
-run its mode `new` from detection to the proposal gate: it restates the project, offers the setup with a
-strong "don't skip" line, asks one question batch, and has the `orch-init` agent write the files in the
-repo's main checkout on the base branch with one commit. The user may skip; journal the choice
-(`override` if they skipped against the recommendation, else `judgement`) and log `init: set up` or
-`init: skipped`. Then go on to step 4: the planner's brief names `CLAUDE.md`, `docs/STATE.md`,
-`docs/DECISIONS.md` and `~/.claude/orchestrations/<repo-name>/init.md` as required reading, and the init
-commit is the base the plan is made against.
+Applies only when the repo is new or empty, by the `orch-init` skill's *When it runs* test (do not
+restate it here). For any other repo skip this step: nothing below changes its flow. Load the
+`orch-init` skill (`~/.claude/skills/orch-init/SKILL.md`) and run its mode `new` through its hand-off:
+it restates the project, offers the setup with a strong "don't skip" line, asks one question batch,
+shows the proposal, and has the `orch-init` agent write the files in the repo's main checkout on the
+base branch with one commit. The user may skip; journal the choice (`override` if they skipped against
+the recommendation, else `judgement`) and log `init: set up` or `init: skipped`. Then go on to step 4:
+if set up, the planner's brief names `CLAUDE.md`, `docs/STATE.md`, `docs/DECISIONS.md` and
+`~/.claude/orchestrations/<repo-name>/init.md` as required reading, and the init commit is the base the
+plan is made against; after a skip those files do not exist and the brief omits them.
 
 ### 4. Plan
 
@@ -672,7 +671,7 @@ git -C <repo> worktree list                  # confirm no orch-<task-slug>* rema
 
 Keep the task directory — it's the record.
 
-**Init refresh.** After this merge, if `~/.claude/orchestrations/<repo-name>/init.md` says `refresh: pending`, run the `orch-init` skill's mode `refresh` once (a proposal the user approves, one commit), then it reads `refresh: done`. In program mode this runs after the first milestone's merge (`PROGRAM.md` §2).
+**Init refresh.** After this merge, if `~/.claude/orchestrations/<repo-name>/init.md` says `refresh: pending`, run the `orch-init` skill's mode `refresh` once (a proposal the user approves, one commit), then it reads `refresh: done`; if the user skips it, the session sets `refresh: skipped` and it is not offered again (only `pending` fires). In program mode this runs after the first milestone's merge (`PROGRAM.md` §2).
 
 **Every task end — merged, declined, failed merge, abandoned, or handed to the user — gets a
 `task_end` journal line and a `retro.md`**, before you report back: write `retro.md`, then

@@ -2,7 +2,7 @@
 Nothing is written to the repo until the user approves this. Keep it scannable. -->
 # Init proposal: {{repo-name}}
 
-- mode: {{new|refresh}}   ecosystem: {{...}}   tier: {{model/effort}}
+- mode: {{new|refresh}}   ecosystem: {{...}}   tier: {{model/effort}}   base branch: {{base}}
 - researched: {{date}}; reference `{{references/<eco>.md}}` verified {{date}}{{; re-verified against: <urls>}}
 
 ## Files
@@ -14,18 +14,19 @@ Nothing is written to the repo until the user approves this. Keep it scannable. 
 | docs/STATE.md | {{n}} | |
 | docs/DECISIONS.md | {{n}} | |
 | {{extras chosen}} | | |
+| {{untracked docs already in the repo (spec, design, planning .md): each path, "included in the init commit"}} | | existing |
 
 ## Commands run
 
 | Command | Result |
 |---|---|
-| {{cmd}} | {{exit code and one-line outcome}} |
+| {{cmd}} | {{exit code and one-line outcome, or "not yet runnable (no code)"}} |
 
-## Architecture (named for this project)
+## Architecture (planned, named for this project; none of it is created by init)
 
 - Boundaries and interfaces: {{interface -> adapters}}
 - Composition root: {{file}}
-- Contract tests / boundary check: {{paths}}
+- Contract tests / boundary check: {{paths, each "to be created by the first plan"}}
 
 ## Dropped as duplicates of ~/.claude/CLAUDE.md
 
