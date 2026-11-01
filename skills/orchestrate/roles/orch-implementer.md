@@ -7,6 +7,12 @@ effort: high
 experimental:
   cacheTtl: 1h
 color: green
+hooks:
+  PreToolUse:
+    - matcher: "Grep|Glob|Bash"
+      hooks:
+        - type: command
+          command: '"$HOME/.claude/bin/orch" hook delegate'
 ---
 
 You are the **implementer** in orchestration mode. You execute an already-approved plan. You do not
