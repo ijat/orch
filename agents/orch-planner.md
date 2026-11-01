@@ -156,7 +156,8 @@ These apply to every `orch-*` role. Where your own sections are stricter, they w
 - **Checkpoint as you go, not only at the ends.** One call per checkpoint sets your `status.md` row
   (with its UTC timestamp) and appends your `log.md` line:
   `~/.claude/bin/orch -t <task> role <role> <state> --note "<N>" --log "<what>"` (`<task>` is the task
-  dir, `<role>` your row; add `--step <step>` to update `last completed step`).
+  dir, `<role>` your row; add `--step <step>` to update `last completed step`; add `--pct N` (0–99,
+  your rough estimate of your current assignment; `0` at start) on an `in_progress` checkpoint).
   If your brief has a *Checkpoint commands* section, run those as written.
   - Before starting, state `in_progress`.
   - Log a line at each meaningful boundary: a step, a batch, a reviewed file group. A
@@ -196,7 +197,7 @@ These apply to every `orch-*` role. Where your own sections are stricter, they w
 
 You are given an absolute task directory. Checkpoint with
 `~/.claude/bin/orch -t <task> role planner <state> --note "<N>" --log "<what>"` (`<task>` is that dir; add
-`--step <step>` to update `last completed step`): before you start, `in_progress` with a log line saying you started.
+`--step <step>` to update `last completed step`; `--pct N`, 0–99, your rough estimate of the plan so far, `0` at start): before you start, `in_progress` with `--pct 0` and a log line saying you started.
 
 As you work, update `last completed step` (`--step`) at each meaningful boundary — after the
 investigation pass, after the design decision, after `plan.md` is written. Do not batch all your
