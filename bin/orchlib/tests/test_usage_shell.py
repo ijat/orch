@@ -91,6 +91,11 @@ def make_writer_tests(label):
             self.assertEqual(len(f), 7)
             self.assertAlmostEqual(float(f[1]), 53.0)
             self.assertEqual((f[2], f[3], f[4], f[5], f[6]), (str(self.r5), '57', str(self.r7), 'sid-a', '-'))
+            s5, s7 = usage.load_log(os.path.join(self.home, '.claude'))
+            self.assertEqual([(round(p), r, s) for _, p, r, s in s5], [(53, self.r5, 'sid-a')])
+            self.assertEqual([(p, r) for _, p, r in s7], [(57.0, self.r7)])
+            s5, _ = usage.load_log(os.path.join(self.home, '.claude'), with_acct=True)
+            self.assertIsNone(s5[0][-1])
 
         def test_acct_is_first_8_chars_of_uuid(self):
             self.set_acct('0a1b2c3d-1111-2222-3333-444455556666')
