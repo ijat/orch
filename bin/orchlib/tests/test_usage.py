@@ -256,6 +256,48 @@ class TestAccount(Home):
         self.assertEqual((e.p7, e.age7), (21, 400))
         self.assertEqual((e.p5, e.age5), (48, 400))
 
+    def replay_login(self, stale_tag, legacy=True):
+        """The real 2026-11-01 login shape: A (sid-c) at 7d 97-99, B's first render at 1793453662, then sid-c renders its stale
+        A payload (49/97 again) at 1793453670, before its own switch to B. stale_tag is what the writer gave that line:
+        A when it inherits from sid-c's identical previous line, B (the file's account) when there is none."""
+        self.line(1793451472, 69, 1793467200, 99, self.R7, self.A, 'sid-c')
+        if stale_tag == self.A:
+            self.line(1793452715, 49, 1793467200, 97, self.R7, self.A, 'sid-c')   # the prior identical line it inherits from
+        self.line(1793453662, 0, 1793471400, 0, self.R7, self.B, 'sid-b')
+        self.line(1793453670, 49, 1793467200, 97, self.R7, stale_tag, 'sid-c')
+        self.line(1793453672, 0, 1793471400, 0, self.R7, self.B, 'sid-c')
+        self.line(1793510000, 20, 1793526000, 14, self.R7, self.B, 'sid-b')
+        self.line(1793520000, 48, 1793526000, 21, self.R7, self.B, 'sid-b')
+        if legacy:                       # the legacy 7d cache holds the same stale sample, written after sid-c's switch to B
+            self.legacy('7d', self.R7, [(1793453675, 97), (1793510001, 14), (1793520001, 21)])
+        return self.at(1793520400)
+
+    def test_replay_login_stale_render_inherits_old_account(self):
+        e = self.replay_login(self.A)
+        self.assertLessEqual(e.p7, 22)
+        self.assertEqual((e.p7, e.age7), (21, 399))
+
+    def test_replay_login_stale_render_without_prior_line_is_the_residual(self):
+        # no identical earlier line of that sid (e.g. its first line after a restart): the writer can only use the
+        # file's account, so the stale 97 counts for B. Documented limit, not a goal.
+        e = self.replay_login(self.B, legacy=False)
+        self.assertEqual(e.p7, 97)
+
+    def test_legacy_sample_matching_other_account_log_line_is_dropped(self):
+        A, B = self.A, self.B
+        log5 = [(100, 90, 1, 's', A), (200, 10, 2, 's', B)]          # B's run starts at T = 200
+        log7 = [(100, 97, 9, A), (200, 5, 9, B)]
+        leg5 = [(201, 90, 2, None), (202, 90.5, 2, None), (203, 11, 2, None)]
+        leg7 = [(205, 97, 9), (206, 6, 9), (260, 97, 9)]
+        # a legacy sample after T is dropped when A's log line within LEGACY_MATCH has the same value (205 is 105 s after A's 97)
+        acct, l5, l7, g5, g7 = usage.by_account(log5, log7, leg5, leg7)
+        self.assertEqual(acct, B)
+        self.assertEqual(g5, [(202, 90.5, 2, None), (203, 11, 2, None)])      # 201 matches A's 90; 202 is a different value
+        self.assertEqual(g7, [(206, 6, 9), (260, 97, 9)])                     # 260 is 160 s away: out of range, kept
+        # with A as the current account, A's own line never drops its samples
+        acct, l5, l7, g5, g7 = usage.by_account([(100, 90, 1, 's', A)], [(100, 97, 9, A)], [(105, 90, 1, None)], [(105, 97, 9)])
+        self.assertEqual((g5, g7), ([(105, 90, 1, None)], [(105, 97, 9)]))
+
     def test_replay_without_account_rule_would_give_99(self):
         with mock.patch.object(usage, 'by_account', lambda a5, a7, b5, b7: (None, [s[:-1] for s in a5], [s[:-1] for s in a7], b5, b7)):
             e = self.replay(None)
