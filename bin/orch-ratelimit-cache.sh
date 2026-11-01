@@ -11,7 +11,8 @@
 # and one line per change (60 s heartbeat) to the shared sample log that `orch usage` reads:
 #   ~/.claude/.statusline-usage-log      "<epoch> <p5> <reset5> <p7> <reset7> <sid> <acct>" ('-' = unknown;
 #                                         acct = first 8 chars of oauthAccount.accountUuid in
-#                                         ~/.claude.json; pruned to 26 h above 256 KB)
+#                                         ~/.claude.json, or the tag of this sid's last line when its numbers
+#                                         are unchanged; pruned to 26 h above 256 KB)
 #
 # Use it in either of two ways:
 #   - as the whole statusline:  "statusLine": {"type": "command", "command": "~/.claude/bin/orch-ratelimit-cache.sh --print"}
@@ -57,11 +58,12 @@ fi
 #   <epoch> <p5> <reset5_epoch|-> <p7|-> <reset7_epoch|-> <sid|-> <acct|->
 # acct = first 8 hex/dash chars of oauthAccount.accountUuid in $HOME/.claude.json, '-' when unreadable.
 # Appended only when the fields (acct included) differ from the last line of the same sid (last ~20 lines) or
-# >= 60 s passed; pruned to 26 h (atomic tmp + mv) above 256 KB. The legacy caches above keep
+# >= 60 s passed. When that last line has the same four numbers and a real tag, its tag is reused (the payload is
+# unchanged, so it is still that account's, whatever $HOME/.claude.json says now); pruned to 26 h (atomic tmp + mv) above 256 KB. The legacy caches above keep
 # their own prune/wipe rules. Never fails the caller: the call site swallows errors.
 orch_usage_log() {  # <epoch> <p5> <reset5_epoch> <p7> <reset7_epoch> <sid> <acct>
   local f="$HOME/.claude/.statusline-usage-log" now="$1" p5="${2:-}" r5="${3:-}" p7="${4:-}" r7="${5:-}" sid="${6:-}" acct="${7:-}"
-  local key skip sz tmp
+  local res sz tmp
   [[ "$now" =~ ^[0-9]+$ ]] || return 0
   [[ "$p5" =~ ^[0-9]+(\.[0-9]+)?$ ]] || p5="-"
   [[ "$p7" =~ ^[0-9]+(\.[0-9]+)?$ ]] || p7="-"
@@ -70,12 +72,19 @@ orch_usage_log() {  # <epoch> <p5> <reset5_epoch> <p7> <reset7_epoch> <sid> <acc
   [[ "$sid" =~ ^[A-Za-z0-9._-]+$ ]] || sid="-"
   [[ "$acct" =~ ^[0-9a-f-]{8}$ ]] || acct="-"
   [ "$p5" = "-" ] && [ "$p7" = "-" ] && return 0
-  key="$p5 $r5 $p7 $r7 $acct"
   if [ -f "$f" ]; then
-    skip=$(tail -n 20 "$f" 2>/dev/null | awk -v s="$sid" -v k="$key" -v n="$now" '
-      $6 == s { lt = $1; lk = $2 " " $3 " " $4 " " $5 " " ($7 == "" ? "-" : $7); seen = 1 }
-      END { if (seen && lk == k && n - lt < 60) print 1 }')
-    [ "$skip" = "1" ] && return 0
+    # res = "<skip 0|1> <acct>". Unchanged numbers on this sid's last line mean the same payload, hence the same account: a
+    # stale render after /login must not take the new account's tag from the file, so a real tag on that line is inherited.
+    res=$(tail -n 20 "$f" 2>/dev/null | awk -v s="$sid" -v k4="$p5 $r5 $p7 $r7" -v a="$acct" -v n="$now" '
+      $6 == s { lt = $1; l4 = $2 " " $3 " " $4 " " $5; la = ($7 == "" ? "-" : $7); seen = 1 }
+      END {
+        if (seen && l4 == k4 && la != "-") a = la
+        print ((seen && l4 == k4 && la == a && n - lt < 60) ? 1 : 0), a
+      }')
+    case "$res" in
+      "1 "*) return 0 ;;
+      "0 "*) acct="${res#0 }"; [[ "$acct" =~ ^[0-9a-f-]{8}$ ]] || acct="-" ;;
+    esac
   fi
   echo "$now $p5 $r5 $p7 $r7 $sid $acct" >> "$f"
   sz=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
@@ -90,7 +99,7 @@ if [ -n "$r7" ] && ! [[ "$r7" =~ ^[0-9]+$ ]]; then
   c="${r7%%.*}"; c="${c%Z}"; c="${c/T/ }"
   r7=$(date -j -u -f "%Y-%m-%d %H:%M:%S" "$c" +%s 2>/dev/null || date -u -d "$r7" +%s 2>/dev/null)
 fi
-acct=$(jq -r '(.oauthAccount.accountUuid // "") | tostring | .[0:8]' "$HOME/.claude.json" 2>/dev/null || true)
+acct=$(jq -r '(.oauthAccount.accountUuid // "") | strings | .[0:8]' "$HOME/.claude.json" 2>/dev/null || true)
 orch_usage_log "$now" "$p5" "${e:-}" "$p7" "${r7:-}" "$(j '.session_id // empty')" "$acct" >/dev/null 2>&1 || true
 
 if [ "${1:-}" = "--print" ]; then

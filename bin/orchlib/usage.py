@@ -12,7 +12,10 @@ Account rule: the samples of one account only. Every log line may carry the acco
 oauthAccount.accountUuid, '-' or absent = untagged). The current account is the tag of the newest log line; its tagged
 lines are kept whenever they were written (A -> B -> A keeps A's earlier window), other accounts' lines are dropped,
 and untagged log lines and legacy-cache samples count only from T, the first tagged line of the current account's latest
-run (a run is ended only by a line of another account; untagged lines never break it). A newest line that is untagged filters nothing. k history (k.json) is kept per account
+run (a run is ended only by a line of another account; untagged lines never break it); a legacy sample is also dropped when
+another account's log line from the same render (LEGACY_MATCH) has the same value. A newest line that is untagged filters
+nothing. The writer tags a line from the payload's own history (an unchanged payload keeps its sid's last tag), so a stale
+render after /login stays with the old account; the file's account is only a guess for a payload never seen before. k history (k.json) is kept per account
 (`by_acct`); a tagged account never reads or writes the top-level k, which stays the untagged fallback.
 
 Known limit: usage made outside this machine's transcripts (claude.ai, other devices) is invisible
@@ -391,6 +394,24 @@ def load_log(home, with_acct=False):
     return s5, s7
 
 
+LEGACY_MATCH = (120, 10)   # a log line within [t - 120, t + 10] of a legacy sample can be the same render
+
+
+def _drop_other_account(legacy, others):
+    """Legacy samples minus those matching a log sample of another account: same value, log line within LEGACY_MATCH.
+    others = sorted [(t, p)] of that kind from other accounts' lines."""
+    if not others or not legacy:
+        return legacy
+    ts = [o[0] for o in others]
+    out = []
+    for s in legacy:
+        lo = bisect.bisect_left(ts, s[0] - LEGACY_MATCH[0])
+        hi = bisect.bisect_right(ts, s[0] + LEGACY_MATCH[1])
+        if not any(abs(o[1] - s[1]) < 0.01 for o in others[lo:hi]):
+            out.append(s)
+    return out
+
+
 def by_account(log5, log7, legacy5, legacy7):
     """Pure. Apply the account rule (module docstring) to log samples carrying a trailing acct and to legacy samples.
     -> (acct, log5, log7, legacy5, legacy7): acct is None when the newest log line is untagged or there is none (nothing is
@@ -406,8 +427,13 @@ def by_account(log5, log7, legacy5, legacy7):
         if a == acct:
             t0 = t
     keep = lambda s: s[-1] == acct or (s[-1] is None and s[0] >= t0)
+    # A legacy sample carries the reset file's value at read time: when another account's log line from the same render
+    # has the same value, it is that account's stale view and must not set this account's high-water.
+    o5 = sorted((s[0], s[1]) for s in log5 if s[-1] not in (None, acct))
+    o7 = sorted((s[0], s[1]) for s in log7 if s[-1] not in (None, acct))
     return (acct, [s[:-1] for s in log5 if keep(s)], [s[:-1] for s in log7 if keep(s)],
-            [s for s in legacy5 if s[0] >= t0], [s for s in legacy7 if s[0] >= t0])
+            _drop_other_account([s for s in legacy5 if s[0] >= t0], o5),
+            _drop_other_account([s for s in legacy7 if s[0] >= t0], o7))
 
 
 def _read_reset(path):
@@ -453,9 +479,6 @@ def load_legacy(home, now):
             elif reset > now:
                 dst.append((t, p, reset))
     return s5, s7
-
-
-LEGACY_MATCH = (120, 10)   # a log line within [t - 120, t + 10] of a legacy sample can be the same render
 
 
 def drop_stale_legacy(log5, legacy5):

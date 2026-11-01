@@ -68,10 +68,13 @@ def make_writer_tests(label):
             return p
 
         def set_acct(self, uuid):
-            """Write a fake $HOME/.claude.json; a str is the accountUuid, anything else is written raw."""
-            body = uuid if not isinstance(uuid, str) else json.dumps({'oauthAccount': {'accountUuid': uuid}})
+            """Write a fake $HOME/.claude.json whose oauthAccount.accountUuid is `uuid`."""
+            self.set_raw(json.dumps({'oauthAccount': {'accountUuid': uuid}}))
+
+        def set_raw(self, body):
+            """Write $HOME/.claude.json verbatim (valid or not)."""
             with open(os.path.join(self.home, '.claude.json'), 'w') as fh:
-                fh.write(body if isinstance(body, str) else json.dumps(body))
+                fh.write(body)
 
         def accts(self):
             return [l.split()[6] for l in self.lines()]
@@ -103,15 +106,17 @@ def make_writer_tests(label):
             self.assertEqual(self.accts(), ['0a1b2c3d'])
 
         def test_missing_or_invalid_acct_is_dash(self):
-            for i, body in enumerate(('{"oauthAccount":{}}', '{}', 'not json', '', '{"oauthAccount":{"accountUuid":"ZZZZZZZZ-1"}}',
-                                      '{"oauthAccount":{"accountUuid":"abc"}}', '{"oauthAccount":{"accountUuid":12345678}}',
-                                      '{"oauthAccount":{"accountUuid":"ab cd 12 99"}}')):
-                self.set_acct(body if body else '\n')
+            raw = ('{"oauthAccount":{}}', '{}', 'not json', '', '{"oauthAccount":"abc"}', '{"oauthAccount":{"accountUuid":null}}',
+                   '{"oauthAccount":{"accountUuid":12345678}}', '{"oauthAccount":{"accountUuid":["abcdef12"]}}')
+            strs = ('ZZZZZZZZ-1', 'abc', 'ab cd 12 99', 'ABCDEF12')       # strings that fail the 8 hex/dash chars rule
+            for i, (kind, body) in enumerate([('raw', b) for b in raw] + [('str', u) for u in strs]):
+                (self.set_raw if kind == 'raw' else self.set_acct)(body)
                 self.run_writer(p5=50.0 + i)           # a changed field, so every run appends
-            self.assertEqual(self.accts(), ['-'] * 8)
+            self.assertEqual(self.accts(), ['-'] * (len(raw) + len(strs)))
             os.unlink(os.path.join(self.home, '.claude.json'))
             self.run_writer(p5=99.0)
             self.assertEqual(self.accts()[-1], '-')
+            self.assertEqual(len(self.lines()), len(raw) + len(strs) + 1)
 
         def test_same_acct_twice_within_60s_is_one_line(self):
             self.set_acct('0a1b2c3d-1111')
@@ -119,14 +124,40 @@ def make_writer_tests(label):
             self.run_writer()
             self.assertEqual(self.accts(), ['0a1b2c3d'])
 
-        def test_acct_change_within_60s_appends(self):
+        def test_acct_change_with_changed_numbers_within_60s_appends(self):
             self.set_acct('0a1b2c3d-1111')
             self.run_writer()
             self.set_acct('ffeedd00-2222')
-            self.run_writer()                          # same sid and numbers, other account
+            self.run_writer(p5=54.0)                   # same sid, new numbers, other account
             self.assertEqual(self.accts(), ['0a1b2c3d', 'ffeedd00'])
-            self.run_writer()
+            self.run_writer(p5=54.0)
             self.assertEqual(len(self.lines()), 2)
+
+        def test_unchanged_numbers_inherit_the_sids_last_tag(self):
+            # a stale render after /login: same payload, but ~/.claude.json already names the new account
+            self.set_acct('0a1b2c3d-1111')
+            self.run_writer()
+            self.set_acct('ffeedd00-2222')
+            self.run_writer()
+            self.assertEqual(self.accts(), ['0a1b2c3d'])                 # inherited and deduped: no new line
+            old = int(time.time()) - 61
+            with open(self.log, 'w') as fh:
+                fh.write('%d 53.0 %d 57 %d sid-a 0a1b2c3d\n' % (old, self.r5, self.r7))
+            self.run_writer()                                            # heartbeat: written, still the old tag
+            self.assertEqual(self.accts(), ['0a1b2c3d', '0a1b2c3d'])
+            self.run_writer(p5=60.0)                                     # new numbers: the file's account
+            self.assertEqual(self.accts()[-1], 'ffeedd00')
+
+        def test_inherit_only_from_same_sid_and_real_tag(self):
+            self.set_acct('0a1b2c3d-1111')
+            self.run_writer(sid='sid-a')
+            self.set_acct('ffeedd00-2222')
+            self.run_writer(sid='sid-b')                                 # same numbers, other sid: its own account
+            self.assertEqual(self.accts(), ['0a1b2c3d', 'ffeedd00'])
+            with open(self.log, 'w') as fh:                              # last line untagged: nothing to inherit
+                fh.write('%d 53.0 %d 57 %d sid-a -\n' % (int(time.time()) - 5, self.r5, self.r7))
+            self.run_writer(sid='sid-a')                                 # appended with the file's account
+            self.assertEqual(self.accts(), ['-', 'ffeedd00'])
 
         def test_untagged_last_line_dedups_against_dash(self):
             with open(self.log, 'w') as fh:
