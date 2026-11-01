@@ -11,6 +11,9 @@ Lines marked `unverified` have no primary source fetched. Architecture rules: `r
 
 ## Init command
 
+These are for the first plan: `orch-init` writes docs and config only and does not run them. CLAUDE.md
+`Commands` lists the ones that need code as `not yet runnable (no code)`.
+
 ```
 dotnet new sln -n <App>            # slnx by default since .NET 10; --format sln|slnx (SDK 9.0.200+)
 dotnet new gitignore && dotnet new editorconfig && dotnet new globaljson
@@ -25,16 +28,15 @@ Template short names `sln`, `gitignore`, `editorconfig`, `globaljson`, `buildpro
 SDK templates page; `packagesprops` from the central-package-management page. The xUnit/NUnit template names:
 unverified (the page lists `mstest` templates; the test framework is a choice to ask or default to what the user's other repos use).
 
-## Layout (D11 mapping)
+## Layout (interfaces and adapters)
 
 - `src/<App>.Core`: domain and the interfaces (ports), **no package references**. `src/<App>.Infrastructure`: adapters
   with one `AddInfrastructure(this IServiceCollection)` extension. `src/<App>.Cli` (or `.Web`): the composition root,
-  `Program.cs`, the only project that references Infrastructure and registers it (model: `nefpgp/CLAUDE.md:48`;
-  `AddApplicationServices()` for an optional `Application` layer).
+  `Program.cs`, the only project that references Infrastructure and registers it (`AddApplicationServices()` for an optional `Application` layer).
 - Project references are the boundary: `Core` references nothing, `Infrastructure` references `Core`, so the reverse is a
   compile error. Add a test that fails when `Core.csproj` gains a `PackageReference` or `ProjectReference`
   (read the XML; nothing external needed).
-- Interfaces use core types and core exceptions only. Time is `IUtcClock` (`DoomLearner`), not `DateTime.UtcNow` in the core.
+- Interfaces use core types and core exceptions only. Time is an `IUtcClock` interface, not `DateTime.UtcNow` in the core.
 - Contract tests: an `abstract class StoreContract { protected abstract IStore Create(); [Fact] public void ... }` in
   `tests/<App>.Core.Tests`; each adapter's test project subclasses it (including the in-memory fake). Pattern is judgement.
 - DI: `Microsoft.Extensions.DependencyInjection`, constructor injection, one registration extension per layer, documented order.
@@ -50,6 +52,7 @@ unverified (the page lists `mstest` templates; the test framework is a choice to
   lists `<PackageVersion Include= Version= />`; project files use `<PackageReference Include="X" />` with no
   `Version` (NuGet CPM page). Several package sources then trigger NU1507; use package source mapping or one source.
 - Analyzers: `AnalysisLevel`, `EnforceCodeStyleInBuild` in `Directory.Build.props` (MSBuild properties page, research digest).
+- Per-file formatter for the hook (extension `cs`): `dotnet format whitespace --include <file>` (unverified: not fetched; `dotnet format` is slow per file and may restore, so prefer running it in the gate and skipping this hook if it lags).
 
 ## Strictness from day 0
 
@@ -61,14 +64,14 @@ unverified (the page lists `mstest` templates; the test framework is a choice to
 
 `ILogger<T>` through DI; message templates with named placeholders, not string interpolation (CA2254); `LoggerMessage`
 source generation for hot paths (learn.microsoft.com .../extensions/logging). The sink is the logging provider chosen in the
-composition root; Serilog bridged to `ILogger<T>` is the past-projects pattern (`Lunegit`, `nefpgp`). Never log secrets
+composition root; Serilog bridged to `ILogger<T>` is a common pattern. Never log secrets
 or user data; redact in the provider or an enricher (API: unverified); test with a sentinel.
 
 ## Errors
 
 .NET exception convention for new projects: unverified (no primary page read). Working rule: typed exceptions in `Core`
 (`DomainException` base), adapters translate vendor exceptions, a single catch-all in `Program.cs`. Expand-only data
-migrations and confirmation before data mutation are project rules in `SangBotsV2:7-21`.
+migrations and confirmation before data mutation are project rules, not a convention.
 
 ## Config and secrets
 

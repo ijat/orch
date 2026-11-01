@@ -11,6 +11,9 @@ Architecture rules: `references/architecture.md`. The global pnpm rule applies (
 
 ## Init command
 
+These are for the first plan: `orch-init` writes docs and config only and does not run them. CLAUDE.md
+`Commands` lists the ones that need code as `not yet runnable (no code)`.
+
 - `pnpm init` creates `package.json`; it fails if one exists (pnpm.io/cli/init). Add `pnpm-workspace.yaml`
   with a `packages:` glob list for a monorepo; internal deps use `workspace:*` (pnpm.io/workspaces).
 - Set `"type": "module"` (or `"commonjs"`) explicitly; add `"exports"` for public subpaths (nodejs.org/api/packages.html).
@@ -18,7 +21,7 @@ Architecture rules: `references/architecture.md`. The global pnpm rule applies (
   `nodejs.org/dist/index.json` listed v26.13.0 (Lithium) and v24.22.2 (Krypton) as LTS. Record it in
   `package.json` `engines` (field itself: unverified).
 
-## Layout (D11 mapping)
+## Layout (interfaces and adapters)
 
 - Single package: `src/core/` (pure logic and the interfaces, imports nothing from adapters), `src/adapters/<thing>/`
   (one folder per implementation), `src/main.ts` (composition root), `test/` or co-located `*.test.ts`.
@@ -27,10 +30,10 @@ Architecture rules: `references/architecture.md`. The global pnpm rule applies (
 - Interfaces: `interface` / `type` in `core/ports/`, using core types and core errors only, never a vendor type.
 - `exports` limits what a package shows, but Node calls it "not a strong boundary" (nodejs.org/api/packages.html):
   enforce direction with a test that reads import specifiers and fails when `core` imports an adapter
-  (model: `Halo/apps/server/test/architecture.test.ts`). Add it to the gate.
+  (an architecture test in the server app is enough). Add it to the gate.
 - Contract tests: `core/testing/contract.ts` exports `runStoreContract(name, make)`; every adapter and the in-memory
-  fake call it (model: `Halo/packages/connector-sdk/src/conformance.ts`). Fakes live in `core/testing/`.
-- Composition root: one `buildApp(config)` in `main.ts`; the context-object pattern is fine (`lunieum-browser` `AppContext.ts:9`).
+  fake call it (a plugin SDK can ship it as a conformance helper). Fakes live in `core/testing/`.
+- Composition root: one `buildApp(config)` in `main.ts`; the context-object pattern (one `AppContext` passed down) is fine.
   Nothing else constructs adapters.
 
 ## Tooling
@@ -46,6 +49,7 @@ Architecture rules: `references/architecture.md`. The global pnpm rule applies (
 - Tests: **Vitest** (`pnpm add -D vitest`; script `"test": "vitest"`; `vitest run` runs once; needs Node >= 22.12 and
   Vite >= 6.4.0, vitest.dev/guide) or built-in `node --test` (nodejs.org/api/test.html). Single file or name filter
   (`vitest run <file> -t <name>`): unverified.
+- Per-file formatter for the hook (`{{formatter}}`, extensions `ts|tsx|js|jsx|json`; pick one the project uses): `pnpm biome format --write` (path arguments: unverified) or `pnpm prettier --write` (prettier.io/docs/cli, not fetched: unverified).
 
 ## Strictness from day 0
 
@@ -56,8 +60,8 @@ Also on: `noUncheckedIndexedAccess`, `noImplicitOverride`, `noUnusedLocals`, `ve
 
 ## Logging
 
-`Logger` interface in `core/ports/` (`debug|info|warn|error(msg, fields)`); the sink is an adapter. `pino` is the
-implementation in past projects (Halo); its API and `redact` option: unverified. Inject the logger; no module-level
+`Logger` interface in `core/ports/` (`debug|info|warn|error(msg, fields)`); the sink is an adapter. `pino` is a common
+implementation; its API and `redact` option: unverified. Inject the logger; no module-level
 logger. Redact by field name at the sink; add a test that logs a sentinel secret and asserts it is absent.
 
 ## Errors
@@ -67,8 +71,7 @@ per package; map vendor errors to core errors inside the adapter. Catch-all only
 
 ## Config and secrets
 
-One `loadConfig(env)` in `main.ts`, parsed once into a typed readonly object (a schema library such as `zod` was used in
-Halo; API unverified), fail fast on a missing key, `.env.example` committed, `.env*` gitignored and denied
+One `loadConfig(env)` in `main.ts`, parsed once into a typed readonly object (a schema library such as `zod` fits; API unverified), fail fast on a missing key, `.env.example` committed, `.env*` gitignored and denied
 (`templates/snippets.md`). Secrets are a branded type whose `toString`/`toJSON` print `[redacted]`.
 Litmus: the repo could be public now (12factor.net/config).
 

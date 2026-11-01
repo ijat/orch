@@ -2,11 +2,10 @@
 
 Language-neutral. Used by the `orch-init` agent to name boundaries for a project and to write the
 `Architecture rules` section of its CLAUDE.md (<= 10 lines). Ecosystem commands, layouts and idioms live
-in `references/<ecosystem>.md`, not here. Examples cite the user's own projects (under `~/Projects`) as
-illustrations of the pattern, not as requirements; line numbers are from a grep-based survey on
-2026-11-02 and may have moved. Claims marked `[unsourced]` are working judgement with no primary source.
+in `references/<ecosystem>.md`, not here. Examples describe patterns seen in earlier projects, generically,
+as illustrations and not as requirements. Claims marked `[unsourced]` are working judgement with no primary source.
 
-## 1. Primary rule: a swappable interface at every boundary (D11)
+## 1. Primary rule: a swappable interface at every boundary
 
 Anything **external or replaceable** sits behind an interface (trait / protocol / interface / abstract
 type) **owned by the core**. Implementations live in an adapter layer outside the core. One
@@ -43,44 +42,44 @@ The mechanics, in order:
 Rejected: an interface for every internal class. That is ceremony without a swap point; keep concrete
 types inside the core.
 
-Examples (illustrations, paths from the survey):
-- Rust, interfaces as traits plus registries by id: `chonkfs/CLAUDE.md:55-60` (codecs), conformance in
-  separate crates outside the product build.
-- .NET, ports and adapters with one DI extension per layer: `nefpgp/CLAUDE.md:48`; provider contract
-  `IAiSessionProvider` in Lunegit; clock as `IUtcClock` in DoomLearner.
-- Go, small consumer-side interfaces: `Debugger/internal/session/driver.go:17`; frozen store contract
-  `shutter/internal/store/contract.go`.
-- TypeScript, plugin SDK with a conformance helper: `Halo/packages/connector-sdk/src/conformance.ts`;
-  context-object DI `lunieum-browser/.../AppContext.ts:9`.
-- Swift, every system access behind a protocol with test fakes: `ExternalMacAwake/docs/CLAUDE.md:24-31`.
+Examples (illustrations):
+- A Rust compression tool: codecs as traits plus a registry by id; conformance suites in separate crates
+  outside the product build.
+- A .NET desktop app: ports and adapters with one DI extension per layer; the crypto backend sits behind
+  one interface in Core and its library is referenced only by Infrastructure; a provider contract for
+  each AI backend; the clock as an `IUtcClock` interface.
+- A Go debugger and a Go store: small consumer-side interfaces; a frozen store contract file.
+- A TypeScript connector platform: a plugin SDK with a conformance helper; context-object DI in a
+  browser app.
+- A Swift menu-bar app: every system access behind a protocol with test fakes.
 
 ## 2. Compatible patterns (keep these alongside the primary rule)
 
 1. **Pure core / thin shell.** Logic that decides lives in code with no I/O; the shell reads input, calls
-   the core, writes output. Test the core before wiring anything. Examples: `MartGame` `core/` has no
-   nodes and is tested before scenes (`CLAUDE.md:52-67`); `ExternalMacAwake` UI-free library target.
+   the core, writes output. Test the core before wiring anything. Examples: a Godot game whose `core/` has no
+   nodes and is tested before scenes; a Swift app with a UI-free library target.
 2. **Dependency injection by constructor.** See 1.4. No DI container required: Go and small Rust/Swift
-   projects pass arguments by hand (`mustang-webui/CLAUDE.md:54`: stdlib first, no framework).
+   projects pass arguments by hand (stdlib first, no framework).
 3. **Inward-only dependencies, enforced.** `adapter -> core`, never the reverse; checked by a test or a
-   script in the gate (section 4). Examples: `chonkfs/CLAUDE.md:55`; `Luneterm/scripts/check-lib-boundaries.sh`;
-   `Halo/apps/server/test/architecture.test.ts`.
+   script in the gate (section 4). Examples: a Rust workspace with a boundary-check script; a TypeScript
+   server with an architecture test.
 4. **Typed config from the environment.** One loader reads the environment once into a typed struct;
    no other code reads env vars; secrets are a distinct type that cannot print itself; `.env.example`
    lists every key with no real values. Litmus: the repo could be open-sourced at any moment without
-   exposing a credential (<https://12factor.net/config>). Example: `sangbots-v3/.../sm3-config/src/lib.rs:13`
-   (typed loader, `Secret` newtype).
+   exposing a credential (<https://12factor.net/config>). Example: a Rust
+   config crate with a typed loader and a `Secret` newtype.
 5. **Injected logger with redaction.** See section 5.
 6. **ADRs and numbered invariants.** Decisions in an append-only log with what was rejected; invariants
-   numbered in CLAUDE.md so they can be cited. Examples: `Luneterm`/`chonkfs`/`lunieum` `DECISIONS.md`;
-   MADR files under `docs/adr` in the Go projects.
+   numbered in CLAUDE.md so they can be cited. Examples: a `DECISIONS.md` in several Rust and
+   TypeScript projects; MADR files under `docs/adr` in Go projects.
 7. **Determinism and golden tests where output must be stable.** Identical input gives identical output;
-   goldens for CLI/terminal output; replay/verify mode for simulations. Examples: `RezekiApp`
-   `purity.test.ts` and `sim --verify`; `Luneterm` xterm goldens; `PunchHole` cross-language vectors.
+   goldens for CLI/terminal output; replay/verify mode for simulations. Examples: a
+   purity test plus a `sim --verify` mode for a simulation; terminal-output goldens; cross-language test vectors.
    Use the clock/randomness interfaces from section 1 to make this possible.
 8. **Loopback by default for anything that listens.** A server binds `127.0.0.1` unless the user asks
    otherwise. [unsourced; recurring practice in the surveyed projects]
 
-## 3. Reconciling YAGNI (D11)
+## 3. Reconciling YAGNI
 
 "Add the seam when the second implementation appears" (rule of three) is sound **inside the core**:
 internal classes stay concrete until a second variant exists. [unsourced; no primary source found]
@@ -117,7 +116,7 @@ Emphasis ("IMPORTANT", "NEVER") is not enforcement.
 
 ## 5. Logging, errors, config
 
-**Logging.** Injected, never global (Go `Debugger/AGENTS.md:66-80`: no globals, no `init`). Libraries
+**Logging.** Injected, never global (Go: no globals, no `init`). Libraries
 emit through the logging facade and never configure it; the binary configures it once. This is the
 convention in the surveyed ecosystems: Python libraries use `getLogger(__name__)` plus a `NullHandler`
 and applications configure once (<https://docs.python.org/3/howto/logging.html>); Rust libraries never
@@ -126,7 +125,7 @@ call `set_global_default`, the binary does (<https://docs.rs/tracing/latest/trac
 (<https://learn.microsoft.com/en-us/dotnet/core/extensions/logging>); Go uses `log/slog`
 (<https://go.dev/blog/slog>). Rules for every project:
 - levels with meaning: error = needs a human, warn = degraded but handled, info = lifecycle, debug/trace = diagnosis.
-- structured fields, a category per component (`MartGame` `Log` autoload tags by category, `log.gd:45-53`).
+- structured fields, a category per component (a Godot `Log` autoload tags by category).
 - redaction by field name at the sink: never log secrets, passphrases, tokens, or user/debuggee data
   (a redaction rule recurs across the surveyed projects). The logging sink is itself a boundary interface (section 1).
 - when the user asked for "logs a lot", that means more diagnosis-level events behind a level switch,
@@ -134,7 +133,7 @@ call `set_global_default`, the binary does (<https://docs.rs/tracing/latest/trac
 
 **Errors.** Follow the ecosystem convention, linked from `references/<eco>.md`; the cross-language rules
 are: errors at a boundary are the core's own error type, wrapped with the cause kept; one error type per
-library, a catch-all only in the binary (Rust: `thiserror` in libs, `anyhow` in bins, `chonkfs/CLAUDE.md:62`;
+library, a catch-all only in the binary (Rust: `thiserror` in libs, `anyhow` in bins;
 Rust errors implement `std::error::Error + Send + Sync`, <https://rust-lang.github.io/api-guidelines/interoperability.html#c-good-err>;
 Go wraps with `%w` and wraps only when callers should inspect it, <https://go.dev/blog/go1.13-errors>).
 Do not swallow; do not use errors for normal control flow.

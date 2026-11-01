@@ -14,24 +14,26 @@ Lines marked `unverified` have no primary source fetched. Architecture rules: `r
 
 ## Init command
 
+These are for the first plan: `orch-init` writes docs and config only and does not run them. CLAUDE.md
+`Commands` lists the ones that need code as `not yet runnable (no code)`.
+
 - No CLI scaffold is documented in the pages read. A project is a folder with `project.godot`; create it from the Project
   Manager, or the agent writes a minimal `project.godot` and opens it in the editor once (`config_version` and the
   minimal keys: unverified). Run the project with `godot --path <dir>`; use `--headless` where there is no GPU
   (CI); `--headless` is `--display-driver headless --audio-driver Dummy` (command-line tutorial).
 - Install third-party code only under `addons/` (project organization page): GUT in `addons/gut/`.
 
-## Layout (D11 mapping)
+## Layout (interfaces and adapters)
 
 - `core/`: pure GDScript, no `Node` subclasses, no scene tree; logic plus the **interfaces**. GDScript has no interface
   keyword. Use a base class with `class_name` and abstract methods via the `@abstract` annotation (since Godot 4.5,
-  gdscript_basics page), or a plain base `RefCounted` class on older versions. Test `core/` before any scene is wired
-  (`MartGame/CLAUDE.md:52-67`).
+  gdscript_basics page), or a plain base `RefCounted` class on older versions. Test `core/` before any scene is wired.
 - `adapters/<thing>/`: implementations (save-file storage, network, platform/OS, input, audio, clock, log sink).
 - `scenes/`: thin; scripts only receive what they need. The scene docs recommend dependency injection: the parent or a
   higher-level API supplies dependencies by signal connection, a `Callable`, a `NodePath` or a node reference; signals
   "respond" to behaviour, they do not start it; keep data internal to a scene where possible (scene organization page).
 - `autoloads/`: globals. Treat them as the **composition root only**: one `App` autoload builds the adapters and hands
-  them to `core/` objects (judgement). Other autoloads (a `Log` with category tags, `MartGame` `log.gd:45-53`) are
+  them to `core/` objects (judgement). Other autoloads (a `Log` with category tags) are
   sinks behind an interface. Do not call autoloads from `core/`.
 - Assets next to the scenes that use them; `snake_case` for files and folders, `PascalCase` for node names and
   `class_name`s; third-party in `addons/`; add `.gdignore` to folders Godot must skip (project organization and
@@ -39,7 +41,7 @@ Lines marked `unverified` have no primary source fetched. Architecture rules: `r
 - Contract tests: a GUT base script `test/contract/contract_store.gd` holds the cases; one script per implementation
   extends it and overrides `create_store()` (GUT script inheritance: unverified). GUT also doubles and mocks for fakes
   (GUT docs navigation lists Doubling and Mocking; usage: unverified).
-- One code path for single and multiplayer: the transport is an adapter (`MartGame`).
+- One code path for single and multiplayer: the transport is an adapter.
 
 ## Tooling
 
@@ -50,6 +52,7 @@ Lines marked `unverified` have no primary source fetched. Architecture rules: `r
   9.6.1 for 4.6.x. Install into `addons/gut/` (Asset Library or release zip), enable the plugin in Project Settings.
 - Package manager: none for GDScript. Python `pip`/`pipx` only for gdtoolkit; use `uv tool install gdtoolkit` if the user uses
   uv (command: unverified).
+- Per-file formatter for the hook (extension `gd`): `gdformat <file>` (gdtoolkit README, `gdformat` formats in place; per-file use: unverified).
 
 ## Strictness from day 0
 
@@ -60,8 +63,7 @@ one style, typed or dynamic. Treat warnings as errors: a project setting for tha
 
 ## Logging
 
-A `Log` interface in `core/` (`debug|info|warn|error(category, msg, fields)`), an autoload sink behind it, category tags
-(`MartGame` `log.gd:45-53`). Engine print helpers (`print`, `push_warning`, `push_error`): unverified. No secrets or player
+A `Log` interface in `core/` (`debug|info|warn|error(category, msg, fields)`), an autoload sink behind it, category tags. Engine print helpers (`print`, `push_warning`, `push_error`): unverified. No secrets or player
 personal data in logs; redact at the sink; test with a sentinel. "Logs a lot" means more debug events behind a level switch.
 
 ## Errors

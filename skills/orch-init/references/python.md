@@ -12,6 +12,9 @@ Architecture rules: `references/architecture.md`.
 
 ## Init command
 
+These are for the first plan: `orch-init` writes docs and config only and does not run them. CLAUDE.md
+`Commands` lists the ones that need code as `not yet runnable (no code)`.
+
 - `uv init` makes an application by default; `uv init --lib` a library (adds `py.typed`). Both get `pyproject.toml`,
   `README.md`, `.python-version` and a `src/<name>/` package with a build system (default backend `uv_build`);
   `--no-package` gives a flat layout with no build system; `--bare` only a `pyproject.toml` (docs.astral.sh/uv/concepts/projects/init/).
@@ -19,7 +22,7 @@ Architecture rules: `references/architecture.md`.
   `[build-system]`, `[project]` and `[tool.*]` tables (packaging.python.org writing-pyproject-toml).
 - Dev dependencies: `uv add --dev ruff mypy pytest` (`--dev`/`--group` documented at docs.astral.sh/uv/concepts/projects/dependencies/).
 
-## Layout (D11 mapping)
+## Layout (interfaces and adapters)
 
 - `src/<pkg>/core/` (domain, pure logic, `ports.py` with the interfaces), `src/<pkg>/adapters/<thing>/` (implementations),
   `src/<pkg>/__main__.py` or `main.py` (composition root, the only place adapters are constructed), `tests/`.
@@ -38,6 +41,7 @@ Architecture rules: `references/architecture.md`.
 - Types: mypy, `strict = true` under `[tool.mypy]` (`--strict` flag exists; mypy docs "existing code" page says to
   introduce stricter options gradually, so a new project starts strict). pyright is an alternative: unverified.
 - Tests: pytest. One test: `pytest tests/test_mod.py::test_func` (docs.pytest.org usage). Run via `uv run pytest`.
+- Per-file formatter for the hook (extension `py`): `uv run ruff format <file>` (ruff formatter docs above accept file paths: unverified for the exact invocation).
 
 ## Strictness from day 0
 
@@ -51,7 +55,7 @@ Architecture rules: `references/architecture.md`.
 ## Logging
 
 Libraries: `logging.getLogger(__name__)` and a `NullHandler`; applications configure once (`dictConfig`)
-(docs.python.org/3/howto/logging.html). D11 mapping: the sink is the handler configuration, done only in the
+(docs.python.org/3/howto/logging.html). Mapping to interfaces: the sink is the handler configuration, done only in the
 composition root. Modules may use a module-level `getLogger(__name__)` (idiomatic, no state to patch); do not call
 `basicConfig` in library code. Redact in a `logging.Filter` on the handler; test with a sentinel secret.
 

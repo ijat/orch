@@ -11,6 +11,9 @@ Lines marked `unverified` have no primary source fetched. Architecture rules: `r
 
 ## Init command
 
+These are for the first plan: `orch-init` writes docs and config only and does not run them. CLAUDE.md
+`Commands` lists the ones that need code as `not yet runnable (no code)`.
+
 - `cargo new <name>` (binary, the default) or `cargo new --lib <name>`; the default edition is 2024
   (cargo-new page). For a workspace: root `Cargo.toml` with `[workspace]`, `members = ["crates/*"]`, then
   `cargo new --lib crates/<app>-core` etc.
@@ -18,18 +21,18 @@ Lines marked `unverified` have no primary source fetched. Architecture rules: `r
   needs Rust 1.84+ (cargo resolver page); `"2"` for edition 2021.
 - `[workspace.dependencies]` for shared versions; members use `dep = { workspace = true }` (cargo workspaces page).
 
-## Layout (D11 mapping)
+## Layout (interfaces and adapters)
 
 - `crates/<app>-core`: traits and pure logic; depends on no adapter and on no I/O crate. `crates/<app>-<thing>`: one adapter
   crate per boundary (fs, http, db). `crates/<app>-cli` (or `-server`): the binary, the composition root, the only crate
-  that depends on adapters. Optional `crates/<app>-testkit`: contract suites and fakes (pattern: `chonkfs/CLAUDE.md:55-60`).
+  that depends on adapters. Optional `crates/<app>-testkit`: contract suites and fakes (a testkit crate shared by all adapters).
 - Interfaces are traits owned by `core`, using core types and the core error enum. Extension points are traits plus a
-  registry by id (`chonkfs/CLAUDE.md:56-60`); adding an implementation is a new crate and one registration line.
+  registry by id (a codec or driver registry); adding an implementation is a new crate and one registration line.
 - The crate graph is the boundary: `core/Cargo.toml` listing no adapter makes the reverse dependency a compile error.
   Check what the graph cannot: `scripts/check-boundaries.sh` greps `core/Cargo.toml` and `core/src` for banned crates
-  (model: `Luneterm/scripts/check-lib-boundaries.sh`).
+  (a small script in the gate).
 - Contract tests: `pub fn run_store_contract<S: Store>(make: impl Fn() -> S)` in `testkit`; each adapter's `tests/`
-  calls it. Keep the testkit and fuzz/conformance crates out of the product build (`chonkfs`).
+  calls it. Keep the testkit and fuzz/conformance crates out of the product build.
 - Features must be additive (cargo features page); never use a feature to switch an adapter on or off in a way that
   changes core behaviour. Targets: `lib.rs`, `main.rs`, `src/bin/`, `tests/`, `examples/`, `benches/` (cargo-targets page).
 
@@ -40,6 +43,7 @@ Lines marked `unverified` have no primary source fetched. Architecture rules: `r
 - Lint: `cargo clippy` (clippy usage page). Test: `cargo test --workspace`; one test `cargo test -p <crate> <name>`
   (`cargo test [options] [testname]`, cargo-test page). A faster runner (cargo-nextest): unverified.
 - Pin the toolchain with `rust-toolchain.toml` (file name: unverified here).
+- Per-file formatter for the hook (extension `rs`): `rustfmt <file>` (rustfmt README; per-file invocation: unverified, confirm with `rustfmt --help`).
 
 ## Strictness from day 0
 
@@ -49,24 +53,24 @@ Lines marked `unverified` have no primary source fetched. Architecture rules: `r
 - Warnings denied in CI: `cargo clippy --workspace --all-targets -- -D warnings`. The clippy page also documents
   `CARGO_BUILD_WARNINGS=deny` (Cargo 1.97 and later) and warns that `-- -Dwarnings` invalidates build caches.
   `--all-targets` is judgement (the page mentions it only for `--fix`).
-- Unsafe only in an FFI crate with `// SAFETY:` comments (`Luneterm`, `chonkfs`).
+- Unsafe only in an FFI crate with `// SAFETY:` comments.
 
 ## Logging
 
 `tracing` facade. Libraries emit events and never call `set_global_default`; the binary installs one subscriber once
 (docs.rs/tracing). The subscriber is the logging sink boundary. Redaction: log fields by name; secrets are a
-`Secret<T>` newtype whose `Debug`/`Display` print `[redacted]` (`sangbots-v3/.../sm3-config/src/lib.rs:13`). Test with a
+`Secret<T>` newtype whose `Debug`/`Display` print `[redacted]` (a `Secret` type in a config crate). Test with a
 sentinel. `tracing-subscriber` API: unverified.
 
 ## Errors
 
 Error types implement `std::error::Error + Send + Sync` (api-guidelines C-GOOD-ERR). `thiserror` derives the trait in
-libraries (thiserror README); `anyhow` only in the binary (`chonkfs/CLAUDE.md:62`; `anyhow` docs: unverified). One error
+libraries (thiserror README); `anyhow` only in the binary (`anyhow` docs: unverified). One error
 enum per crate; adapters convert vendor errors into the core enum with `#[from]` or `map_err`, keeping the source.
 
 ## Config and secrets
 
-One typed loader in a `<app>-config` module or crate (`sangbots-v3`), called in `main`, fail fast, `Secret` newtype,
+One typed loader in a `<app>-config` module or crate, called in `main`, fail fast, `Secret` newtype,
 `.env.example` committed, `.env*` ignored and denied (`templates/snippets.md`). Litmus: 12factor.net/config.
 
 ## Gate command

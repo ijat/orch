@@ -11,21 +11,22 @@ Architecture rules: `references/architecture.md`.
 
 ## Init command
 
+These are for the first plan: `orch-init` writes docs and config only and does not run them. CLAUDE.md
+`Commands` lists the ones that need code as `not yet runnable (no code)`.
+
 - `swift package init --name <App> --type executable` creates `Package.swift`, `Sources/<App>/`, and a test target
   (swift.org getting-started); `swift run` builds and runs it. `--type library`: unverified.
 - Target layout: `Sources/<Target>/`, `Tests/<Target>Tests/`; an executable target is `.executableTarget` (research digest).
 - Xcode app projects (not SwiftPM) have a different layout: put the logic in a local SwiftPM package and keep the Xcode
   target as the thin composition root. Details: unverified.
 
-## Layout (D11 mapping)
+## Layout (interfaces and adapters)
 
-- `<App>Core` library target: protocols, domain types, pure logic. No import of platform frameworks or adapters (UI-free,
-  model: `ExternalMacAwake`). `<App>Adapters` library target (or one per boundary): implementations of the protocols
+- `<App>Core` library target: protocols, domain types, pure logic. No import of platform frameworks or adapters (UI-free). `<App>Adapters` library target (or one per boundary): implementations of the protocols
   for the system (filesystem, notifications, power, network) and for tests. `<App>` executable (or the Xcode app
   target): composition root; builds adapters and passes them in.
 - Protocols belong to Core and use Core types and Core errors. Every system access goes behind a protocol with a test
-  fake (`ExternalMacAwake/docs/CLAUDE.md:24-31`). Extension points are a protocol plus a catalog registered in the root
-  (`TriggerRule`, `TriggerCatalog`).
+  fake. Extension points are a protocol plus a catalog registered in the root.
 - `Package.swift` target dependencies are the boundary: `Core` declares no dependency on `Adapters`. That a cyclic or
   reverse dependency fails to resolve: unverified; add a test that parses `Package.swift` for it anyway.
 - Contract tests: a generic function `func runStoreContract<S: Store>(_ make: () -> S)` in a `<App>TestSupport` target,
@@ -41,6 +42,7 @@ Architecture rules: `references/architecture.md`.
 - Tests: **Swift Testing** (`import Testing`, `@Test`, `#expect`; swiftlang/swift-testing); run with `swift test`
   (command: unverified on the pages read). XCTest coexistence: unverified.
 - Build and run: `swift build`, `swift run`.
+- Per-file formatter for the hook (extension `swift`): `swift format -i <file>` (`-i/--in-place` as in the line above).
 
 ## Strictness from day 0
 

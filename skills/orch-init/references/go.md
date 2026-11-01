@@ -9,26 +9,29 @@ Architecture rules: `references/architecture.md`.
 
 ## Init command
 
+These are for the first plan: `orch-init` writes docs and config only and does not run them. CLAUDE.md
+`Commands` lists the ones that need code as `not yet runnable (no code)`.
+
 - `go mod init <module-path>` in the project directory (pkg.go.dev/cmd/go: writes `go.mod`, must not exist, one optional argument).
 - Layout (go.dev/doc/modules/layout): supporting packages go in `internal/` ("prevents other modules from depending
   on packages we don't want to expose"); commands in `cmd/<name>/main.go`; `_test.go` files beside the code. For a
   server the page recommends keeping the Go logic in `internal/` and all commands in `cmd/`. The page does not
   mention a `pkg/` directory; do not create one.
 
-## Layout (D11 mapping)
+## Layout (interfaces and adapters)
 
 - `internal/<capability>/` is the core: types, logic and the interfaces it needs, declared in the package that uses
-  them (`ports.go`). Interfaces are small and consumer-side (model: `Debugger/internal/session/driver.go:17`; a frozen
-  contract file: `shutter/internal/store/contract.go`).
+  them (`ports.go`). Interfaces are small and consumer-side (a small driver interface in the session package; a frozen
+  contract file per store is a good pattern).
 - `internal/adapters/<thing>/` (or `internal/<thing>store/`): implementations. They import the core, never the reverse.
-- `cmd/<name>/main.go` is the composition root and contains wiring only (`Debugger`): it builds adapters, passes them to
-  constructors, starts the program. No DI framework (`mustang-webui/CLAUDE.md:54`): constructors take interfaces.
+- `cmd/<name>/main.go` is the composition root and contains wiring only: it builds adapters, passes them to
+  constructors, starts the program. No DI framework: constructors take interfaces.
 - Contract tests: `internal/<capability>/contracttest` package exporting `func Run(t *testing.T, make func(t *testing.T) Store)`;
   each adapter's `_test.go` calls it with its constructor, and so does the in-memory fake in `internal/<capability>/fake`.
 - Boundary check: `internal/` blocks other modules (layout page) but not other packages in the same module. Enforce
   core-never-imports-adapters with a test over `go list` output or `go/build` imports (flags and package usage:
   unverified) and put it in the gate.
-- No `init()` side effects and no package-level mutable state (`Debugger/AGENTS.md:66-80`).
+- No `init()` side effects and no package-level mutable state.
 
 ## Tooling
 
@@ -39,7 +42,8 @@ Architecture rules: `references/architecture.md`.
   look up the current release first (not fetched here). `golangci-lint`: unverified.
 - Test: `go test ./...`; `-run <regexp>` selects tests, `-skip` excludes, `-shuffle` randomises order (pkg.go.dev/cmd/go);
   `-race` turns on the race detector (go.dev/doc/articles/race_detector). Table-driven tests with `t.Parallel` are the
-  convention in `Debugger`/`shutter`.
+  convention.
+- Per-file formatter for the hook (extension `go`): `gofmt -w <file>` (`-w` writes the result back; flag text not fetched: unverified, confirm with `gofmt -h`).
 
 ## Strictness from day 0
 
@@ -49,7 +53,7 @@ Architecture rules: `references/architecture.md`.
 ## Logging
 
 `log/slog` (go.dev/blog/slog): `slog.New(slog.NewJSONHandler(os.Stdout, nil))` or `NewTextHandler`. Inject a
-`*slog.Logger` into constructors; no package-level logger, no `init` (`Debugger/AGENTS.md:66-80`). The handler is the sink:
+`*slog.Logger` into constructors; no package-level logger, no `init`. The handler is the sink:
 build it only in `main`. Redaction at the sink with a handler option (`ReplaceAttr`): unverified. Test with a sentinel
 secret and a buffer handler.
 
