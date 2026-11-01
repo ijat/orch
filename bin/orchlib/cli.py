@@ -413,7 +413,7 @@ def build_parser():
     sp.add_argument("--as", dest="as_role", default=None)
 
     sp = add("show", cmd_show, "one-screen task view (no -t: active tasks)")
-    from . import brief, cont, dashboard, flow, merge, migrate, questions, resume, statusjson  # here, not at the top: they import this module
+    from . import brief, cont, dashboard, flow, hook, merge, migrate, questions, resume, statusjson  # here, not at the top: they import this module
     flow.register(add)
     merge.register(add)
     questions.register(add)
@@ -423,12 +423,16 @@ def build_parser():
     migrate.register(add)
     dashboard.register(add)
     statusjson.register(add)
+    hook.register(add)
     sp = add("commands", cmd_commands, "list subcommands")
     return p
 
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:2] == ["hook", "delegate"]:  # a PreToolUse hook: fail open, always 0, nothing else loaded
+        from . import hook
+        return hook.run()
     try:
         parser = build_parser()
         ns, rest = parser.parse_known_args(argv)
