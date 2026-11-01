@@ -462,6 +462,51 @@ class TestRole(Base):
         self.assertEqual(rc, 0)
         self.assertIn("no column for: step", err)
 
+    def row(self, d, role):
+        return [l for l in self.read(d, "status.md").decode().splitlines() if l.startswith("| %s " % role)][0]
+
+    def test_pct_written_to_progress_column(self):
+        d = self.init()
+        self.ok("role", "implementer", "in_progress", "--pct", "40", "-t", "myapp/add-login")
+        cells = [c.strip() for c in self.row(d, "implementer").strip("|").split("|")]
+        self.assertEqual(cells[1], "in_progress")
+        self.assertEqual(cells[4], "40%")
+        self.ok("role", "implementer", "in_progress", "--step", "1", "-t", "myapp/add-login")  # no --pct: unchanged
+        cells = [c.strip() for c in self.row(d, "implementer").strip("|").split("|")]
+        self.assertEqual((cells[3], cells[4]), ("1", "40%"))
+        self.ok("role", "implementer", "in_progress", "--pct", "0", "-t", "myapp/add-login")  # may go down
+        self.assertIn("| 0% |", self.row(d, "implementer"))
+        self.ok("role", "implementer", "in_progress", "--pct", "99", "-t", "myapp/add-login")
+        self.assertIn("| 99% |", self.row(d, "implementer"))
+
+    def test_pct_invalid_refused_and_file_unchanged(self):
+        d = self.init()
+        before = sha(os.path.join(d, "status.md"))
+        for bad in ("100", "-1", "x", "4.5", ""):
+            self.refuse(1, "role", "implementer", "in_progress", "--pct", bad, "-t", "myapp/add-login")
+            self.assertEqual(sha(os.path.join(d, "status.md")), before, bad)
+
+    def test_pct_inserts_new_role_row(self):
+        d = self.init()
+        self.ok("role", "implementer:part-a", "in_progress", "--pct", "25", "-t", "myapp/add-login")
+        cells = [c.strip() for c in self.row(d, "implementer:part-a").strip("|").split("|")]
+        self.assertEqual((cells[1], cells[4]), ("in_progress", "25%"))
+
+    def test_pct_dropped_silently_on_old_table(self):
+        d = self.fixture_task("status_variant_b.md")
+        rc, out, err = self.run_orch("role", "implementer", "in_progress", "--pct", "40", "--note", "n",
+                                     "-t", "myapp/fix-menu")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("no column for", err)
+        row = self.row(d, "implementer")
+        self.assertIn("| n |", row)
+        self.assertNotIn("40", row)
+        # --step on the same old table still warns, pct alongside it is not named
+        rc, out, err = self.run_orch("role", "implementer", "done", "--pct", "50", "--step", "s", "-t", "myapp/fix-menu")
+        self.assertEqual(rc, 0)
+        self.assertIn("no column for: step", err)
+        self.assertNotIn("pct", err)
+
     def test_row_with_other_cell_count_refused(self):
         d = self.fixture_task("status_variant_d.md")
         before = sha(os.path.join(d, "status.md"))
@@ -490,7 +535,7 @@ class TestRole(Base):
         lines = self.read(d, "status.md").decode().split("\n")
         i = [k for k, l in enumerate(lines) if l.startswith("| implementer:ui")][0]
         self.assertTrue(lines[i - 1].startswith("| security-reviewer"))
-        self.assertEqual(lines[i], "| implementer:ui | in_progress | 2026-03-01T10:00Z | ui | n |")
+        self.assertEqual(lines[i], "| implementer:ui | in_progress | 2026-03-01T10:00Z | ui | | n |")
         self.assertEqual(lines[i + 1], "")
         self.refuse(1, "role", "nobody", "pending", "-t", "myapp/add-login")
 
@@ -498,14 +543,14 @@ class TestRole(Base):
         d = self.init()
         self.ok("role", "planner", "done", "--note", "a | b\nc", "--step", "x|y", "-t", "myapp/add-login")
         row = [l for l in self.read(d, "status.md").decode().splitlines() if l.startswith("| planner")][0]
-        self.assertEqual(row, "| planner | done | 2026-03-01T10:00Z | x/y | a / b c |")
+        self.assertEqual(row, "| planner | done | 2026-03-01T10:00Z | x/y | | a / b c |")
 
     def test_options_not_given_keep_cells(self):
         d = self.init()
         self.ok("role", "planner", "in_progress", "--step", "s1", "--note", "n1", "-t", "myapp/add-login")
         self.ok("role", "planner", "done", "-t", "myapp/add-login", now="2026-03-01T10:09Z")
         row = [l for l in self.read(d, "status.md").decode().splitlines() if l.startswith("| planner")][0]
-        self.assertEqual(row, "| planner | done | 2026-03-01T10:09Z | s1 | n1 |")
+        self.assertEqual(row, "| planner | done | 2026-03-01T10:09Z | s1 | | n1 |")
 
     def test_log_line_as_role(self):
         d = self.init()

@@ -156,6 +156,9 @@ def assumed_text(c):
     return "\n\n".join(out)
 
 
+EST_PCT = "<0-99: your rough estimate of this assignment>"
+
+
 def checkpoint_text(c, role, ids_text, last_id):
     t, r = sq(c.task_dir), sq(role)
     orch = "~/.claude/bin/orch"
@@ -164,9 +167,9 @@ def checkpoint_text(c, role, ids_text, last_id):
         "Run these as written (replace only the quoted placeholders):",
         "",
         "```",
-        "%s in_progress --note %s --log %s" % (head, sq("working on step(s) %s" % ids_text), sq("started step(s) %s" % ids_text)),
+        "%s in_progress --note %s --log %s --pct 0" % (head, sq("working on step(s) %s" % ids_text), sq("started step(s) %s" % ids_text)),
         "# after each step is committed:",
-        "%s in_progress --step %s --log %s" % (head, sq("<step id just finished>"), sq("step <id> done: <what> (<commit sha>)")),
+        "%s in_progress --step %s --log %s --pct %s" % (head, sq("<step id just finished>"), sq("step <id> done: <what> (<commit sha>)"), sq(EST_PCT)),
         "# when everything assigned to you is done:",
         "%s done --step %s --note %s --log %s" % (head, sq(last_id), sq("<one line>"), sq("done: <one line>")),
         "# when you must stop:",
@@ -183,9 +186,9 @@ def review_checkpoint_text(c, role):
         "Run these as written (replace only the quoted placeholders):",
         "",
         "```",
-        "%s in_progress --note %s --log %s" % (head, sq("reviewing"), sq("started review")),
+        "%s in_progress --note %s --log %s --pct 0" % (head, sq("reviewing"), sq("started review")),
         "# after each file group you finish:",
-        "%s in_progress --log %s" % (head, sq("reviewed <file group>")),
+        "%s in_progress --log %s --pct %s" % (head, sq("reviewed <file group>"), sq(EST_PCT)),
         "# when you finish:",
         "%s done --note %s --log %s" % (head, sq("<verdict>, <N> findings"), sq("done: <verdict>")),
         "# when you must stop:",

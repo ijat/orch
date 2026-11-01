@@ -22,31 +22,36 @@
      "role": "orchestrator",
      "state": "in_progress",
      "step": "task dir created",
-     "note": null
+     "note": null,
+     "pct": null
     },
     {
      "role": "planner",
      "state": "done",
      "step": "plan written",
-     "note": "plan.md ready"
+     "note": "plan.md ready",
+     "pct": null
     },
     {
      "role": "implementer",
      "state": "in_progress",
      "step": "step 2 (2026-03-01)",
-     "note": "working on step 3"
+     "note": "working on step 3",
+     "pct": null
     },
     {
      "role": "director",
      "state": "n/a",
      "step": null,
-     "note": "<pending if the plan has visual steps>"
+     "note": "<pending if the plan has visual steps>",
+     "pct": null
     },
     {
      "role": "code-reviewer",
      "state": "pending",
      "step": null,
-     "note": null
+     "note": null,
+     "pct": null
     }
    ],
    "questions_open": 1,
@@ -93,19 +98,22 @@
      "role": "orchestrator",
      "state": "in_progress",
      "step": null,
-     "note": null
+     "note": null,
+     "pct": null
     },
     {
      "role": "planner",
      "state": "done",
      "step": "roadmap",
-     "note": null
+     "note": null,
+     "pct": null
     },
     {
      "role": "implementer",
      "state": "in_progress",
      "step": "step 1 of M2",
-     "note": "menu"
+     "note": "menu",
+     "pct": null
     }
    ],
    "questions_open": 0,
@@ -140,13 +148,15 @@
      "role": "orchestrator",
      "state": "in_progress",
      "step": null,
-     "note": null
+     "note": null,
+     "pct": null
     },
     {
      "role": "implementer",
      "state": "waiting",
      "step": "step 7",
-     "note": "paused"
+     "note": "paused",
+     "pct": null
     }
    ],
    "questions_open": 0,
@@ -181,13 +191,15 @@
      "role": "orchestrator",
      "state": "in_progress",
      "step": null,
-     "note": null
+     "note": null,
+     "pct": null
     },
     {
      "role": "planner",
      "state": "done",
      "step": "plan written",
-     "note": "<script>alert(1)</script> & \"quotes\" 'x'"
+     "note": "<script>alert(1)</script> & \"quotes\" 'x'",
+     "pct": null
     }
    ],
    "questions_open": 1,
@@ -228,7 +240,8 @@
      "role": "orchestrator",
      "state": "in_progress",
      "step": null,
-     "note": null
+     "note": null,
+     "pct": null
     }
    ],
    "questions_open": 0,

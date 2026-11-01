@@ -27,10 +27,11 @@ STATUS = """# Status: {slug}
 - repo: {repo}
 - worktree: {worktree}
 
-| role | state | timestamp (UTC) | last completed step | notes |
-|---|---|---|---|---|
+{head}
 {rows}
 """
+OLD_HEAD = "| role | state | timestamp (UTC) | last completed step | notes |\n|---|---|---|---|---|"
+NEW_HEAD = "| role | state | timestamp (UTC) | last completed step | progress | notes |\n|---|---|---|---|---|---|"
 
 
 def plan_text(ids, summary="- goal: add a login form\n"):
@@ -70,12 +71,13 @@ class Base(unittest.TestCase):
             os.makedirs(d)
 
     def task(self, slug, rows="| implementer | in_progress | 2026-03-01T12:00Z | | |", state="implementing",
-             mode="lite", shape="single", milestone="n/a", files=None, journal=None, repo_name="app"):
+             mode="lite", shape="single", milestone="n/a", files=None, journal=None, repo_name="app",
+             head=OLD_HEAD):
         d = os.path.join(self.root, repo_name, slug)
         os.makedirs(d)
         with open(os.path.join(d, "status.md"), "w") as fh:
             fh.write(STATUS.format(slug=slug, state=state, mode=mode, shape=shape, milestone=milestone,
-                                   repo=self.repo, worktree=self.wt, rows=rows))
+                                   repo=self.repo, worktree=self.wt, rows=rows, head=head))
         for name, text in (files or {}).items():
             path = os.path.join(d, name)
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -301,6 +303,20 @@ class TestRunning(Base):
         t = self.one()
         self.assertIs(t["running"]["last_spawn"]["returned"], True)
         self.assertIsNone(t["steps"]["current"])
+
+    def test_pct_through_status_json(self):
+        rows = ("| orchestrator | in_progress | 2026-03-01T12:00Z | | | |\n"
+                "| implementer | in_progress | 2026-03-01T12:00Z | 1 | 40% | step 2 |\n"
+                "| director | waiting | 2026-03-01T12:00Z | | | waiting |")
+        self.task("a", rows=rows, files={"plan.md": plan_text(["1", "2"])}, head=NEW_HEAD)
+        t = self.one()
+        self.assertEqual([(r["role"], r["pct"]) for r in t["running"]["roles"]],
+                         [("implementer", 40), ("director", None)])
+        self.assertEqual(t["running"]["roles"][0]["note"], "step 2")
+
+    def test_pct_missing_column_is_null(self):
+        self.task("a", rows=self.ROWS, files={"plan.md": plan_text(["1", "2"])})
+        self.assertEqual([r["pct"] for r in self.one()["running"]["roles"]], [None, None])
 
     def test_junk_journal_and_no_role_table(self):
         d = self.task("a", files={"plan.md": plan_text(["1"])})

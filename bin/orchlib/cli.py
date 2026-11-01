@@ -188,14 +188,20 @@ def cmd_role(ns, extra):
     require_write_allowed()
     task_dir = get_task(ns)
     ts_cell = now() if ns.ts is None else st.single_line(ns.ts, "--ts")
+    pct = None
+    if ns.pct is not None:
+        if not re.fullmatch(r"[0-9]{1,2}", ns.pct):
+            raise OrchError("--pct must be an integer 0-99 (got %r)" % ns.pct, 1)
+        pct = int(ns.pct)
     line = log_line(now(), ns.as_role or ns.role, ns.log) if ns.log is not None else None
     with TaskLock(task_dir):
         status = load_status(task_dir)
-        changed, skipped = status.set_role(ns.role, state=ns.state, ts=ts_cell, step=ns.step, note=ns.note)
+        changed, skipped = status.set_role(ns.role, state=ns.state, ts=ts_cell, step=ns.step, note=ns.note, pct=pct)
         if changed:
             write_atomic(status_path(task_dir), status.render())
         if line:
             append_log(task_dir, line)
+    skipped = [k for k in skipped if k != "pct"]  # an old table has no progress column: drop pct silently
     if skipped:
         warn_stderr("this status.md has no column for: %s (not written)" % ", ".join(skipped))
     if changed:
@@ -396,6 +402,7 @@ def build_parser():
     sp.add_argument("state")
     sp.add_argument("--step", default=None)
     sp.add_argument("--note", default=None)
+    sp.add_argument("--pct", default=None, help="rough progress 0-99, written to the progress column")
     sp.add_argument("--log", default=None)
     sp.add_argument("--ts", default=None, help="timestamp cell (replay and tests only)")
     sp.add_argument("--as", dest="as_role", default=None)

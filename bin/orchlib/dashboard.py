@@ -150,6 +150,15 @@ def clean(value, limit=80):
     return text if len(text) <= limit else text[:limit - 1] + "\u2026"
 
 
+PCT_RE = re.compile(r"^(\d{1,2})%?$")
+
+
+def pct_of(value):
+    """The progress cell (`40%` or `40`) as an int 0-99; anything else is null."""
+    m = PCT_RE.match((value or "").strip())
+    return int(m.group(1)) if m else None
+
+
 def cell(value, limit=160):
     """A status cell: empty or missing is null."""
     if value is None:
@@ -380,7 +389,8 @@ def build_task(repo, slug, d, status_text, state, journal):
     m = re.match(r"^M?(\d+)\b", ms_text)
     ms_no = int(m.group(1)) if m else None
     roles = [{"role": cell(r, 60), "state": cell(row.get("state"), 40), "step": cell(row.get("step"), 60),
-              "note": cell(row.get("notes"), 160)} for r, row in rows[:MAX_ROLES]]
+              "note": cell(row.get("notes"), 160), "pct": pct_of(row.get("pct"))}
+             for r, row in rows[:MAX_ROLES]]
     total = step_total(d, program, ms_no)
     done = steps_done_from(rows, total)
     n_open, open_qs = questions_of(d)
