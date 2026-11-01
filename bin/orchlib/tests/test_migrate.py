@@ -121,7 +121,7 @@ class TestTaskState(MigrateBase):
             after = read(self.status_path(d), "r").splitlines()
             self.assertEqual(after[2], "- task_state: %s" % want)
             self.assertEqual(after[0], before[0])
-            self.assertIn("| orchestrator | done | | |", after)
+            self.assertIn("| orchestrator | done | | | |", after)  # progress column added, empty
 
     def test_prose_after_the_value_is_unchanged_and_reported_unknown(self):
         d = self.make("myapp", "add-login", "prose_state.md")
@@ -158,10 +158,20 @@ class TestAddedFields(MigrateBase):
             "mode": "standard", "shape": "single", "milestone": "n/a", "reviewed_through": "none", "merged_through": "none",
             "task_dir": "~/.claude/orchestrations/myapp/fix-menu", "task_branch": "unknown", "planner_tier": "unknown", "implementer_tier": "unknown",
             "review_round": "unknown", "usage_override": "none"})
-        # the new lines sit directly under the last old field, the table is untouched
+        # the new lines sit directly under the last old field, only the progress column is added to the table
         text = read(self.status_path(d), "r")
         self.assertRegex(text, r"- worktree: removed after merge\n- mode: standard\n")
-        self.assertIn("\n\n| role | state | updated | notes |\n|---|---|---|---|\n| orchestrator | done |", text)
+        self.assertIn("\n\n| role | state | updated | progress | notes |\n|---|---|---| --- |---|\n| orchestrator | done |", text)
+
+    def test_progress_column_added_once_before_notes(self):
+        d = self.make("myapp", "fix-menu", "legacy_done.md")
+        self.migrate("--all")
+        text = read(self.status_path(d), "r")
+        self.assertIn("| progress | notes |", text)
+        self.assertEqual(text.count("progress"), 1)
+        out = self.migrate("--all")  # a second run changes nothing
+        self.assertEqual(read(self.status_path(d), "r"), text)
+        self.assertIn("0 did change", out)
 
     def test_task_dir_uses_the_home_form(self):
         d = self.make("myapp", "fix-menu", "legacy_done.md")
@@ -362,7 +372,7 @@ class TestSafety(MigrateBase):
         self.assertEqual(os.stat(self.status_path(d1)).st_mode & 0o777, 0o600)
         new2 = read(self.status_path(d2))
         self.assertIn(b"(caf\xe9 \xff)\n", new2)
-        self.assertTrue(new2.endswith(b"| orchestrator | done |"))
+        self.assertTrue(new2.endswith(b"| orchestrator | done | |"))  # progress column added, no newline invented
         self.assertRegex(new2.decode("latin-1"), r"- usage_override: none\n")
 
     def test_the_task_lock_is_taken_for_a_write(self):
@@ -413,6 +423,9 @@ class TestSafety(MigrateBase):
             "- worktree: removed after merge\n", "- worktree: removed after merge\n" + "".join(
                 "- %s: x\n" % n for n in ("mode", "shape", "milestone", "reviewed_through", "merged_through", "task_dir",
                                           "task_branch", "planner_tier", "implementer_tier", "review_round", "usage_override")))
+        fs = mg.st.Status(fixed.encode("utf-8"), None)
+        fs.add_progress_column()  # "fixed" must already be fully migrated, progress column included
+        fixed = fs.render().decode("utf-8")
         seen = {}
         real_analyse = mg.analyse_file
 

@@ -201,9 +201,9 @@ def cmd_role(ns, extra):
             write_atomic(status_path(task_dir), status.render())
         if line:
             append_log(task_dir, line)
-    skipped = [k for k in skipped if k != "pct"]  # an old table has no progress column: drop pct silently
     if skipped:
-        warn_stderr("this status.md has no column for: %s (not written)" % ", ".join(skipped))
+        warn_stderr("this status.md has no column for: %s (not written)%s" % (
+            ", ".join(skipped), "; run `orch migrate` to add the progress column" if "pct" in skipped else ""))
     if changed:
         refresh_index(warn_stderr)
     print("role %s -> %s%s" % (ns.role, ns.state, "" if changed else " (no change)"))

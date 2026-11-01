@@ -2,7 +2,7 @@
 
 What it does (D12): normalises an existing `task_state` that is an enum value under case, markup and trailing
 punctuation; adds fixed fields that are missing, with a derived value or `unknown`. It never adds `task_state`
-or `worktree` (orch-index.sh derives a state from their absence), never rebuilds a role table, and never writes
+or `worktree` (orch-index.sh derives a state from their absence), never rebuilds a role table (it only inserts the empty `progress` column when it is missing), and never writes
 any file but status.md (plans, roadmaps, journals and logs are only read for the report). A backup of the
 original comes first, the original mtime is restored (orch-index uses it as the last-activity time), and a
 second run finds nothing to do.
@@ -226,6 +226,9 @@ def analyse(task_dir, status, order, enum):
             c = status._cells(status.lines[i])
             if not c or len(c[1]) != lay.ncols:
                 bad += 1
+        if "pct" not in lay.cols:
+            status.add_progress_column()
+            res.changes.append(("progress column", None, "added"))
         if bad:
             res.notes.append("roles: %d row(s) with a cell count different from the header (read as far as possible)" % bad)
     except OrchError as exc:
