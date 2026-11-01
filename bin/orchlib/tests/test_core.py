@@ -492,20 +492,20 @@ class TestRole(Base):
         cells = [c.strip() for c in self.row(d, "implementer:part-a").strip("|").split("|")]
         self.assertEqual((cells[1], cells[4]), ("in_progress", "25%"))
 
-    def test_pct_dropped_silently_on_old_table(self):
+    def test_pct_dropped_with_warning_on_old_table(self):
         d = self.fixture_task("status_variant_b.md")
         rc, out, err = self.run_orch("role", "implementer", "in_progress", "--pct", "40", "--note", "n",
                                      "-t", "myapp/fix-menu")
         self.assertEqual(rc, 0)
-        self.assertNotIn("no column for", err)
+        self.assertIn("no column for: pct", err)
+        self.assertIn("orch migrate", err)
         row = self.row(d, "implementer")
         self.assertIn("| n |", row)
         self.assertNotIn("40", row)
         # --step on the same old table still warns, pct alongside it is not named
         rc, out, err = self.run_orch("role", "implementer", "done", "--pct", "50", "--step", "s", "-t", "myapp/fix-menu")
         self.assertEqual(rc, 0)
-        self.assertIn("no column for: step", err)
-        self.assertNotIn("pct", err)
+        self.assertIn("no column for: pct, step", err)
 
     def test_row_with_other_cell_count_refused(self):
         d = self.fixture_task("status_variant_d.md")
