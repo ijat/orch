@@ -293,7 +293,7 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `skills/orchestrate/roles/` | Role sources; `_shared/` holds blocks every role includes |
 | `bin/orch-build-agents.py` | Renders `roles/` into `~/.claude/agents/orch-*.md`. Agent files can't import other files at runtime, so shared rules are inlined at build time |
 | `bin/orch-build-hook.sh` | PostToolUse hook: re-runs the build whenever a Write, Edit or Bash call touches `roles/`, and reports a failed build back to Claude |
-| `bin/orchlib/hook.py` (`orch hook delegate`) | PreToolUse hook declared in the frontmatter of `orch-implementer` and `orch-code-reviewer` (nothing to add to `settings.json`): on a repository with a built code index it denies their repo-wide searches and says to spawn `orch-explorer`, see Code index below |
+| `bin/orchlib/hook.py` (`orch hook delegate`) | A PreToolUse hook that denies repo-wide searches on an indexed repository. **Not wired into any role** since 2026-11-01 (it blocked Sonnet implementer work); the roles are told to prefer `orch-explorer` instead. Kept as a tool, see Code index below |
 | `agents/orch-explorer.md`, `agents/orch-graph.md`, `agents/orch-executor.md` | Cheap helpers that any role (or any session) can call: read-only lookups (using an optional code index when there is one, see Code index below), keeping that index fresh (`orch-graph`: the orchestrator, the planner or you call it, not the other roles), and builds/tests that report a digest. Named `explorer`/`executor` before 2026-10-22 |
 | `bin/usage-check.sh`, `bin/usage-watch.sh` | One-shot wrapper around `orch usage` (the live estimate and dynamic stop line), and a legacy fixed-threshold watchdog. Local files only, no network |
 | `bin/orch-ratelimit-cache.sh` | Writes that cache, and the shared sample log, from the statusline input |
@@ -353,16 +353,11 @@ marker before it queries. A marker whose process is gone, or that is over 30 min
 This is a rule the roles follow, not a lock: another person's session, or a role that never reads the
 rule, is not blocked.
 
-**Delegation hook.** Prose alone did not stop the implementer and the code reviewer from running their own
-repo-wide searches, so `orch hook delegate` (a PreToolUse hook in those two roles' frontmatter, `agents/orch-implementer.md`
-and `agents/orch-code-reviewer.md`) enforces it. When the repository has a built index (`orch-index stats`
-reports a commit and at least one file), it denies a repo-wide Grep or Glob and a Bash `rg`, `grep -r`,
-`git grep` or `find` over a directory, with a message that says to spawn `orch-explorer`. Searching one file
-is allowed. A Bash search that must run itself can carry `# orch-self-search: <reason>`; Grep and Glob have
-no such marker. The hook fails open: any error, a missing binary, a 2-second `stats` timeout or a directory
-outside a git repository lets the call through. Every deny, bypass and broad search without an index is
-appended, without the command text, to `~/.claude/orchestrations/delegate-hook.jsonl` (`$ORCH_DIR` overrides
-the directory). No other role has the hook.
+**Delegation hook (unwired).** `orch hook delegate` can deny a repo-wide Grep, Glob or Bash search on an indexed
+repository and tell the caller to spawn `orch-explorer`. It was declared in the frontmatter of `orch-implementer`
+and `orch-code-reviewer` from 2026-11-01 and removed the same day: the deny stopped Sonnet in the middle of
+legitimate work. Those roles now carry a strong "prefer the explorer" rule in their prompt and nothing enforces it.
+The command and its tests remain; wire it back by adding a PreToolUse `Grep|Glob|Bash` hook to a role's frontmatter.
 
 You do not need the index. The binary is `$ORCH_INDEX_BIN` if set, else `orch-index` on `PATH`, else
 `$HOME/.claude/bin/orch-index`.
