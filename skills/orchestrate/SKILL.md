@@ -200,14 +200,23 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
    rung ladder with a sharper brief (a tier raise: `post-failure`, trigger `blocker`).
    Journal a `checkin` line either way. Check-ins read files, never the transcript.
 
-**Index rebuild pause.** Call `orch-graph` only when the explorer's reply says the index is stale
-(`index unavailable: stale … (refresh: orch-graph)`) on a repository that has an index; never for
-`no index`, `binary not found`, an index that is only behind HEAD (`index at <sha> + delta search`)
-or a stale line without the refresh hint (the explorer omits it in a linked worktree, where a rebuild
-would make the main checkout's index stale), never automatically, never two at once, and never while another index run is in progress (a live
-`<git-common-dir>/orch-index/indexing` marker, or a running `orch-graph` spawn). The pre-planning
-call on a repository of ≥ 100K tracked files is the planner's, not yours; it is also the call that may
-install a missing `orch-index` binary, and you add no trigger of your own for that.
+**Index rebuild pause.** Two triggers call `orch-graph`.
+
+- **Pre-plan call (yours):** once before each plan, in every mode: step 4's planning (standard, lite,
+  interactive) and each program milestone's detail plan. Ask it for a `pre-plan` run on the
+  repository's main checkout (`--repo <path>`). It counts tracked files with an indexed extension and
+  stops with `no indexable files` when there are none; otherwise it builds when there is no index and
+  rebuilds when the index is stale or behind HEAD (`commit` ≠ HEAD), and leaves a current one alone.
+  It is also the call that may install a missing `orch-index` binary. Log the result:
+  `orch set --log "pre-plan index: <state>"`.
+- **Stale hint:** when the explorer's reply says the index is stale
+  (`index unavailable: stale … (refresh: orch-graph)`) on a repository that has an index. Never for
+  `no index`, `binary not found`, an index that is only behind HEAD (`index at <sha> + delta search`)
+  or a stale line without the refresh hint (the explorer omits it in a linked worktree, where a rebuild
+  would make the main checkout's index stale). Only the pre-plan call handles those states.
+
+Never at any other time or automatically. Never two at once, and never while another index run is in progress (a live
+`<git-common-dir>/orch-index/indexing` marker, or a running `orch-graph` spawn).
 `orch-graph` installs a missing binary only when the caller did not ask for check only,
 `ORCH_INDEX_AUTOINSTALL` is not `0`, `ORCH_INDEX_BIN` is unset or empty, no `orch-index` is on `PATH`,
 and `~/.claude/bin/orch-index` does not exist; it then runs `~/.claude/bin/orch-install-code-index.sh`
@@ -348,7 +357,7 @@ earn an `opus/max` planner). The user may force lite anyway — journal it as `o
 **Flow** — the standard procedure with these differences:
 
 - **Step 3:** `orch init … --mode lite` (`mode: lite`, planner row `n/a (lite)`, `task_start` mode `"lite"`).
-- **Step 4:** spawn the lite agent (`description`: `orch-implementer-<model>[<effort>] lite: <task>`)
+- **Step 4:** after the pre-plan `orch-graph` call, spawn the lite agent (`description`: `orch-implementer-<model>[<effort>] lite: <task>`)
   in **phase 1**: read-only on the repo, writes a lite `plan.md` (see the role file) and returns; you
   `orch plan-check --lite` it and set `task_state: awaiting_approval`. Gate it exactly as a standard
   plan. Revisions go back to the same agent via `SendMessage`.
@@ -387,7 +396,7 @@ mode (a spawned planner at that tier), or go on here (journal `override`). Recor
 **Flow** — the standard procedure with these differences:
 
 - **Step 3:** `orch init … --mode interactive`.
-- **Step 4:** you do the planner's job. Read `~/.claude/agents/orch-planner.md` once and follow it as
+- **Step 4:** after the pre-plan `orch-graph` call, you do the planner's job. Read `~/.claude/agents/orch-planner.md` once and follow it as
   the planner, except: the user's conversation is your brief; skip **If continued**; a question it
   would return `blocked` with goes straight to the user after rungs 1–2 of the escalation ladder;
   `need: shape_roadmap` below `opus/max` → tell the user and continue only if they agree (else
@@ -437,6 +446,8 @@ seeds `status.md` (`task_state: planning`) and `log.md`, journals `task_start`, 
 
 Read both lessons files (`~/.claude/orchestrations/LESSONS.md`, `~/.claude/orchestrations/<repo-name>/LESSONS.md`)
 — each independently, so a missing one can't skip the other.
+
+Then the pre-plan `orch-graph` call (Index rebuild pause), before any planner spawn or planning.
 
 Spawn the chosen planner tier with: the user's request verbatim; absolute repo path and branch;
 absolute task dir and `plan.md` path; the tier and one-line reason for the header; anything relevant
