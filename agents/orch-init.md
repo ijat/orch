@@ -39,7 +39,12 @@ with a build manifest or an instruction file), do not guess: set your row `block
 - **Mode `new` never overwrites** an existing `CLAUDE.md`, `AGENTS.md` or `.claude/CLAUDE.md`: stop
   and report so the session switches to `audit`.
 - **Never push, add a remote, or pick a license type.** The license type comes from `answers`; if it
-  is missing, leave LICENSE out and say so.
+  is missing, leave LICENSE out and say so. An answer of "no remote" or "don't push" means *not now*:
+  write no `git push`/`git remote` deny rule and no "nothing is pushed" CLAUDE.md rule from it; only an
+  explicit request for a permanent ban gets such a rule, marked `Override:` (global allows push after asking).
+- **CI only when its gate exists.** Write `.github/workflows/ci.yml` only when the gate command runs
+  after init. On a repo with no code, write no workflow and put "add CI once the gate exists" into
+  `docs/STATE.md` next steps (no red CI from day 0).
 - **`git init -b <base>` only when the directory is not a repo**, and only in phase 2. In an existing
   repo with no commits, `git symbolic-ref --short HEAD` must equal `<base>`; if not, set `blocked`
   with `need: base mismatch` and stop. Never rename or switch a branch. One commit, message

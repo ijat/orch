@@ -59,6 +59,9 @@ JSON (no comments, no trailing commas). Sources:
 }
 ```
 
+Do not add `git push` / `git remote` deny rules because the user said "no remote" or "don't push": that
+means not now. Only an explicit request for a permanent ban gets one, with a matching `Override:` rule in CLAUDE.md.
+
 Adjust the rule strings to the project's real commands. Keep the enforced set small (formatter, gate,
 secret scan); every extra rule is something to maintain.
 
@@ -113,7 +116,9 @@ Add `./scripts/check-secrets.sh` to the gate command. `--redact` keeps values ou
 
 ## Opt-in: GitHub Actions gate workflow (`.github/workflows/ci.yml`)
 
-Runs the same gate command as local, nothing else. All CI in the user's repos so far is GitHub Actions.
+Runs the same gate command as local, nothing else. Write this file only when the gate command exists after
+init; on a repo with no code, skip it and put "add CI once the gate exists" into `docs/STATE.md` next steps
+(a workflow that fails on day 0 is noise). All CI in the user's repos so far is GitHub Actions.
 Pin the checkout major to the latest release found at write time (v7 on 2026-11-01); add the ecosystem's
 setup step from `references/<eco>.md` before the gate.
 

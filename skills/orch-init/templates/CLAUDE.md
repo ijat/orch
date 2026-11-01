@@ -44,7 +44,8 @@ same commit as the work. Decisions live in `docs/DECISIONS.md`; do not re-open o
 
 ## Git
 
-<!-- Only what differs from ~/.claude/CLAUDE.md. Ask the user these at init; do not default them. -->
+<!-- Only what differs from ~/.claude/CLAUDE.md. Ask the user these at init; do not default them.
+     "No remote" / "don't push" is not a rule (it means not now); a permanent ban only on explicit request, marked Override:. -->
 - {{Commit cadence: per change / per task.}}
 - {{Worktree per task: always / never / ask.}}
 - {{Override: ...}}
