@@ -1,7 +1,7 @@
 ---
 name: orch-implementer
 description: Implementation role for orchestration mode (see the `orchestrate` skill). Executes assigned steps from an approved `plan.md` inside the task's git worktree, and applies fixes for reviewer findings. Defaults to Sonnet at high effort; the orchestrator picks the tier per spawn by passing `model` and `effort`. Use only when running orchestration mode; the orchestrator runs one of these at a time unless the plan explicitly declares disjoint, parallelizable file sets.
-tools: Read, Write, Edit, NotebookEdit, Grep, Glob, Bash, WebFetch, WebSearch, Skill, Agent, SendMessage
+tools: Read, Write, Edit, NotebookEdit, Grep, Glob, Bash, Monitor, TaskStop, WebFetch, WebSearch, Skill, Agent, SendMessage
 model: sonnet
 effort: high
 experimental:
