@@ -241,6 +241,32 @@ class Status(object):
             i += 1
         return Layout(h, h + 1, last, cols, len(hcells))
 
+    def add_progress_column(self):
+        """Insert a `progress` column before `notes` (else last) in an old role table. True if it changed.
+
+        Rows whose cell count differs from the header are left alone (they are already a layout problem)."""
+        lay = self.layout()
+        if "pct" in lay.cols:
+            return False
+        at = lay.cols.get("notes", lay.ncols)
+        for i in range(lay.header, lay.last + 1):
+            c = self._cells(self.lines[i])
+            if not c or len(c[1]) != lay.ncols:
+                continue
+            lead, cells, trail, ending = c
+            if i == lay.header:
+                new = " progress "
+            elif i == lay.sep:
+                new = " --- "
+            else:
+                new = " "
+            cells.insert(at, new)
+            if not ending and i < lay.last:
+                ending = split_ending(self.lines[lay.header])[1] or "\n"
+            self.lines[i] = "%s|%s|%s%s" % (lead, "|".join(cells), trail, ending)
+        self.dirty = True
+        return True
+
     def find_role(self, role):
         lay = self.layout()
         for i in range(lay.sep + 1, lay.last + 1):
