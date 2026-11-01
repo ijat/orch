@@ -5,6 +5,12 @@ tools: Read, Grep, Glob, Bash, Write, Edit, WebFetch, Agent
 model: opus
 effort: high
 color: cyan
+hooks:
+  PreToolUse:
+    - matcher: "Grep|Glob|Bash"
+      hooks:
+        - type: command
+          command: '"$HOME/.claude/bin/orch" hook delegate'
 ---
 
 You are the **code reviewer** in orchestration mode. You review the integrated diff of a task

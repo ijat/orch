@@ -293,7 +293,8 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `skills/orchestrate/roles/` | Role sources; `_shared/` holds blocks every role includes |
 | `bin/orch-build-agents.py` | Renders `roles/` into `~/.claude/agents/orch-*.md`. Agent files can't import other files at runtime, so shared rules are inlined at build time |
 | `bin/orch-build-hook.sh` | PostToolUse hook: re-runs the build whenever a Write, Edit or Bash call touches `roles/`, and reports a failed build back to Claude |
-| `agents/orch-explorer.md`, `agents/orch-graph.md`, `agents/orch-executor.md` | Cheap helpers that any role (or any session) can call: read-only lookups (using an optional code index when there is one, see Code index below), keeping that index fresh (`orch-graph`: the orchestrator, planner or you call it, not the other roles), and builds/tests that report a digest. Named `explorer`/`executor` before 2026-10-22 |
+| `bin/orchlib/hook.py` (`orch hook delegate`) | PreToolUse hook declared in the frontmatter of `orch-implementer` and `orch-code-reviewer` (nothing to add to `settings.json`): on a repository with a built code index it denies their repo-wide searches and says to spawn `orch-explorer`, see Code index below |
+| `agents/orch-explorer.md`, `agents/orch-graph.md`, `agents/orch-executor.md` | Cheap helpers that any role (or any session) can call: read-only lookups (using an optional code index when there is one, see Code index below), keeping that index fresh (`orch-graph`: the orchestrator, the planner or you call it, not the other roles), and builds/tests that report a digest. Named `explorer`/`executor` before 2026-10-22 |
 | `bin/usage-check.sh`, `bin/usage-watch.sh` | One-shot wrapper around `orch usage` (the live estimate and dynamic stop line), and a legacy fixed-threshold watchdog. Local files only, no network |
 | `bin/orch-ratelimit-cache.sh` | Writes that cache, and the shared sample log, from the statusline input |
 | `bin/orch-index.sh`, `bin/orch-index-hook.sh` | Keep `~/.claude/orchestrations/ACTIVE.md`, the list of unfinished tasks |
@@ -334,10 +335,15 @@ Two roles use it, and only two:
   When the binary is missing it may install it once (conditions below).
   It leaves a `fresh-enough` index alone unless asked to bring it to `HEAD`, and it rebuilds only in
   the main checkout: from a linked worktree it reports the state and the main checkout's path. It answers no code
-  questions. Only you, the orchestrator and the planner call it: the orchestrator or planner when the
-  explorer reports a stale index (`… (refresh: orch-graph)`) on a repository that has one, and the
-  planner also before planning on a repository of 100K or more tracked files (the call that may install
-  a missing binary); the other roles do not.
+  questions. Only you, the orchestrator and the planner call it, the other roles do not:
+  - **Before every plan,** the orchestrator asks for a `pre-plan` run in the main checkout, in every
+    mode (standard, lite, interactive, each program milestone), on a repository of any size. It stops
+    with `no indexable files` when the repository has no tracked file in a supported language; otherwise it
+    builds a missing index and rebuilds one that is stale or behind `HEAD`, and leaves a current one alone.
+    The orchestrator logs the state (`pre-plan index: <state>`). This is the call that may install a
+    missing binary.
+  - **On a stale hint,** the orchestrator or planner, when the explorer reports a stale index
+    (`… (refresh: orch-graph)`) on a repository that has one.
 
 While `orch-graph` rebuilds, it writes a marker file, `<git-common-dir>/orch-index/indexing`, and
 removes it afterwards, only if the file still holds its own line; if a live marker from another run
@@ -347,6 +353,17 @@ marker before it queries. A marker whose process is gone, or that is over 30 min
 This is a rule the roles follow, not a lock: another person's session, or a role that never reads the
 rule, is not blocked.
 
+**Delegation hook.** Prose alone did not stop the implementer and the code reviewer from running their own
+repo-wide searches, so `orch hook delegate` (a PreToolUse hook in those two roles' frontmatter, `agents/orch-implementer.md`
+and `agents/orch-code-reviewer.md`) enforces it. When the repository has a built index (`orch-index stats`
+reports a commit and at least one file), it denies a repo-wide Grep or Glob and a Bash `rg`, `grep -r`,
+`git grep` or `find` over a directory, with a message that says to spawn `orch-explorer`. Searching one file
+is allowed. A Bash search that must run itself can carry `# orch-self-search: <reason>`; Grep and Glob have
+no such marker. The hook fails open: any error, a missing binary, a 2-second `stats` timeout or a directory
+outside a git repository lets the call through. Every deny, bypass and broad search without an index is
+appended, without the command text, to `~/.claude/orchestrations/delegate-hook.jsonl` (`$ORCH_DIR` overrides
+the directory). No other role has the hook.
+
 You do not need the index. The binary is `$ORCH_INDEX_BIN` if set, else `orch-index` on `PATH`, else
 `$HOME/.claude/bin/orch-index`.
 
@@ -354,19 +371,19 @@ You do not need the index. The binary is `$ORCH_INDEX_BIN` if set, else `orch-in
 `ORCH_INDEX_AUTOINSTALL` is not `0`, `ORCH_INDEX_BIN` is unset or empty, no `orch-index` is on `PATH`,
 and `~/.claude/bin/orch-index` does not exist; it then runs `~/.claude/bin/orch-install-code-index.sh`
 once (Bash timeout 300 s) and, if `stats` still fails after that, reports the script's last line and
-stops. The calls that can install are the planner's pre-plan call (on a repository of 100K or more
-tracked files) and your own. The script supports macOS and Linux (x86_64 and arm64). It downloads the
+stops. The calls that can install are the orchestrator's pre-plan call (before any plan, on a repository
+with at least one tracked file in a supported language) and your own. The script supports macOS and Linux (x86_64 and arm64). It downloads the
 pinned release over HTTPS from `github.com/ijat/orch-index`, checks the archive's SHA-256
 against hashes committed in this repository (it does not trust the release's own checksum file), accepts
 only the one expected binary from the archive, checks that `--version` matches the pin, and writes it to
 `~/.claude/bin/orch-index` (no `sudo`, an existing binary is never overwritten). If `gh` is present it
-also reports whether the archive's build attestation verifies. Small repositories are not touched, and
-the explorer never installs anything. To avoid the install: set `ORCH_INDEX_AUTOINSTALL=0` (the script
+also reports whether the archive's build attestation verifies. A repository with no tracked file in a
+supported language is not touched, and the explorer never installs anything. To avoid the install: set `ORCH_INDEX_AUTOINSTALL=0` (the script
 then exits 3 without network access and `orch-graph` reports `install disabled`), or provide your own
 binary (`ORCH_INDEX_BIN` set to a working path, `orch-index` on `PATH`, or a file at
 `~/.claude/bin/orch-index`, which is never overwritten). `ORCH_INDEX_AUTOINSTALL=0` only stops
-installs; an existing binary is still used. Your own check-only calls never install, but the planner's
-pre-plan call is not check only. The installer does not handle Windows: each orch-index release carries
+installs; an existing binary is still used. Your own check-only calls never install, but the
+orchestrator's pre-plan call is not check only. The installer does not handle Windows: each orch-index release carries
 a prebuilt Windows zip, which you download and unzip yourself (the orch-index README has a PowerShell
 recipe). Other platforms install by hand too.
 
