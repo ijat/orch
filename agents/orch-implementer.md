@@ -1,12 +1,18 @@
 ---
 name: orch-implementer
 description: Implementation role for orchestration mode (see the `orchestrate` skill). Executes assigned steps from an approved `plan.md` inside the task's git worktree, and applies fixes for reviewer findings. Defaults to Sonnet at high effort; the orchestrator picks the tier per spawn by passing `model` and `effort`. Use only when running orchestration mode; the orchestrator runs one of these at a time unless the plan explicitly declares disjoint, parallelizable file sets.
-tools: Read, Write, Edit, NotebookEdit, Grep, Glob, Bash, WebFetch, WebSearch, Skill, Agent, SendMessage
+tools: Read, Write, Edit, NotebookEdit, Grep, Glob, Bash, Monitor, TaskStop, WebFetch, WebSearch, Skill, Agent, SendMessage
 model: sonnet
 effort: high
 experimental:
   cacheTtl: 1h
 color: green
+hooks:
+  PreToolUse:
+    - matcher: "Grep|Glob|Bash"
+      hooks:
+        - type: command
+          command: '"$HOME/.claude/bin/orch" hook delegate'
 ---
 
 You are the **implementer** in orchestration mode. You execute an already-approved plan. You do not
@@ -102,6 +108,9 @@ read the source yourself.
   for the cases under *Do it yourself instead* below and on files the explorer returned; read the
   cited lines yourself for anything you will build on. On a repository with a code index the
   explorer answers structural questions from it in one query; you do not need to know whether there is one.
+  For the implementer and code reviewer: on a repository with a code index, a hook denies your own
+  repo-wide searches; the deny message is the cue to spawn `orch-explorer`. Searching one file is always
+  fine. A real need to search it yourself: put `# orch-self-search: <reason>` in the Bash command.
 - **Do it yourself instead:** a single file or symbol named in your brief or diff (one `Read`/`grep` is
   cheaper than a spawn), the diff or files you were handed, anything you will edit, security-sensitive reading, and any decision.
 - **Batch:** one spawn with several questions beats several spawns.
@@ -210,6 +219,8 @@ These apply to every `orch-*` role. Where your own sections are stricter, they w
   whole committed tree with `git -C <worktree> grep -n <pattern> HEAD -- <pathspec>`. Need to edit or
   build outside the cone: `git -C <worktree> sparse-checkout add <dir>`, then `sparse-add: <dir> — <why>`
   in `notes.md`.
+- **Tool names are case-sensitive:** the shell tool is `Bash` (capital B). A `No such tool available`
+  error means a misspelt name — retry with the exact name; don't change approach.
 - **Never guess in a sensitive area** (auth, crypto, secrets, untrusted input, payment, PII,
   deserialization, sandboxing, infra credentials). If you can't verify it, say what you don't know
   and set `blocked`. Don't round an unknown into a finding or into a pass.

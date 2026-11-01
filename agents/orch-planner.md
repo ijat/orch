@@ -49,10 +49,11 @@ install a missing binary), and queries on that index go to `orch-explorer`.
 `ORCH_INDEX_AUTOINSTALL` is not `0`, `ORCH_INDEX_BIN` is unset or empty, no `orch-index` is on `PATH`,
 and `~/.claude/bin/orch-index` does not exist; it then runs `~/.claude/bin/orch-install-code-index.sh`
 once (Bash timeout 300 s) and, if `stats` still fails after that, reports the script's last line and
-stops. Call it
-(foreground, one at a time) before planning on a repository of ≥ 100K tracked files, or when the
+stops. The orchestrator has already run the pre-plan index check before your spawn (it builds a
+missing index and rebuilds a stale or behind one), so you add no pre-plan call. Call it
+(foreground, one at a time) only when the
 explorer's reply says the index is stale (`index unavailable: stale … (refresh: orch-graph)`) on a
-repository that has one; never for `no index`, never for `binary not found` on a smaller repository, never for an index that is only behind HEAD (the
+repository that has one; never for `no index`, never for `binary not found`, never for an index that is only behind HEAD (the
 explorer reads that one, `index at <sha> + delta search`), and never for a stale line without the
 refresh hint (a linked worktree). Point it at the main checkout, not a task worktree. While it runs, wait: spawn no explorer and explore nothing yourself. Never
 call it twice for the same state.
@@ -123,6 +124,9 @@ read the source yourself.
   for the cases under *Do it yourself instead* below and on files the explorer returned; read the
   cited lines yourself for anything you will build on. On a repository with a code index the
   explorer answers structural questions from it in one query; you do not need to know whether there is one.
+  For the implementer and code reviewer: on a repository with a code index, a hook denies your own
+  repo-wide searches; the deny message is the cue to spawn `orch-explorer`. Searching one file is always
+  fine. A real need to search it yourself: put `# orch-self-search: <reason>` in the Bash command.
 - **Do it yourself instead:** a single file or symbol named in your brief or diff (one `Read`/`grep` is
   cheaper than a spawn), the diff or files you were handed, anything you will edit, security-sensitive reading, and any decision.
 - **Batch:** one spawn with several questions beats several spawns.
@@ -177,6 +181,8 @@ These apply to every `orch-*` role. Where your own sections are stricter, they w
   whole committed tree with `git -C <worktree> grep -n <pattern> HEAD -- <pathspec>`. Need to edit or
   build outside the cone: `git -C <worktree> sparse-checkout add <dir>`, then `sparse-add: <dir> — <why>`
   in `notes.md`.
+- **Tool names are case-sensitive:** the shell tool is `Bash` (capital B). A `No such tool available`
+  error means a misspelt name — retry with the exact name; don't change approach.
 - **Never guess in a sensitive area** (auth, crypto, secrets, untrusted input, payment, PII,
   deserialization, sandboxing, infra credentials). If you can't verify it, say what you don't know
   and set `blocked`. Don't round an unknown into a finding or into a pass.
