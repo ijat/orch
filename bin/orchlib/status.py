@@ -20,6 +20,7 @@ COLUMN_NAMES = {
     "role": "role", "state": "state",
     "timestamp (utc)": "ts", "timestamp": "ts", "updated (utc)": "ts", "updated": "ts",
     "last completed step": "step",
+    "progress": "pct",
     "notes": "notes", "note": "notes",
 }
 
@@ -260,12 +261,12 @@ class Status(object):
             out.append((row["role"], row))
         return out
 
-    def set_role(self, role, state=None, ts=None, step=None, note=None, validate=True):
-        """Update (or insert) a role row. ts/step/note None = leave alone. Returns (changed, skipped_columns)."""
+    def set_role(self, role, state=None, ts=None, step=None, note=None, validate=True, pct=None):
+        """Update (or insert) a role row. ts/step/note/pct None = leave alone. Returns (changed, skipped_columns)."""
         if validate and state is not None and state not in ROLE_STATES:
             raise OrchError("bad state %r; one of: %s" % (state, " ".join(ROLE_STATES)), 1)
         lay = self.layout()
-        want = {"state": state, "ts": ts, "step": step, "notes": note}
+        want = {"state": state, "ts": ts, "step": step, "notes": note, "pct": None if pct is None else "%d%%" % pct}
         want = {k: clean_cell(v) for k, v in want.items() if v is not None}
         skipped = sorted(k for k in want if k not in lay.cols)
         want = {k: v for k, v in want.items() if k in lay.cols}

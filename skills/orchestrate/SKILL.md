@@ -139,6 +139,8 @@ Every `orch-*` role must, one call each (the brief's *Checkpoint commands* have 
 - set its `status.md` row to `in_progress` with a UTC timestamp **before** starting;
 - append a `log.md` line at each meaningful step boundary, and update `last completed step` as it
   goes, not only at the end;
+- add `--pct N` (0–99, your rough estimate of your current assignment; `0` at start) to its
+  `in_progress` checkpoints, so `orch status --json` shows how far along each running role is;
 - set `done`, `blocked`, or `failed` with a note before returning;
 - write its output to its designated file — a return message that never reached disk didn't happen;
 - keep the chat reply decision-grade: short summary, primary file path, blockers/risks, verification
