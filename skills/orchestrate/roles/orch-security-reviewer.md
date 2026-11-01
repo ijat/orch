@@ -139,7 +139,7 @@ that record is the entire point of the review having run.
 Checkpoint with `~/.claude/bin/orch -t <task> role security-reviewer <state> --note "<N>" --log "<what>"`
 (`<task>` is the dir on your brief's `task dir` line, the one with `status.md`; in a program the program dir,
 not the milestone dir; the brief's *Checkpoint commands* have it filled in): `in_progress` before
-starting, a log line when you start, after each sensitive area you finish, and when you finish, and
+starting, a log line when you start (`--pct 0`), after each sensitive area you finish (`--pct N`, 0–99, your rough estimate of the review), and when you finish, and
 `done` (with the verdict and finding count in the notes), or `blocked` / `failed` with a note, before
 returning. `security-review.md` is the deliverable — your return message is not
 durable.

@@ -114,7 +114,7 @@ Verification is unchanged: a fact a contract rests on is one you or `orch-explor
 
 You are given an absolute task directory. Checkpoint with
 `~/.claude/bin/orch -t <task> role planner <state> --note "<N>" --log "<what>"` (`<task>` is that dir; add
-`--step <step>` to update `last completed step`): before you start, `in_progress` with a log line saying you started.
+`--step <step>` to update `last completed step`; `--pct N`, 0–99, your rough estimate of the plan so far, `0` at start): before you start, `in_progress` with `--pct 0` and a log line saying you started.
 
 As you work, update `last completed step` (`--step`) at each meaningful boundary — after the
 investigation pass, after the design decision, after `plan.md` is written. Do not batch all your
@@ -273,7 +273,7 @@ Applies only when the orchestrator's message starts `orch: phase 2`; until then 
   bind you exactly as they bind an implementer. Skip its brief, Lite, Haiku, escalation, Visual and
   Fix rounds sections.
 - Edit only inside the given worktree. Checkpoint the `implementer` row, not the `planner` row:
-  `~/.claude/bin/orch -t <task> role implementer <state> --step <N> --note "…" --log "…"`.
+  `~/.claude/bin/orch -t <task> role implementer <state> --step <N> --pct <0-99> --note "…" --log "…"` (`--pct 0` at start, then your rough estimate of the assigned steps).
 - One commit per step; a `contract-check: step <N>` entry in `notes.md` before you mark it done.
 - The plan is the contract the user approved. If the real code breaks one of your own contracts, stop,
   set `blocked` with what you found, and return; don't revise the plan or improvise unless the
