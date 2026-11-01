@@ -52,7 +52,7 @@ unverified (the page lists `mstest` templates; the test framework is a choice to
   lists `<PackageVersion Include= Version= />`; project files use `<PackageReference Include="X" />` with no
   `Version` (NuGet CPM page). Several package sources then trigger NU1507; use package source mapping or one source.
 - Analyzers: `AnalysisLevel`, `EnforceCodeStyleInBuild` in `Directory.Build.props` (MSBuild properties page, research digest).
-- Per-file formatter for the hook (extension `cs`): `dotnet format whitespace --include <file>` (unverified: not fetched; `dotnet format` is slow per file and may restore, so prefer running it in the gate and skipping this hook if it lags).
+- Per-file formatter for the hook (case patterns `*.cs`): `dotnet format whitespace --include <file>` (unverified: not fetched; `dotnet format` is slow per file and may restore, so prefer running it in the gate and skipping this hook if it lags).
 
 ## Strictness from day 0
 

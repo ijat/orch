@@ -41,7 +41,7 @@ These are for the first plan: `orch-init` writes docs and config only and does n
 - Types: mypy, `strict = true` under `[tool.mypy]` (`--strict` flag exists; mypy docs "existing code" page says to
   introduce stricter options gradually, so a new project starts strict). pyright is an alternative: unverified.
 - Tests: pytest. One test: `pytest tests/test_mod.py::test_func` (docs.pytest.org usage). Run via `uv run pytest`.
-- Per-file formatter for the hook (extension `py`): `uv run ruff format <file>` (ruff formatter docs above accept file paths: unverified for the exact invocation).
+- Per-file formatter for the hook (case patterns `*.py`): `uv run ruff format <file>` (ruff formatter docs above accept file paths: unverified for the exact invocation).
 
 ## Strictness from day 0
 

@@ -65,7 +65,7 @@ secret scan); every extra rule is something to maintain.
 ## Opt-in: format hook (PostToolUse, in the same settings.json)
 
 Merge into the file above. `{{formatter}}` is the ecosystem's per-file formatter from the "Per-file
-formatter for the hook" line of `references/<eco>.md`; `{{ext}}` is its source extension (for example `rs`).
+formatter for the hook" line of `references/<eco>.md`; `{{ext patterns}}` is the `|`-separated list of full case patterns on the same line (for example `*.rs`, or `*.ts|*.tsx|*.js`); every alternative carries its own `*.`. Do not use extglob (`*.@(ts|tsx)`): it is off by default in bash scripts.
 
 ```json
 {
@@ -91,7 +91,7 @@ filter keeps formatters that reject non-source files from failing on CLAUDE.md o
 #!/bin/bash
 file=$(jq -r '.tool_input.file_path // empty')
 [ -n "$file" ] || exit 0
-case "$file" in *.{{ext}}) ;; *) exit 0 ;; esac   # only source files; skip .md, .json, ...
+case "$file" in {{ext patterns}}) ;; *) exit 0 ;; esac   # only the listed files; skip .md and the rest
 if ! out=$({{formatter}} "$file" 2>&1); then
   echo "$out" >&2
   exit 2

@@ -49,7 +49,7 @@ These are for the first plan: `orch-init` writes docs and config only and does n
 - Tests: **Vitest** (`pnpm add -D vitest`; script `"test": "vitest"`; `vitest run` runs once; needs Node >= 22.12 and
   Vite >= 6.4.0, vitest.dev/guide) or built-in `node --test` (nodejs.org/api/test.html). Single file or name filter
   (`vitest run <file> -t <name>`): unverified.
-- Per-file formatter for the hook (`{{formatter}}`, extensions `ts|tsx|js|jsx|json`; pick one the project uses): `pnpm biome format --write` (path arguments: unverified) or `pnpm prettier --write` (prettier.io/docs/cli, not fetched: unverified).
+- Per-file formatter for the hook (`{{formatter}}`, case patterns `*.ts|*.tsx|*.js|*.jsx|*.json`; pick the ones the project uses): `pnpm biome format --write` (path arguments: unverified) or `pnpm prettier --write` (prettier.io/docs/cli, not fetched: unverified).
 
 ## Strictness from day 0
 

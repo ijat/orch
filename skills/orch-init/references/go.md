@@ -43,7 +43,7 @@ These are for the first plan: `orch-init` writes docs and config only and does n
 - Test: `go test ./...`; `-run <regexp>` selects tests, `-skip` excludes, `-shuffle` randomises order (pkg.go.dev/cmd/go);
   `-race` turns on the race detector (go.dev/doc/articles/race_detector). Table-driven tests with `t.Parallel` are the
   convention.
-- Per-file formatter for the hook (extension `go`): `gofmt -w <file>` (`-w` writes the result back; flag text not fetched: unverified, confirm with `gofmt -h`).
+- Per-file formatter for the hook (case patterns `*.go`): `gofmt -w <file>` (`-w` writes the result back; flag text not fetched: unverified, confirm with `gofmt -h`).
 
 ## Strictness from day 0
 

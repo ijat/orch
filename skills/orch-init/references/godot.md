@@ -52,7 +52,7 @@ These are for the first plan: `orch-init` writes docs and config only and does n
   9.6.1 for 4.6.x. Install into `addons/gut/` (Asset Library or release zip), enable the plugin in Project Settings.
 - Package manager: none for GDScript. Python `pip`/`pipx` only for gdtoolkit; use `uv tool install gdtoolkit` if the user uses
   uv (command: unverified).
-- Per-file formatter for the hook (extension `gd`): `gdformat <file>` (gdtoolkit README, `gdformat` formats in place; per-file use: unverified).
+- Per-file formatter for the hook (case patterns `*.gd`): `gdformat <file>` (gdtoolkit README, `gdformat` formats in place; per-file use: unverified).
 
 ## Strictness from day 0
 

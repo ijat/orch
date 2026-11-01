@@ -43,7 +43,7 @@ These are for the first plan: `orch-init` writes docs and config only and does n
 - Lint: `cargo clippy` (clippy usage page). Test: `cargo test --workspace`; one test `cargo test -p <crate> <name>`
   (`cargo test [options] [testname]`, cargo-test page). A faster runner (cargo-nextest): unverified.
 - Pin the toolchain with `rust-toolchain.toml` (file name: unverified here).
-- Per-file formatter for the hook (extension `rs`): `rustfmt <file>` (rustfmt README; per-file invocation: unverified, confirm with `rustfmt --help`).
+- Per-file formatter for the hook (case patterns `*.rs`): `rustfmt <file>` (rustfmt README; per-file invocation: unverified, confirm with `rustfmt --help`).
 
 ## Strictness from day 0
 

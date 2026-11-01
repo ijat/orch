@@ -42,7 +42,7 @@ These are for the first plan: `orch-init` writes docs and config only and does n
 - Tests: **Swift Testing** (`import Testing`, `@Test`, `#expect`; swiftlang/swift-testing); run with `swift test`
   (command: unverified on the pages read). XCTest coexistence: unverified.
 - Build and run: `swift build`, `swift run`.
-- Per-file formatter for the hook (extension `swift`): `swift format -i <file>` (`-i/--in-place` as in the line above).
+- Per-file formatter for the hook (case patterns `*.swift`): `swift format -i <file>` (`-i/--in-place` as in the line above).
 
 ## Strictness from day 0
 
