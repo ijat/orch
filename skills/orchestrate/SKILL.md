@@ -55,6 +55,7 @@ below it).
 | Explorer | `orch-explorer` | `haiku/low` | read-only lookups and claim checks |
 | Graph | `orch-graph` | `haiku/low` | keeps the code index (orch-index) fresh (check; rebuild when stale or missing; install a missing binary once, only under its install conditions); you, the planner or the user call it, never the explorer. The explorer is the only role that queries the index |
 | Executor | `orch-executor` | `haiku/low` | runs builds/tests/lint, returns a digest |
+| Init | `orch-init` | `sonnet/high` | → `opus/medium` for an ecosystem with no `skills/orch-init/references/<ecosystem>.md`; sets up or audits a project's agent files for the `orch-init` skill (step 3a) |
 
 Always pass both `model` and `effort` for planners and implementers, even at the default tier, so the
 spawn record states it. The ladders are the normal path; any other combination, including raising a
@@ -126,6 +127,8 @@ task dirs: `~/.claude/orchestrations/LESSONS.md` (global),
 `~/.claude/orchestrations/<repo-name>/security-ledger.md`, and optionally `<repo-name>/policy.md`
 (`- merge: auto | ask`, `- security: rule | always | ask`; absent = `auto`, `rule`). Never use
 `~/.claude/tasks/` or `~/.claude/plans/` — Claude Code owns those.
+
+The `orch-init` skill (step 3a) also keeps `<repo-name>/init.md` (its record), `<repo-name>/init-proposal.md` (the proposal) and `<repo-name>/audit.md` (an audit's findings) beside the task dirs.
 
 **Every file above has a template in `~/.claude/skills/orchestrate/templates/`** — the single definition of its format, including
 state vocabularies and round rules. Nobody invents another layout or
@@ -444,6 +447,20 @@ Before spawning the planner, create it with what's known (slug, repo, base branc
 `orch init <repo-name> <task-slug> --repo-path <repo-path> --base <base> --mode standard --request "<request>"`
 seeds `status.md` (`task_state: planning`) and `log.md`, journals `task_start`, refreshes `ACTIVE.md`.
 
+### 3a. New repository — offer orch-init
+
+Applies only when the repo is new or empty, by the `orch-init` skill's *When it runs* test (do not
+restate it here). For any other repo skip this step: nothing below changes its flow, and nothing about
+init is logged or journaled (only an offered-and-answered init gets `init: set up` / `init: skipped`). Load the
+`orch-init` skill (`~/.claude/skills/orch-init/SKILL.md`) and run its mode `new` through its hand-off:
+it restates the project, offers the setup with a strong "don't skip" line, asks one question batch,
+shows the proposal, and has the `orch-init` agent write the files in the repo's main checkout on the
+base branch with one commit. The user may skip; journal the choice (`override` if they skipped against
+the recommendation, else `judgement`) and log `init: set up` or `init: skipped`. Then go on to step 4:
+if set up, the planner's brief names `CLAUDE.md`, `docs/STATE.md`, `docs/DECISIONS.md` and
+`~/.claude/orchestrations/<repo-name>/init.md` as required reading, and the init commit is the base the
+plan is made against; after a skip those files do not exist and the brief omits them.
+
 ### 4. Plan
 
 Read both lessons files (`~/.claude/orchestrations/LESSONS.md`, `~/.claude/orchestrations/<repo-name>/LESSONS.md`)
@@ -654,6 +671,8 @@ git -C <repo> worktree list                  # confirm no orch-<task-slug>* rema
 ```
 
 Keep the task directory — it's the record.
+
+**Init refresh.** After this merge, if `~/.claude/orchestrations/<repo-name>/init.md` says `refresh: pending`, run the `orch-init` skill's mode `refresh` once (a proposal the user approves, one commit), then it reads `refresh: done`; if the user skips it, the session sets `refresh: skipped` and it is not offered again (only `pending` fires). In program mode this runs after the first milestone's merge (`PROGRAM.md` §2).
 
 **Every task end — merged, declined, failed merge, abandoned, or handed to the user — gets a
 `task_end` journal line and a `retro.md`**, before you report back: write `retro.md`, then
