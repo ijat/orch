@@ -48,7 +48,7 @@ Examples (illustrations):
 - A .NET desktop app: ports and adapters with one DI extension per layer; the crypto backend sits behind
   one interface in Core and its library is referenced only by Infrastructure; a provider contract for
   each AI backend; the clock as an `IUtcClock` interface.
-- A Go debugger and a Go store: small consumer-side interfaces; a frozen store contract file.
+- A Go developer tool and a Go store: small consumer-side interfaces; a frozen store contract file.
 - A TypeScript connector platform: a plugin SDK with a conformance helper; context-object DI in a
   browser app.
 - A Swift menu-bar app: every system access behind a protocol with test fakes.
