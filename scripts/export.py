@@ -24,18 +24,23 @@ import argparse, json, os, re, shutil, subprocess, sys
 
 FILES = [
     "skills/orchestrate/SKILL.md", "skills/orchestrate/PROGRAM.md", "skills/orchestrate/TIERS.md",
+    "skills/orch-init/SKILL.md",
+    *[f"skills/orch-init/templates/{n}.md" for n in (
+        "CLAUDE", "AGENTS", "STATE", "DECISIONS", "init-record", "proposal", "audit", "snippets")],
+    *[f"skills/orch-init/references/{n}.md" for n in (
+        "architecture", "typescript", "python", "rust", "go", "dotnet", "swift", "godot", "non-code")],
     *[f"skills/orchestrate/templates/{n}.md" for n in (
         "guide", "journal", "log", "notes", "plan", "policy", "questions", "retro", "review", "review-visual",
         "roadmap", "security-ledger", "security-review", "sketch", "status")],
     *[f"agents/{n}.md" for n in (
         "orch-planner", "orch-implementer", "orch-code-reviewer", "orch-security-reviewer",
-        "orch-plan-reviewer", "orch-director", "orch-explorer", "orch-graph", "orch-executor")],
+        "orch-plan-reviewer", "orch-director", "orch-explorer", "orch-graph", "orch-executor", "orch-init")],
     "bin/usage-check.sh", "bin/usage-watch.sh", "bin/orch-stats.sh", "bin/orch-index.sh",
     "bin/orch-index-hook.sh", "bin/orch-program-check.py", "bin/orch-build-agents.py",
     "bin/orch-build-hook.sh", "bin/orch", "bin/orch-install-code-index.sh",
     *[f"skills/orchestrate/roles/{n}.md" for n in (
         "orch-planner", "orch-implementer", "orch-code-reviewer", "orch-security-reviewer",
-        "orch-plan-reviewer", "orch-director", "orch-explorer", "orch-graph", "orch-executor")],
+        "orch-plan-reviewer", "orch-director", "orch-explorer", "orch-graph", "orch-executor", "orch-init")],
     *[f"skills/orchestrate/roles/_shared/{n}.md" for n in (
         "when-to-delegate", "trust-instrument", "be-brief", "every-role", "code-index")],
 ]

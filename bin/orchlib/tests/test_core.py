@@ -539,6 +539,12 @@ class TestRole(Base):
         self.assertEqual(lines[i + 1], "")
         self.refuse(1, "role", "nobody", "pending", "-t", "myapp/add-login")
 
+    def test_init_role_row_inserted(self):
+        d = self.init()
+        self.ok("role", "init", "in_progress", "--note", "n", "-t", "myapp/add-login")
+        self.assertIn("| init | in_progress |", self.row(d, "init"))
+        self.refuse(1, "role", "init-x", "pending", "-t", "myapp/add-login")
+
     def test_pipes_and_newlines_in_values(self):
         d = self.init()
         self.ok("role", "planner", "done", "--note", "a | b\nc", "--step", "x|y", "-t", "myapp/add-login")
