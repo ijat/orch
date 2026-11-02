@@ -139,7 +139,7 @@ jobs:
       - run: {{gate command}}
 ```
 
-Rule for CLAUDE.md when CI is chosen: "CI runs the gate command; keep local and CI identical."
+Rule for CLAUDE.md, only when the workflow is written (not when CI is deferred to docs/STATE.md): "CI runs the gate command; keep local and CI identical."
 
 ## Opt-in: README and LICENSE
 

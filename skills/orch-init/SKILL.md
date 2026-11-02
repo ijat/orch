@@ -29,7 +29,7 @@ invariants, decisions, the swap points). Stay under the 200-line guidance
   `*.csproj`, `*.sln`, `pyproject.toml`, `Package.swift`, `project.godot`, `*.slnx`) AND no `CLAUDE.md`, `AGENTS.md` or `.claude/CLAUDE.md`. Detect with
   `git rev-list -n1 --all`, `git ls-files`, and `ls`; exclude `.claude/worktrees/` from every scan.
   "No files" is not the test: most repos start with spec or notes docs.
-- Anything else is **not new**. Say so and offer **audit** instead.
+- Anything else is **not new**. Called from orchestrate step 3a: return to step 4 and say or log nothing. Asked directly: say so and offer **audit** instead.
 
 ## Modes
 
@@ -39,7 +39,7 @@ invariants, decisions, the swap points). Stay under the 200-line guidance
 | `refresh` | once, after the first merge on an initialized repo (orchestrate step 11 / PROGRAM.md §2) | yes, once, after approval |
 | `audit` | user request, any repo | never; writes a findings file |
 
-`new` refuses a repo with a build manifest or an instruction file: tell the user and run `audit`
+`new` refuses a repo with a build manifest or an instruction file: from step 3a, return silently; on a direct request, tell the user and offer `audit`
 instead. Never overwrite an existing `CLAUDE.md`.
 
 ## Mode `new`
