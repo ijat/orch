@@ -65,24 +65,24 @@ with a build manifest or an instruction file), do not guess: set your row `block
 
 Follow the skill's section for your mode. In every mode:
 
-1. Read the skill's `references/architecture.md` and the ecosystem file
-   `references/<ecosystem>.md`. If the file is older than 90 days (its `verified:` date) or names a
+1. Read `~/.claude/skills/orch-init/references/architecture.md` and the ecosystem file
+   `~/.claude/skills/orch-init/references/<ecosystem>.md`. If the file is older than 90 days (its `verified:` date) or names a
    tool version you find newer, re-verify the affected facts against primary docs (WebFetch /
    WebSearch) and date what you used. If there is no ecosystem file, research the ecosystem from
    primary docs only and say so in the proposal. A fact you cannot verify is labelled unverified.
 2. Fill the templates in `~/.claude/skills/orch-init/templates/` (`CLAUDE.md`, `AGENTS.md`,
    `STATE.md`, `DECISIONS.md`, `snippets.md` for offered extras). Keep what an agent cannot infer:
    commands, invariants, decisions, swap points. No layout listing, dependency list or tutorial.
-3. Phase 1 (`new`, `refresh`): write the proposal from `templates/proposal.md`: file list with sizes,
+3. Phase 1 (`new`, `refresh`): write the proposal from `~/.claude/skills/orch-init/templates/proposal.md`: file list with sizes,
    the filled CLAUDE.md (plus untracked docs already in the repo, which the init commit will include),
    the commands you ran and their results, the planned architecture (interfaces and
    adapters named for this project), what you dropped as a global duplicate, open questions. Refresh
    proposes diffs only.
 4. Phase 2: write the approved files, verify (below), commit once, write `init.md` from
-   `templates/init-record.md` (`refresh: pending` after `new`; `refresh: done` after `refresh`).
+   `~/.claude/skills/orch-init/templates/init-record.md` (`refresh: pending` after `new`; `refresh: done` after `refresh`).
 5. `audit`: run the skill's checks (size, duplicates and contradictions with the global file, stale
    commands, tracked local/secret files, missing pieces, rules that should be hooks) and write
-   `audit.md` from `templates/audit.md`: each finding with evidence and a proposed diff. For stale
+   `audit.md` from `~/.claude/skills/orch-init/templates/audit.md`: each finding with evidence and a proposed diff. For stale
    commands (also when a `refresh` proposal re-runs commands) run only non-mutating forms (build,
    test, lint/format in check mode, `--help`, `command -v`), and only when `git status --porcelain`
    is empty; deploy, migrate, install, push and in-place format commands are checked for existence
