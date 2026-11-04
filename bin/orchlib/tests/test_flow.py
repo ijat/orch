@@ -673,5 +673,60 @@ class TestRegistered(FlowBase):
         self.assertEqual(core.tree_hash(self.home), before)
 
 
+class TestReuse(FlowBase):
+    BASE = ("implementer", "--agent", "orch-implementer")
+
+    def at(self, ts):
+        env = dict(self.ok_usage)
+        env["ORCH_NOW"] = ts
+        return env
+
+    def first(self, tier="sonnet/high", outcome="done"):
+        self.ok("spawn", *self.BASE, "--tier", tier, env=self.at("2026-03-01T10:00Z"))
+        self.ok("return", "implementer", "--outcome", outcome, env=self.at("2026-03-01T10:10Z"))
+
+    def reuse(self, ts, tier="sonnet/high"):
+        return ("spawn",) + self.BASE + ("--tier", tier, "--reused"), self.at(ts)
+
+    def test_a_warm_implementer_is_reused_and_journaled(self):
+        self.first()
+        argv, env = self.reuse("2026-03-01T11:05Z")      # 55 minutes idle
+        self.ok(*argv, env=env)
+        self.assertIs(self.journal()[-1]["reused"], True)
+
+    def test_a_fresh_spawn_has_no_reused_field(self):
+        self.first()
+        self.assertNotIn("reused", [r for r in self.journal() if r["kind"] == "spawn"][-1])
+
+    def test_each_refusal_writes_nothing(self):
+        cases = [("sonnet/high", "done", "2026-03-01T11:06Z", "sonnet/high", "idle"),
+                 ("sonnet/high", "blocked", "2026-03-01T10:20Z", "sonnet/high", "returned blocked"),
+                 ("sonnet/high", "done", "2026-03-01T10:20Z", "opus/medium", "ran at"),
+                 ("haiku/medium", "done", "2026-03-01T10:20Z", "haiku/medium", "haiku")]
+        for tier, outcome, ts, want, text in cases:
+            self.setUp()
+            self.first(tier, outcome)
+            before = self.snapshot()
+            argv, env = self.reuse(ts, want)
+            self.assertIn(text, self.refuse(1, *argv, env=env))
+            self.assertEqual(self.snapshot(), before)
+
+    def test_nothing_to_reuse_is_refused(self):
+        argv, env = self.reuse("2026-03-01T10:20Z")
+        self.assertIn("no returned implementer", self.refuse(1, *argv, env=env))
+
+    def test_a_running_implementer_is_not_reused(self):
+        self.ok("spawn", *self.BASE, "--tier", "sonnet/high", env=self.at("2026-03-01T10:00Z"))
+        argv, env = self.reuse("2026-03-01T10:05Z")
+        self.assertIn("no returned implementer", self.refuse(1, *argv, env=env))
+
+    def test_another_milestone_is_refused(self):
+        from orchlib import flow
+        journal = [{"kind": "spawn", "role": "implementer", "tier": "sonnet/high", "milestone": 1},
+                   {"kind": "return", "role": "implementer", "outcome": "done", "ts": "2026-03-01T10:10Z", "milestone": 1}]
+        self.assertIn("another milestone", flow.reuse_refusal(journal, "implementer", "sonnet/high", "2026-03-01T10:20Z", 2))
+        self.assertIsNone(flow.reuse_refusal(journal, "implementer", "sonnet/high", "2026-03-01T10:20Z", 1))
+
+
 if __name__ == "__main__":
     unittest.main()
