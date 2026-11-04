@@ -29,13 +29,13 @@ import argparse, glob, json, os, re, statistics, sys
 from collections import Counter, defaultdict
 
 # List prices, $/MTok: (input, output, cache-read multiplier). Cache writes: 1.25x (5 min), 2x (1 h).
-# Source: Claude API reference (cached 2026-10-06). Update when prices change — audit step 5a.
-# Haiku 5.5's cache-read price isn't in the reference: 0.1x is assumed, as for the other models.
+# Source: Claude API model pages (checked 2026-11-04). Update when prices change — audit step 5a.
+# Haiku 5.5 is priced here at its rate up to 100K tokens; above that every rate is 5x, which this table doesn't model.
 PRICES = {
     'claude-fable-5-1': (10, 50, 0.025), 'claude-fable-5': (10, 50, 0.1),
     'claude-opus-5-5': (4, 20, 0.05), 'claude-opus-5': (5, 25, 0.1),
     'claude-opus-4-8': (5, 25, 0.1), 'claude-opus-4-7': (5, 25, 0.1),
-    'claude-sonnet-5-5': (2, 10, 0.1), 'claude-sonnet-5': (2, 10, 0.1),
+    'claude-sonnet-5-5': (2, 10, 0.05), 'claude-sonnet-5': (2, 10, 0.1),
     'claude-haiku-5-5': (0.10, 0.50, 0.1), 'claude-sonnet-4-6': (3, 15, 0.1),
     'claude-haiku-4-5-20251001': (1, 5, 0.1), 'claude-haiku-4-5': (1, 5, 0.1),
 }

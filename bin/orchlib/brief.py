@@ -342,7 +342,8 @@ def verification_text(plan, keys, ids):
         parts.append("\n\n".join(pre))
     for sub in sec.subs:
         if last and last in ids and re.match(r"final gate", sub.title, re.I):
-            parts.append(plan.block(sub.start, sub.end))
+            parts.append("The orchestrator runs this during review; it's here so your work can pass it.\n\n"
+                         + plan.block(sub.start, sub.end))
             continue
         kept = pl.filter_region(plan, sub.start + 1, sub.end, keys, keep_paras=True, split_labels=True)
         if re.match(r"final gate", sub.title, re.I):

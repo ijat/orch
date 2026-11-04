@@ -345,87 +345,11 @@ overwritten by the next build; and in
 lives. `LESSONS.md` should only hold lessons not yet promoted anywhere; if it grows past about a
 screen, consolidate.
 
-## Lite mode
-
-One `orch-implementer` plans **and** implements, so the repo gets explored once instead of twice.
-Everything else stays: task dir, journal, plan gate, worktree, code review, retro — and the standard
-stop policy (step 5 rule, assumed decisions, parked questions, step 10's automatic merge).
-
-**Eligible only if all hold** (judge from the request plus a quick look; when unsure, standard):
-about ≤ 5 files and ≤ 3 steps; no sensitive area (step 5 list); no concurrency, performance-
-sensitive algorithm, migration or other hard-to-undo change; one obvious design (nothing that would
-earn an `opus/max` planner). The user may force lite anyway — journal it as `override`.
-
-**Tier:** `opus/medium` by default (it must plan as well as code; `sonnet/high` plans worse).
-`opus/high` if the task is at the edge of eligibility. Never Fable — that need means standard mode.
-
-**Flow** — the standard procedure with these differences:
-
-- **Step 3:** `orch init … --mode lite` (`mode: lite`, planner row `n/a (lite)`, `task_start` mode `"lite"`).
-- **Step 4:** after the pre-plan `orch-graph` call, spawn the lite agent (`description`: `orch-implementer-<model>[<effort>] lite: <task>`)
-  in **phase 1**: read-only on the repo, writes a lite `plan.md` (see the role file) and returns; you
-  `orch plan-check --lite` it and set `task_state: awaiting_approval`. Gate it exactly as a standard
-  plan. Revisions go back to the same agent via `SendMessage`.
-- **Step 5:** if the lite plan names a sensitive area after all, switch to standard (below).
-- **Step 7:** after creating the worktree, `SendMessage` the **same** agent — its context is the
-  saving — with the worktree path and "phase 2: implement" (no brief). If that agent is gone (crash,
-  resumed session), spawn a fresh one at the same tier on phase 2; `plan.md` carries everything.
-- **Step 9:** fixes go to the same agent the same way. **Max 2 rounds**; findings still open after
-  round 2 → switch to standard and continue from round 3 under the standard rules.
-
-**Switching to standard** — when the agent returns `blocked` with `need: scope_exceeded`, the plan
-fails eligibility, or round 2 ends with findings open: journal a `mode_switch` (`from`, `to`,
-`reason`), set `mode: standard` in `status.md`, and continue at the matching standard step. A
-switch at planning spawns a real planner that is given the lite `plan.md` as its starting findings.
-Don't argue an agent out of `scope_exceeded`.
-
-## Interactive mode
-
-**You** are the planner as well as the orchestrator: the user talks to you while the plan takes shape,
-and implementers, reviewers and the merge run exactly as in standard mode. Use it when the user picks
-"interactive mode" / "orchestrate interactive" / "plan it with me". Any size of task, including a roadmap.
-
-**The boundary is the point of the mode: you never write product code.** Not while planning, not after
-the gate, not in fix rounds. Your writes are the task directory (the planner's files plus your
-bookkeeping); every code change goes to an `orch-implementer` (steps 7 and 9). *Direct edits* still
-applies after the gate and nowhere else.
-
-**Tier.** You plan at the session's own model and effort (write `unknown` for an effort you can't
-see); never switch your own. Run **Tier selection** first: if it calls for a planner above the
-session's tier, say so and let the user pick — restart the session at that tier, switch to standard
-mode (a spawned planner at that tier), or go on here (journal `override`). Record
-`planner_tier=session <model>/<effort>` and a `tier_choice` (`role=planner`, `tradeoff`
-`interactive: session plans`).
-
-**Flow** — the standard procedure with these differences:
-
-- **Step 3:** `orch init … --mode interactive`.
-- **Step 4:** after the pre-plan `orch-graph` call, you do the planner's job. Read `~/.claude/agents/orch-planner.md` once and follow it as
-  the planner, except: the user's conversation is your brief; a question it
-  would return `blocked` with goes straight to the user after rungs 1–2 of the escalation ladder;
-  `need: shape_roadmap` below `opus/max` → tell the user and continue only if they agree (else
-  standard mode at `opus/max`). Its **Your context is the cost** rules bind you harder than a
-  planner: your context also carries the implement and review loop. Talk the design through with the
-  user before writing; until the first gate, edit the draft freely; after it, revisions are
-  `## Revision N` sections you append yourself. The gate itself, `orch plan-check`, the plan
-  reviewer (roadmaps, `opus/max` plans) and the approval are unchanged.
-- **At the gate**, add one line: the implement/review loop is cheaper in a fresh session (`/clear`,
-  then "resume <repo>/<slug>") since this one carries the whole planning conversation; staying keeps
-  it at hand. Their choice. A resumed session stays in interactive mode and under the same boundary.
-- **Program mode:** you write `roadmap.md`; milestone `plan.md`s are spawned per `PROGRAM.md` unless
-  the user asks you to write one.
-- **Later plan revisions** (an implementer's `plan_flag`, a blocker, user feedback): you append them.
-  A plan whose own design kept failing escalates as in standard: spawn an `orch-planner` at the ladder
-  tier (`escalation: post-failure`).
-
-**Switching to standard:** the user asks for it, or the tier check above sends it there. Journal a
-`mode_switch` (`from interactive`), set `mode: standard`, and spawn the planner with your `notes.md`
-and any draft `plan.md` as starting findings.
-
 ## Procedure
 
-Every spawn below follows the **Dispatch protocol**. In lite mode, apply the **Lite mode**
-differences at steps 3, 4, 5, 7 and 9; in interactive mode, the **Interactive mode** differences.
+Every spawn below follows the **Dispatch protocol**. In lite mode, read
+`~/.claude/skills/orchestrate/LITE.md` first and apply its differences at steps 3, 4, 5, 7 and 9; in interactive
+mode, read `~/.claude/skills/orchestrate/INTERACTIVE.md` first and apply its differences.
 
 ### 1. Confirm the mode
 
@@ -535,6 +459,11 @@ repo. Never pass `isolation: "worktree"` to the `Agent` tool.
 
 ### 7. Implement
 
+**Batch adjacent small steps.** One spawn takes consecutive steps when all hold: same routed tier, at most 3
+steps, sizes `S` or `M` with at most one `M`, each depending only on steps before it, and none `L`, `visual:`,
+`pilot:`, `boundary`, `sensitive` or in a parallel track. Pass them together: `orch brief implement 3,4`,
+`orch spawn … --steps 3,4`. A step that fails any line runs alone.
+
 **Sequential by default:** `orch brief implement <steps>` (director: `orch brief director <step>`) writes
 `briefs/…md`, that role's whole context: worktree, steps, the Decisions and revisions touching them,
 findings, sketch path, checkpoint commands, matching repo lessons. `orch spawn`, then spawn one
@@ -552,29 +481,7 @@ branch and worktree off the task branch (own brief and row, `implementer:<part>`
 You merge the part-branches into `orch/<task-slug>` yourself **before** review, then remove each
 part worktree and delete its branch. Log each part-branch, merge, and removal.
 
-**Visual steps** (plan step has `visual: <acceptance>`): `orch spawn` the director first (background,
-default `opus/high`), then the implementer at the plan's tier, each given the other's agent ID (`Agent`
-has no name parameter). They loop by `SendMessage` pointers to `visual-s<S>-<N>.md` (protocol in both
-role files); you relay only if one returns `blocked` with `need: … unreachable`. Either ends its turn
-while it waits for the other, so completion notices arrive mid-loop. **A return whose `status.md` row
-reads `waiting` is not a finish:** no `orch return` (it refuses a non-final row), don't advance, keep the
-wait armed. The pair is done when the implementer's row is `done` for the step; then read the batch
-files' verdict lines, not the crops. **Whenever you replace the implementer** (after the pilot, three
-strikes, a check-in stop, an escalation, a usage re-spawn), first `SendMessage` the director
-`implementer is now <new id>` and give the new implementer the director's ID. A step not marked
-`visual:` that needs visual judgement may get a director mid-step (journal an `override`). The
-director's accepts are final; its escalations arrive as `blocked` — one about a recorded user decision
-goes straight to the user (rungs 1–2 can't answer it), any other works the rung ladder first.
-
-**Pilot batches:** a step with `pilot: <items>` runs those items first as their own spawn, at the
-step's tier (`TIERS.md` pilots a gate-passing mechanical step with per-item checks at `haiku/medium`).
-Measure it by the 5h usage it moved: `orch usage` right before the spawn and right after the
-return (the completion notice's token count is the final context size, not spend; note anything else
-that ran meanwhile). Take its redo or review rounds too, and extrapolate to the step's remaining items.
-Park one line (`orch ask`, `--blocks` the rest of the step; options continue / continue at another tier
-/ hold): "pilot: N items, +P% of the 5h window, R rounds → est. +P×M% for the rest at this tier". Journal
-a `pilot` line; only after their answer spawn the rest, with the pilot's lessons (traps, a better batch
-order) in its brief. On a visual step, the pilot is batch 1 of the director loop.
+**Visual steps and pilots:** a step with `visual:` or `pilot:` → read `~/.claude/skills/orchestrate/VISUAL.md` first and follow it.
 
 **Shared devices** (a GUI VM, a phone, a test board other sessions may use): before briefing work on
 one, run a control-checked idle probe (known processes found, open remote connections, recent writes).
@@ -598,7 +505,14 @@ in `status.md` (row `skipped`) and journal an `override` whose `what` says "revi
 to the tip's sha, the plan's steps, decisions and revisions, the absolute `review.md` path); spawn
 `orch-code-reviewer` with its path. If step 5 said it runs, `orch brief security` and spawn
 `orch-security-reviewer` the same way, with `security-review.md` and the security-ledger path. The two
-may run concurrently. After each returns, journal the round — the sha comes from that round's brief, the
+may run concurrently.
+
+**Gate alongside review.** In the same turn, start `orch-executor` in the background on the plan's Verification
+commands at the same tip; it reads the tree and changes nothing. A failure is a finding: route it with the
+review's findings (step 9). Every fix round repeats this at its new tip, beside the re-review. The pass that
+stands at the final tip is step 10's gate, so it doesn't run again. With review skipped, the gate runs at step 10.
+
+After each reviewer returns, journal the round — the sha comes from that round's brief, the
 counts are findings still **open after** the round, `verdict` is `pass` only at 0 blockers and 0
 should-fix (security: and 0 nits):
 `orch journal review_round reviewer=code round:=1 blockers:=0 should_fix:=0 nits:=0 verdict=pass`.
@@ -639,7 +553,7 @@ embed a whole file, say where it must and must not land.
 When review passes (no routed finding still open):
 
 1. Journal the final gate — the plan's Verification commands, once, via `orch-executor`, passed at the
-   task-branch tip (commits after it, e.g. fix rounds, mean running it again):
+   task-branch tip. Step 8's run counts when no commit followed it; any later commit means running it again:
    `orch journal final_gate verdict=pass sha=<tip> command="<gate command>"`.
 2. `orch merge --recheck-ok` checks its conditions in code and fails closed (`--check` lists them: the
    repo's `merge` policy, the gate and reviews pinned to the tip's sha, the security rule, a roadmap `you`

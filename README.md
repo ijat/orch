@@ -285,6 +285,7 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 |---|---|
 | `skills/orchestrate/SKILL.md` | The procedure the orchestrator follows |
 | `skills/orchestrate/PROGRAM.md` | Program mode: a roadmap of milestones for big features |
+| `skills/orchestrate/LITE.md`, `INTERACTIVE.md`, `VISUAL.md` | Loaded only for lite mode, interactive mode, and visual or pilot steps |
 | `skills/orchestrate/TIERS.md` | Guide for choosing each role's model and effort, including the implementer routing procedure (guided Haiku, Sonnet default, when Opus) |
 | `skills/orch-init/` | Project initialization skill: sets up a new or empty repo (short canonical `CLAUDE.md`, `AGENTS.md` pointer, `docs/STATE.md`, `docs/DECISIONS.md`, offered extras), audits an existing one on request, refreshes once after the first merge. `templates/` and per-ecosystem `references/`, with one architecture guide (swappable interfaces at every boundary) |
 | `skills/orchestrate/templates/` | One template per task file: plan, status, log, review, journal, sketch, guide, … |

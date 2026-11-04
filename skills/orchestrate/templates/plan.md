@@ -97,7 +97,7 @@
      or adds. Never the full suite here. Flaky-prone (async/timer/browser) tests added or touched:
      ≥ 5 consecutive clean runs. -->
 
-### Final gate (once, before review)
+### Final gate (once, alongside review)
 
 <!-- Exact full-suite, lint and build commands, run once after the last step via `orch-executor` (one
      clean run), plus any manual check automation can't cover. -->
