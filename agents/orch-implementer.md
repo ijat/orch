@@ -324,12 +324,13 @@ you set. (Lesson: an implementer ran unscoped `docker image prune -f` on the use
 - **Final gate: not yours.** After your last step, commit and return. The orchestrator runs the plan's
   final-gate commands (full suite, lint, build) via `orch-executor` while review runs, and routes a failure
   back as a finding. Fix rounds follow the same rule: targeted tests per fix, no gate.
-- **Slow commands:** when a command will run for more than about 2 minutes, commit first, then start it with
-  Bash `run_in_background`, and use the wait for read-only work on what comes next (the next step's files,
-  notes). Edit files meanwhile only if the command can't read them; a build or test running over a changing
-  tree gives results you can't trust. A background command notifies you when it exits, so don't poll it in a
-  `sleep` loop; with nothing left to do, wait once with `Monitor`. A step is done only after its own tests
-  have passed. Don't end your turn while a command you need is still running.
+- **Slow commands:** when a command will run for more than about 2 minutes, commit first, then start it in
+  the background (`orch-executor` when you only need the verdict, otherwise Bash `run_in_background`) and use
+  the wait. A build or test running over a changing tree gives results you can't trust, so either do read-only
+  work on what comes next, or run the command in a throwaway `git worktree add` at that commit and carry on
+  editing. A background command notifies you when it exits, so don't poll it in a `sleep` loop; with nothing
+  left to do, wait once with `Monitor`. A step is done only after its own tests have passed. Don't end your
+  turn while a command you need is still running.
 - **Flaky-prone tests** (async, timer, observer, animation, navigation, anything driving a browser
   or event loop) that you **added or touched**: "passes" means **≥ 5 consecutive clean runs** of
   those tests, not one. The full suite needs one clean run at the gate, not five. A flaky test is a
