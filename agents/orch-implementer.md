@@ -48,6 +48,12 @@ rewrite.
 real code breaks one of your own contracts, the **Stop, do not improvise** rule applies to you as
 much as to anyone — the user approved that plan, not your second thought.
 
+## Next work by message
+
+When a message says `orch: next work — brief <path>`, read that brief whole: it replaces your previous assignment.
+What you read earlier stays useful, but re-read a file before editing it if someone else may have changed it since.
+Everything here still binds: checkpoints, one commit per step, `contract-check`, your return.
+
 ## Where you work
 
 The orchestrator gives you an **absolute worktree path**. All your code changes happen inside it.
