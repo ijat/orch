@@ -291,8 +291,8 @@ def revision_parts(plan, keys, ids):
             block = plan.block(sub.start, sub.end)
             if m and m.group(1).lower() in set(ids):
                 own = plan.step(m.group(1).lower())
-                if own is not None and own.start == sub.start:
-                    continue      # a step the revision introduced: it is already printed as the step
+                if own is not None and own.start >= sub.start:
+                    continue      # the printed step is this block, or a later block that restates it
                 if SUPERSEDE_RE.search(sub.title):
                     sup.append("%s supersedes this step or part of it: this revision wins.\n\n%s" % (head, block))
                 else:
@@ -342,7 +342,8 @@ def verification_text(plan, keys, ids):
         parts.append("\n\n".join(pre))
     for sub in sec.subs:
         if last and last in ids and re.match(r"final gate", sub.title, re.I):
-            parts.append(plan.block(sub.start, sub.end))
+            parts.append("The orchestrator runs this during review; it's here so your work can pass it.\n\n"
+                         + plan.block(sub.start, sub.end))
             continue
         kept = pl.filter_region(plan, sub.start + 1, sub.end, keys, keep_paras=True, split_labels=True)
         if re.match(r"final gate", sub.title, re.I):

@@ -172,7 +172,7 @@ def steps_block(task_dir, program, ms_no, rows, spawn, state=None, impl=()):
     if plan is None:
         return out
     out["plan"] = tilde(path)
-    steps = step_order(plan.steps + plan.extra_steps)
+    steps = step_order(plan.current_steps())
     if not steps:
         return out
     ids = [s.id for s in steps]
