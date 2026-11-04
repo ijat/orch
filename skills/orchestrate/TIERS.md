@@ -5,7 +5,7 @@ The ladders in `SKILL.md` are the normal path; this file is how to leave them, o
 them to start, with the trade-offs said out loud. Every implementer spawn (plan step, fix round,
 pilot, lite task) is routed with **§ Implementer routing** below.
 
-## The models (facts from the bundled `claude-api` reference, cached 2026-10-06)
+## The models (facts from the Claude API model pages, checked 2026-11-04)
 
 Which model each alias resolves to is read from real transcripts (`~/.claude/bin/role-cost.py`), not assumed.
 Keep the aliases in the agent files and spawn parameters (never pinned IDs) so each role
@@ -15,7 +15,7 @@ v2.1.293+ (confirmed on 2.1.294, 2026-10-08), and sessions on older versions got
 | alias → model | `haiku` → Haiku 5.5 | `sonnet` → Sonnet 5.5 | `opus` → Opus 5.5 | `fable` → Fable 5.1 |
 |---|---|---|---|---|
 | API price in / out per 1M | $0.10 / $0.50 (≤100K prompt; $0.50 / $2.50 beyond) | $2 / $10 | $4 / $20 | $10 / $50 |
-| Cache read per 1M | not stated (0.1× input assumed) | $0.20 | $0.20 | $0.25 |
+| Cache read per 1M | $0.01 (≤100K prompt; $0.05 beyond) | $0.10 | $0.20 | $0.25 |
 | Output cost vs Sonnet | 0.05× | 1× | 2× | 5× |
 | Context / max output | 1M / 128K | 1M / 128K | 1M / 128K | 1M / 128K |
 | Effort levels | low–max | low–max | low–max | low–max |
@@ -25,10 +25,9 @@ v2.1.293+ (confirmed on 2.1.294, 2026-10-08), and sessions on older versions got
 **Cost here is usage-limit headroom, not dollars:** this account runs on the 5h/7d limits
 (`orch usage`). The API prices are the best available proxy for how hard each model draws on
 them (not verified for the subscription; a pilot's `orch usage` delta is the real measure).
-Long agentic runs are mostly cache reads, which Opus prices like Sonnet: on recorded implementer
-runs, the same tokens cost ~1.25–1.3× Sonnet at Opus prices, ~2.1–2.3× at Fable prices and ~0.22×
-at Haiku prices, not the 2× / 5× / 0.05× of output (transcripts under-record output, so the Opus and
-Fable ratios sit somewhat higher). Speed, measured for the implementer only (2026-10-21): Haiku is
+Long agentic runs are mostly cache reads. On recorded Sonnet implementer tokens (2026-11-04), the same
+tokens cost 2.0× Sonnet at Opus prices, ~3.9× at Fable prices, and 0.07× at Haiku prices below 100K context
+(0.36× above it). Transcripts under-record output, so the Fable ratio sits somewhat higher. Speed, measured for the implementer only (2026-10-21): Haiku is
 *not* faster — `haiku/medium` took 1.3× `sonnet/high`'s wall time on small steps and about the same
 on real-repo replays, `haiku/high` 1.7×; `sonnet/medium` was the fastest. Opus and Fable speed are
 not measured locally.
@@ -222,7 +221,7 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 | `haiku/medium`, `haiku/high` (guided) | any routed finding; a check still failing after its three strikes; a `[ ]` in `contract-check` | `sonnet/high` | Don't raise Haiku's effort: at `high` it skipped the same items on replays (4 medium issues, as at medium); `max` fixed that at 1.9× `sonnet/high`'s cost and 3.8× its wall time [measured] |
 | `sonnet/medium` (caps, pressure, saver) | any routed finding | `sonnet/high` | escalate on the first review failure [current rule] |
 | `sonnet/high` | round-1 findings | fix at `sonnet/high` | [current rule] |
-| `sonnet/high` | the same class again in round 2; `stuck` where the check is right and the approach keeps failing | `opus/medium` | change model, not effort: Opus costs ~1.25–1.3× Sonnet per token here [observed]; `sonnet/xhigh` is for the no-Opus cap [judgment] |
+| `sonnet/high` | the same class again in round 2; `stuck` where the check is right and the approach keeps failing | `opus/medium` | change model, not effort: Opus costs 2× Sonnet per token [list prices]; `sonnet/xhigh` is for the no-Opus cap [judgment] |
 | `opus/medium` | round-1 findings that are neither diligence nor ability failures (routine review findings) | fix at `opus/medium` | same as Sonnet's round 1 [current rule] |
 | `opus/medium` | diligence: an omission, an edge case the contract named, thin tests, an unverified claim — the design is right | `opus/high` | raise effort within the model [judgment] |
 | `opus/medium` | ability: the same class after the Opus pass, the wrong mechanism twice, `stuck` on a hard item | `fable/high` | tell the user first [current rule] |
@@ -279,14 +278,16 @@ Never lower a `boundary` or `sensitive` step's tier for budget or usage pressure
 
 ### Cost and latency
 
+Dollar medians below were recorded before the Sonnet cache-read correction of 2026-11-04, so Sonnet's are overstated.
+
 | Tier | Benchmark $/run · wall (admitted tasks; replays) | Real spawns, recorded medians | Same tokens vs Sonnet |
 |---|---|---|---|
-| `haiku/medium` | $0.022 · 94 s; $0.079 · 222 s | none yet | 0.22× (+ its extra turns: est. 0.3–0.6× per real-size spawn) |
+| `haiku/medium` | $0.022 · 94 s; $0.079 · 222 s | none yet | 0.07–0.36× by context (+ its extra turns) |
 | `sonnet/medium` | $0.161 · 47 s; $0.444 · 191 s | 9 runs: 34 requests, $0.91, 5.6 min | 1× (fewer tokens) |
 | `sonnet/high` | $0.219 · 71 s; $0.536 · 235 s | 193 runs: 66 requests, 193K peak, $2.35, 13.6 min (p75 41) | 1× |
-| `opus/medium` | — | 133 runs: 84 requests, 245K peak, $4.74, 27 min (p75 50) | ~1.3× |
-| `opus/high` | — | 33 runs: 122 requests, 287K peak, $10.06 | ~1.25×; ~2× `opus/medium` per spawn |
-| `fable/high` | — | 2 runs | ~2.1–2.3×; turns can run many minutes |
+| `opus/medium` | — | 133 runs: 84 requests, 245K peak, $4.74, 27 min (p75 50) | 2× |
+| `opus/high` | — | 33 runs: 122 requests, 287K peak, $10.06 | 2×; ~2× `opus/medium` per spawn |
+| `fable/high` | — | 2 runs | ~3.9×; turns can run many minutes |
 
 "Recorded" is transcript usage at list prices (`role-cost.py`'s method). 47% of implementer requests
 are logged with a placeholder output count, so the dollars are lower bounds, and Opus's per-spawn

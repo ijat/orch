@@ -24,6 +24,7 @@ import argparse, json, os, re, shutil, subprocess, sys
 
 FILES = [
     "skills/orchestrate/SKILL.md", "skills/orchestrate/PROGRAM.md", "skills/orchestrate/TIERS.md",
+    "skills/orchestrate/LITE.md", "skills/orchestrate/INTERACTIVE.md", "skills/orchestrate/VISUAL.md",
     "skills/orch-init/SKILL.md",
     *[f"skills/orch-init/templates/{n}.md" for n in (
         "CLAUDE", "AGENTS", "STATE", "DECISIONS", "init-record", "proposal", "audit", "snippets")],

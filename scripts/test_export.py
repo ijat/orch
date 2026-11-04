@@ -259,7 +259,7 @@ class ExportCase(unittest.TestCase):
 
     def test_edit_tables_have_their_expected_sizes(self):
         # the cosmetic edits are gone: live converges to the public wording (sync-live's overlay holds the rest)
-        self.assertEqual(len(export.PRIVATE_EDITS), 7)
+        self.assertEqual(len(export.PRIVATE_EDITS), 5)
         self.assertEqual(len(export.EDITS), 3)
         self.assertIn("skills/orchestrate/templates/guide.md", export.FILES)
 
