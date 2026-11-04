@@ -162,6 +162,11 @@ def cmd_spawn(ns, extra):
             cli.append_log(task_dir, cli.log_line(ts, "orchestrator", refused))
             raise OrchError("%s — %s" % (refused, usage_line), 2)
 
+        if ns.reused:
+            why = reuse_refusal(read_journal(task_dir), role, ns.tier, ts, auto_ms)
+            if why:
+                raise OrchError("reuse refused: %s; spawn fresh" % why, 1)
+
         def rec(kind, pairs):
             r, _ = jr.build_record(schema, kind, pairs, ts, repo, slug, program, auto_ms)
             return kind, jr.encode(r)
@@ -177,7 +182,7 @@ def cmd_spawn(ns, extra):
                                          ("alternatives", ":=", json.dumps(alts))]))
         out.append(rec("spawn", [("role", "=", role), ("agent", "=", ns.agent), ("tier", "=", ns.tier),
                                  ("steps", ":=", json.dumps(steps)), ("usage_5h", ":=", json.dumps(u5)),
-                                 ("usage_7d", ":=", json.dumps(u7))]))
+                                 ("usage_7d", ":=", json.dumps(u7))] + ([("reused", ":=", "true")] if ns.reused else [])))
         text = "spawned %s (%s, %s)%s%s" % (role, ns.agent, ns.tier, " steps %s" % ",".join(str(s) for s in steps) if steps else "",
                                           ": " + note if note else "")
         log = cli.log_line(ts, "orchestrator", text)
@@ -190,6 +195,47 @@ def cmd_spawn(ns, extra):
     print(wait_status(task_dir))
     print("journal %s" % ", ".join(k for k, _ in out))
     return 0
+
+
+# -- reuse ---------------------------------------------------------------------------------------
+
+REUSE_IDLE_MIN = 55    # stay inside the implementer's 1 h prompt cache
+
+
+def minutes_between(a, b):
+    def parse(ts):
+        ts = ts.rstrip("Z")
+        return datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S" if ts.count(":") == 2 else "%Y-%m-%dT%H:%M")
+    return (parse(b) - parse(a)).total_seconds() / 60.0
+
+
+def reuse_refusal(journal, role, tier, ts, milestone):
+    """Why the last implementer can't take the next work, or None when it can."""
+    if role != "implementer":
+        return "only the implementer role is reused"
+    if tier.startswith("haiku/"):
+        return "haiku tiers are not reused"
+    spawn = ret = None
+    for rec in journal:
+        if rec.get("role") == role and kind_of(rec) == "spawn":
+            spawn, ret = rec, None
+        elif rec.get("role") == role and kind_of(rec) == "return":
+            ret = rec
+    if spawn is None or ret is None:
+        return "no returned implementer to reuse"
+    if ret.get("outcome") != "done":
+        return "the last implementer returned %s" % (ret.get("outcome") or "no outcome")
+    if spawn.get("tier") != tier:
+        return "the last implementer ran at %s" % spawn.get("tier")
+    if ret.get("milestone") != milestone:
+        return "the last implementer belongs to another milestone"
+    try:
+        idle = minutes_between(ret["ts"], ts)
+    except (KeyError, TypeError, ValueError):
+        return "its return time is unreadable"
+    if idle > REUSE_IDLE_MIN:
+        return "idle %d minutes, over %d" % (idle, REUSE_IDLE_MIN)
+    return None
 
 
 # -- return --------------------------------------------------------------------------------------
@@ -436,6 +482,8 @@ def register(add):
     sp.add_argument("--from", dest="from_tier", default=None)
     sp.add_argument("--trigger", default=None)
     sp.add_argument("--note", default=None)
+    sp.add_argument("--reused", action="store_true",
+                    help="next work goes to the last implementer by SendMessage; refused unless its cache is still warm")
 
     sp = add("return", cmd_return, "journal a subagent return and print what it left behind")
     sp.add_argument("role")
