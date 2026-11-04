@@ -211,31 +211,6 @@ When a Haiku spawn returns `done`, read its `contract-check` in `notes.md` befor
   director owns it. [current rule]
 - **Parallel tracks:** route each track on its own.
 
-### Planner continuation — the first spawn after approval
-
-The planner may implement the first steps itself (resumed by `SendMessage`, as lite mode does) instead
-of a fresh implementer, only when every line holds. `orch continue-gate` checks them and journals
-`continue_gate`; a missing, unknown or failed line is a split, which is the ordinary path.
-
-- C1. The plan's Summary says `continue: steps <ids>`: the first not-done steps, contiguous, at most 3, none `L`.
-- C2. Planner context < 230K tokens (`CTX_MAX` in `orchlib/cont.py`), measured from its transcript (the last
-  request's prompt + output; the completion notice's token count is the same number and the fallback).
-  Unknown → split.
-- C3. Each step routes (§ Procedure, with caps and pressure applied) to the planner's model, at its effort
-  or one level below (`low < medium < high < xhigh < max`): `opus/high` continues on `opus/medium` and
-  `opus/high` steps, never on `sonnet/*` or `haiku/*`; `opus/max` and `fable/max` almost never.
-- C4. No step in the run is `visual:`, `pilot:`, in a parallel track, `boundary` or `sensitive`, or edits a
-  notebook (the planner has no `SendMessage` or `NotebookEdit`).
-- C5. Standard mode (lite already continues), and the planner is reachable: a failed `SendMessage` → split.
-
-Once per plan. A continuation is a spawn for the dispatch protocol (pre-flight, usage wait). Everything after the
-run is a fresh implementer routed as usual: later steps, every fix round, every replacement (usage re-spawn,
-check-in stop, three strikes); fix rounds on a continued step follow § Fix rounds like any other. A blocker in phase 2
-goes back to the same planner to append a revision; its remaining steps then go fresh. The planner skips
-sketches for the steps it names. [measured 2026-10-25: `measure.py` over 64 segments; continuing lost
-overall and won in 22, at median planner end context ≈ 216K against ≈ 490K for the losers; the limit is the
-user's: 200K, raised to 230K on 2026-10-28 after 4/4 real gates split at 212–219K]
-
 ### Escalation ladder
 
 `haiku/medium | haiku/high (guided) → sonnet/high → opus/medium → opus/high → fable/high` — at most one rung per failure
