@@ -51,7 +51,7 @@ class TestParser(unittest.TestCase):
         self.assertEqual(s2.field_text("size"), "M")
         self.assertIn("### Step 99 — not a step (inside a fence)", s2.field_text("do"))
         self.assertIn("- size: XL", s2.field_text("do"))
-        self.assertEqual(s2.field_text("contract"), "sessions expire after one hour.")
+        self.assertEqual(s2.field_text("contract"), "sessions expire after one hour and are signed.")
 
     def test_fields_and_continuation(self):
         s1 = self.p.step("1")
@@ -128,7 +128,7 @@ class TestParser(unittest.TestCase):
     def test_pre_written_blocks_are_byte_exact(self):
         s2 = self.p.step("2")
         text = s2.text()
-        self.assertTrue(text.startswith("### Step 2 – Session store\n"))
+        self.assertTrue(text.startswith("### Step 2 — Session store (restated; replaces the original block)\n"))
         self.assertIn("  ```\n  ### Step 99 — not a step (inside a fence)\n", text)
         self.assertTrue(text.endswith("- done when: `pytest tests/test_session.py` passes."))
 
@@ -522,6 +522,31 @@ class TestGuides(core.Base):
         rc, lines = self.check("--repo", self.repo)
         self.assertEqual(rc, 0)
         self.assertTrue(any(l.startswith("WARN: step 1: guide is ") for l in lines), lines)
+
+
+class TestRevisionReplacesStep(unittest.TestCase):
+    PLAN = ("# Plan\n\n## Steps\n\n### Step 1 — old\n\n- do: old work\n- done when: old\n\n"
+            "### Step 2 — keep\n\n- do: keep\n- done when: keep\n\n"
+            "## Revision 1\n\n### Step 1 — new\n\n- do: new work\n- done when: new\n\n"
+            "### Step 2 — changes (amends)\n\n- do: more\n- done when: more\n\n"
+            "## Revision 2\n\n### Step 1 — newest\n\n- do: newest work\n- done when: newest\n")
+
+    def test_the_latest_full_block_binds(self):
+        self.assertEqual(pl.parse_plan(self.PLAN).step("1").title, "newest")
+
+    def test_an_amendment_does_not_replace(self):
+        self.assertEqual(pl.parse_plan(self.PLAN).step("2").title, "keep")
+
+    def test_a_block_without_done_when_does_not_replace(self):
+        p = pl.parse_plan("# Plan\n\n## Steps\n\n### Step 1 — old\n\n- do: a\n- done when: a\n\n"
+                          "## Revision 1\n\n### Step 1 — extra\n\n- do: b\n")
+        self.assertEqual(p.step("1").title, "old")
+
+    def test_order_and_count_keep_the_step_once(self):
+        p = pl.parse_plan(self.PLAN)
+        self.assertEqual(p.ids(), ["1", "2"])
+        self.assertEqual(p.step_count(), 2)
+        self.assertEqual([s.title for s in p.current_steps()], ["newest", "keep"])
 
 
 if __name__ == "__main__":

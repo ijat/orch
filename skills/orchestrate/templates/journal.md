@@ -46,7 +46,7 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 | `auto_security` | every other security run or skip (the step 5 rule, a late finding, a user request, policy `always`) | `areas` (array), `ran` (bool), `rule` (step5/late/request/policy) |
 | `assumed_decision` | a reversible question was assumed instead of asked | `decision`, `reversible` (bool), `role`, `question` |
 | `final_gate` | the final-gate commands ran | `verdict`, `sha` (commit the gate ran on), `command` |
-| `continue_gate` | the first implementer spawn after plan approval (`orch continue-gate`) | `decision` (continue/split), `agent_id`, `ctx`, `ctx_src` (transcript/notice/none), `planner_tier`, `routed` (array of `"<step>=<tier>"`), `steps`, `reasons` (array of failed condition codes), `plan_says` |
+| `continue_gate` | retired 2026-11-04; old journals only | `decision` (continue/split), `agent_id`, `ctx`, `ctx_src` (transcript/notice/none), `planner_tier`, `routed` (array of `"<step>=<tier>"`), `steps`, `reasons` (array of failed condition codes), `plan_says` |
 
 `review_round` counts are the findings still open **after** the round; `verdict` is `pass` only at 0 blockers and 0 should-fix (security: and 0 nits).
 

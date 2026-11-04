@@ -26,7 +26,6 @@
 - files: <count>; sensitive areas: <list from SKILL.md step 5, or "none">
 - checkout: full | sparse: <dirs>   <!-- sparse when the repo has ≥ 100,000 tracked files: every dir the steps edit, build or test in -->
 - scope: whole repo | <dirs> — <why>   <!-- where searches start; impact questions (callers, includers, overrides) always search the whole tree -->- implementer tier: <model>/<effort> (default sonnet/high) — <why>
-- continue: steps <ids> | no — <why>   <!-- steps you would implement yourself: TIERS.md § Planner continuation; the orchestrator decides -->
 - parallelization: sequential | <N> disjoint tracks
 - sketched steps: <step numbers, or "none">
 - guided steps: <step numbers with a guide (routed haiku/high), or "none">
@@ -98,7 +97,7 @@
      or adds. Never the full suite here. Flaky-prone (async/timer/browser) tests added or touched:
      ≥ 5 consecutive clean runs. -->
 
-### Final gate (once, before review)
+### Final gate (once, alongside review)
 
 <!-- Exact full-suite, lint and build commands, run once after the last step via `orch-executor` (one
      clean run), plus any manual check automation can't cover. -->
