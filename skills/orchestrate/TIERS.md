@@ -5,7 +5,7 @@ The ladders in `SKILL.md` are the normal path; this file is how to leave them, o
 them to start, with the trade-offs said out loud. Every implementer spawn (plan step, fix round,
 pilot, lite task) is routed with **§ Implementer routing** below.
 
-## The models (facts from the Claude API model pages, checked 2026-11-04)
+## The models (facts from the Claude API model pages, cached 2026-11-04)
 
 Which model each alias resolves to is read from real transcripts (`~/.claude/bin/role-cost.py`), not assumed.
 Keep the aliases in the agent files and spawn parameters (never pinned IDs) so each role
