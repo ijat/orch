@@ -69,10 +69,6 @@ PRIVATE_EDITS = [
     ("skills/orchestrate/PROGRAM.md", " Why each rule exists: `@@WHY_DOC@@.md`, \"Program mode\".", ""),
     ("skills/orchestrate/PROGRAM.md", "`~/.claude/skills/@@AUDIT@@/scripts/role-cost.py --by tier`",
      "`~/.claude/bin/role-cost.py --by tier`"),
-    ("skills/orchestrate/TIERS.md", " Reasons: @@WHY_DOC@@.md \"Why the planner may continue\".", ""),
-    ("bin/orchlib/tests/test_cont.py",
-     'ROLE_COST = os.path.join(BIN, "..", "skills", "@@AUDIT@@", "scripts", "role-cost.py")',
-     'ROLE_COST = os.path.join(BIN, "role-cost.py")'),
 ]
 
 # Edits that need no private word.

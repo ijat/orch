@@ -142,8 +142,6 @@ are counted from the review files themselves.
 - The visual director loop, pilot batches and check-ins (2026-10-15) have run in real tasks, but
   too few to measure.
 - Program mode (roadmaps of milestones) has run twice.
-- Planner continuation, where the planner implements the first steps itself, has been checked 4
-  times and hasn't fired yet (the planner's context was always too full).
 - The numbers above come from one person's projects. Your mileage will vary with codebase and model
   versions.
 

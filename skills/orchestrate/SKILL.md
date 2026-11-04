@@ -388,8 +388,7 @@ and implementers, reviewers and the merge run exactly as in standard mode. Use i
 **The boundary is the point of the mode: you never write product code.** Not while planning, not after
 the gate, not in fix rounds. Your writes are the task directory (the planner's files plus your
 bookkeeping); every code change goes to an `orch-implementer` (steps 7 and 9). *Direct edits* still
-applies after the gate and nowhere else. Your plan's `continue:` line is always
-`no — interactive (the session never implements)`, and step 7 skips `orch continue-gate`.
+applies after the gate and nowhere else.
 
 **Tier.** You plan at the session's own model and effort (write `unknown` for an effort you can't
 see); never switch your own. Run **Tier selection** first: if it calls for a planner above the
@@ -402,7 +401,7 @@ mode (a spawned planner at that tier), or go on here (journal `override`). Recor
 
 - **Step 3:** `orch init … --mode interactive`.
 - **Step 4:** after the pre-plan `orch-graph` call, you do the planner's job. Read `~/.claude/agents/orch-planner.md` once and follow it as
-  the planner, except: the user's conversation is your brief; skip **If continued**; a question it
+  the planner, except: the user's conversation is your brief; a question it
   would return `blocked` with goes straight to the user after rungs 1–2 of the escalation ladder;
   `need: shape_roadmap` below `opus/max` → tell the user and continue only if they agree (else
   standard mode at `opus/max`). Its **Your context is the cost** rules bind you harder than a
@@ -482,12 +481,12 @@ Journal `plan_shape`; show the shape line at the gate, and if the user overrules
 
 Read `plan.md` yourself and `orch plan-check <plan.md>` it (a FAIL goes back to the planner), then **present it to the user and get approval before any code is
 written.** Show its Summary, every decision marked `needs user`, and the implementer tier
-`TIERS.md` gives each step (one line each) with the `orch continue-gate --dry-run` verdict, and give the file path for the rest; if the Summary can't stand alone, send it back to the planner before the gate. If they want changes, send their feedback to the same planner tier to append a
+`TIERS.md` gives each step (one line each), and give the file path for the rest; if the Summary can't stand alone, send it back to the planner before the gate. If they want changes, send their feedback to the same planner tier to append a
 `## Revision N` section, and return to this gate — don't rewrite the plan yourself.
 
 Before asking: `orch set task_state=awaiting_approval --log "plan ready"`. Add one line to the question:
 if they answer more than about an hour later, a fresh session (`/clear`, then "resume <repo>/<slug>") is
-cheaper than replying here (the prompt cache has expired; the planner can't continue then).
+cheaper than replying here (the prompt cache has expired).
 
 ### 5. Security check — by rule, no question
 
@@ -535,12 +534,6 @@ Give every subagent the **absolute worktree path** and state that it is the work
 repo. Never pass `isolation: "worktree"` to the `Agent` tool.
 
 ### 7. Implement
-
-**Continue or split.** First `orch continue-gate --agent-id <planner id> --planner-tier <tier>
---routed <step>=<tier>,… [--signals <step>=boundary|sensitive|parallel,…]` (rules: `TIERS.md` § Planner
-continuation). `continue` → `orch spawn implementer --agent orch-planner --tier <planner tier> --steps <ids>`,
-then `SendMessage` the planner `orch: phase 2 — implement steps <ids>; worktree <path>` (no brief). `split`,
-or the send fails → fresh implementers as below.
 
 **Sequential by default:** `orch brief implement <steps>` (director: `orch brief director <step>`) writes
 `briefs/…md`, that role's whole context: worktree, steps, the Decisions and revisions touching them,
@@ -691,7 +684,7 @@ worktree and task directory plus the branch name.
 - Hand-edit `status.md` or `journal.jsonl` while `orch` works; give a role the whole plan when a brief exists.
 - Run implementers in parallel without `plan.md` declaring disjoint file sets; exceed 3 fix rounds at
   the same tier; rely on live messaging for anything that must survive a crash.
-- Continue a planner without `orch continue-gate`, more than once per plan, or for fixes.
+- Have a planner implement steps: every plan goes to fresh implementers.
 - Spawn without the pre-flight (`orch spawn`); treat `STALE`/`UNKNOWN` as safe; let a subagent run
   past `STOP`; poll usage on a timer while a wait is armed; arm `usage-watch.sh`; leave a `Monitor` armed past
   its subagent; claim a crash will auto-resume.
