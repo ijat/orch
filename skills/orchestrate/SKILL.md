@@ -474,6 +474,14 @@ journal a `sketch` line. When a `haiku/*` spawn returns, read its `contract-chec
 it) before anything else; a gap re-routes the step (`TIERS.md` § Haiku gate). A `brief-gap:` note in
 `notes.md` goes into the next brief (`--extra`).
 
+**Reuse while the cache is warm.** For the next implementer work in a milestone (a step, a batch or a fix round),
+if you hold the last implementer's agent ID, first try `orch spawn implementer --reused …` at the routed tier. It
+refuses, writing nothing, unless that implementer returned `done` within 55 minutes, in this milestone, at the same
+tier, and the tier isn't `haiku/*`. Accepted → `SendMessage` it `orch: next work — brief <absolute path>` instead of
+spawning. Refused → spawn fresh without `--reused`. A failed send → `orch return implementer --outcome failed`,
+then spawn fresh. Never reuse for a `visual:` step, a pilot, a parallel track or an escalation. Context growth is
+left to autocompaction.
+
 **Parallel only when `plan.md` explicitly declares disjoint file sets.** Then each part gets its own
 branch and worktree off the task branch (own brief and row, `implementer:<part>`):
 `git -C <repo> worktree add .claude/worktrees/orch-<slug>-<part> -b orch/<slug>--<part> orch/<slug>`
