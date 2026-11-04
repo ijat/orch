@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
 
 import test_core as core  # noqa: E402
 from test_merge import GitBase  # noqa: E402
-from orchlib import merge, plan as pl  # noqa: E402
+from orchlib import brief, merge, plan as pl  # noqa: E402
 
 FIX = os.path.join(HERE, "fixtures", "plans")
 T = "myapp/add-login"
@@ -215,7 +215,7 @@ class TestImplementBrief(BriefBase):
         self.assertIn("- done when: `pytest tests/test_auth.py` passes.", dep)
         self.assertNotIn("- do:", dep)
         self.assertIn("### Step 2 — Session store", dep)
-        self.assertIn("sessions expire after one hour.", dep)
+        self.assertIn("sessions expire after one hour and are signed.", dep)
         self.assertNotIn("Step 3a", dep)
 
     def test_depends_range_and_no_depends(self):
@@ -228,14 +228,13 @@ class TestImplementBrief(BriefBase):
         _, text = self.brief("implement", "1-3")
         self.assertEqual(sec(text, "Steps yours depend on"), "None.")   # all inside the brief already
 
-    def test_revision_that_restates_a_step_is_printed_first(self):
+    def test_revision_that_restates_a_step_replaces_it(self):
         _, text = self.brief("implement", "2")
         steps = sec(text, "Your steps")
-        i_rev = steps.index("supersedes this step or part of it: this revision wins.")
-        i_orig = steps.index("### Step 2 – Session store")
-        self.assertLess(i_rev, i_orig)
         self.assertIn("### Step 2 — Session store (restated; replaces the original block)", steps)
         self.assertIn("sessions expire after one hour and are signed.", steps)
+        self.assertNotIn("### Step 2 – Session store", steps)      # the superseded original is gone
+        self.assertNotIn("sessions expire after one hour.", steps)
         self.assertNotIn("Step 2 — Session store (restated", sec(text, "Revisions that touch your steps"))
 
     def test_revision_amending_a_step_goes_to_revisions(self):
@@ -932,6 +931,22 @@ class TestMentionMatching(BriefBase):
         self.assertIn("Steps 2–3 share the cookie jar.", sec(text, "Findings about your files"))
         _, text = self.brief("implement", "1")
         self.assertNotIn("cookie jar", sec(text, "Findings about your files"))
+
+
+class TestRevisionReusesStepIds(unittest.TestCase):
+    """A later plain-titled full block wins, and older blocks of that step leave the brief."""
+    PLAN = ("# Plan\n\n## Steps\n\n### Step 1 — Rust app\n\n- do: build in Rust\n- done when: old\n\n"
+            "## Revision 1\n\n### Step 1 — changes (amends)\n\n- Use tokio.\n\n"
+            "## Revision 2\n\n### Step 1 — HTML mocks\n\n- do: build HTML mocks\n- done when: new\n\n"
+            "## Revision 3\n\n### Step 1 — changes (amends)\n\n- Add a dark theme.\n")
+
+    def test_only_binding_text_reaches_the_brief(self):
+        p = pl.parse_plan(self.PLAN)
+        self.assertEqual(p.step("1").title, "HTML mocks")
+        sup, other = brief.revision_parts(p, set(), ["1"])
+        joined = "\n".join(sup + other)
+        self.assertNotIn("Use tokio", joined)         # amended a block that a later revision replaced
+        self.assertIn("Add a dark theme", joined)     # amends the binding block
 
 
 if __name__ == "__main__":

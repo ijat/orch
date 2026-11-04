@@ -146,6 +146,13 @@ Run from the repo root.
 - files: /home/u/Projects/myapp/src/session.py
 - depends: 1
 - do: signed cookie sessions.
+  Example plan text pasted for the implementer:
+
+  ```
+  ### Step 99 — not a step (inside a fence)
+  ## Not a section either
+  - size: XL
+  ```
 - contract: sessions expire after one hour and are signed.
 - done when: `pytest tests/test_session.py` passes.
 

@@ -291,8 +291,8 @@ def revision_parts(plan, keys, ids):
             block = plan.block(sub.start, sub.end)
             if m and m.group(1).lower() in set(ids):
                 own = plan.step(m.group(1).lower())
-                if own is not None and own.start == sub.start:
-                    continue      # a step the revision introduced: it is already printed as the step
+                if own is not None and own.start >= sub.start:
+                    continue      # the printed step is this block, or a later block that restates it
                 if SUPERSEDE_RE.search(sub.title):
                     sup.append("%s supersedes this step or part of it: this revision wins.\n\n%s" % (head, block))
                 else:
