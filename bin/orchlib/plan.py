@@ -16,6 +16,7 @@ HEAD_RE = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*$")
 ID = r"\d+[a-z]?(?![A-Za-z0-9])"
 STEP_HEAD_RE = re.compile(r"^step\s+(\d+[a-z]?)(?![A-Za-z0-9])\s*(?:[—–:.-]+\s*(.*))?$", re.I)
 REVISION_RE = re.compile(r"^revision\s+(\d+)\b", re.I)
+AMEND_RE = re.compile(r"\bamend", re.I)
 SEP = r"\s*(?:[,/&–—-]|\band\b|\bor\b)\s*"
 LIST = ID + r"(?:" + SEP + r"(?:steps?\s+)?" + ID + r")*"
 STEP_REF_RE = re.compile(r"\bsteps?[\s_-]*(" + LIST + r")", re.I)
@@ -41,6 +42,12 @@ class Sub(object):
 
     def __init__(self, title, start, end):
         self.title, self.start, self.end = title, start, end
+
+
+def restates(step):
+    """True for a revision's `### Step N` block that replaces the step rather than amends it: it carries its
+    own `do` and `done when`, and its title doesn't call it an amendment."""
+    return "do" in step.fields and "done when" in step.fields and not AMEND_RE.search(step.title)
 
 
 class Sec(object):
@@ -101,6 +108,7 @@ class Plan(object):
         self.steps = []           # step blocks of the Steps section(s) (or, with no Steps section, all outside revisions)
         self.rev_steps = []       # (rev number, Step) for `### Step N` blocks inside revisions
         self.extra_steps = []     # first revision block of each id that has no block in the Steps section
+        self.replacements = {}    # id -> latest revision block that restates the whole step (see restates())
         self.step_sections = []
         self.legacy = True
         self._parse()
@@ -161,6 +169,9 @@ class Plan(object):
             if s.id not in originals:
                 originals.add(s.id)
                 self.extra_steps.append(s)
+        for _, s in sorted(self.rev_steps, key=lambda r: r[1].start):
+            if restates(s):
+                self.replacements[s.id] = s
         self.legacy = not self.steps
 
     def _fields(self, step):
@@ -211,11 +222,18 @@ class Plan(object):
         return [s for s in self.sections if s.rev is None and DECISION_RE.search(s.norm)]
 
     def step(self, sid):
-        """The step's block in the Steps section; for a step a revision introduced, that revision's block."""
+        """The binding block of a step: the latest revision that restates it, else its block in the Steps
+        section, else the block of the revision that introduced it."""
+        if sid in self.replacements:
+            return self.replacements[sid]
         for s in self.steps + self.extra_steps:
             if s.id == sid:
                 return s
         return None
+
+    def current_steps(self):
+        """Every step in plan order, each as its binding block."""
+        return [self.step(s.id) for s in self.steps + self.extra_steps]
 
     def ids(self):
         return [s.id for s in self.steps + self.extra_steps]
