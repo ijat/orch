@@ -326,6 +326,26 @@ class TestRunning(Base):
         self.assertIs(t["running"]["last_spawn"]["returned"], True)
         self.assertIsNone(t["steps"]["current"])
 
+    def test_each_running_role_has_its_own_spawn(self):
+        rows = ("| implementer:a | in_progress | 2026-03-01T12:00Z | | |\n"
+                "| implementer:b | in_progress | 2026-03-01T12:00Z | | |\n"
+                "| implementer:c | in_progress | 2026-03-01T12:00Z | | |\n"
+                "| planner | done | 2026-03-01T11:00Z | | |")
+
+        def spawn(role, tier, step):
+            return {"kind": "spawn", "role": role, "agent": "orch-implementer", "tier": tier, "steps": [step],
+                    "ts": "2026-03-01T12:00Z"}
+        self.task("a", rows=rows, files={"plan.md": plan_text(["1", "2", "3"])}, journal=[
+            spawn("planner", "opus/high", 0), spawn("implementer:a", "haiku/low", 1),
+            spawn("implementer:a", "opus/medium", 1), spawn("implementer:b", "sonnet/high", 2),
+            {"kind": "return", "role": "implementer:a", "outcome": "done"}])
+        running = self.one()["running"]
+        self.assertEqual([(s["role"], s["tier"], s["steps"], s["returned"]) for s in running["spawns"]],
+                         [("implementer:a", "opus/medium", ["1"], True),
+                          ("implementer:b", "sonnet/high", ["2"], False)])   # not planner (done), not c (no spawn)
+        self.assertEqual(running["last_spawn"]["role"], "implementer:b")
+        self.assertIs(running["last_spawn"]["returned"], False)
+
     def test_pct_through_status_json(self):
         rows = ("| orchestrator | in_progress | 2026-03-01T12:00Z | | | |\n"
                 "| implementer | in_progress | 2026-03-01T12:00Z | 1 | 40% | step 2 |\n"
