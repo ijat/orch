@@ -312,7 +312,8 @@ def build(repo, slug, d, text, state, cwd):
         t["running"] = {"roles": [r for r in base["roles"] if r["state"] in ("in_progress", "waiting")
                                   and not (r["role"] or "").startswith("orchestrator")],
                         "last_spawn": spawn}
-        t["steps"] = steps_block(d, program, ms_no, rows, spawn, state, impl)
+        ms_rows = db.rows_of_milestone(rows, journal, ms_no) if program else rows
+        t["steps"] = steps_block(d, program, ms_no, ms_rows, spawn, state, impl)
         t["milestones"] = milestones_block(d, ms_no, journal) if program else None
         t["overall"] = overall(program, t["steps"], t["milestones"])
     except Exception as exc:   # one odd task never takes the list down
