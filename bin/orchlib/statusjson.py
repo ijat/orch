@@ -55,9 +55,9 @@ def trim(text, limit):
 # -- journal -----------------------------------------------------------------------------------------
 
 def journal_facts(text):
-    """(task_start request, last spawn dict or None, [(milestone, steps)] of every implementer spawn) from
-    journal.jsonl text; junk lines are skipped."""
-    request, spawn, impl = None, None, []
+    """(task_start request, last spawn dict or None, [(milestone, steps)] of every implementer spawn, each role's
+    newest spawn by role) from journal.jsonl text; junk lines are skipped."""
+    request, spawn, impl, by_role = None, None, [], {}
     for line in (text or "").split("\n"):
         line = line.strip()
         if not line:
@@ -84,10 +84,13 @@ def journal_facts(text):
                      "steps": steps, "milestone": ms if db.is_int(ms) else None, "returned": False}
             if (spawn["role"] or "").lower().startswith("implementer") and steps:
                 impl.append((spawn["milestone"], steps))
-        elif kind == "return" and spawn is not None and spawn["role"] is not None \
-                and db.cell(rec.get("role"), 60) == spawn["role"]:
-            spawn["returned"] = True
-    return request, spawn, impl
+            if spawn["role"] is not None:
+                by_role[spawn["role"]] = spawn
+        elif kind == "return":
+            returned = by_role.get(db.cell(rec.get("role"), 60))
+            if returned is not None:
+                returned["returned"] = True
+    return request, spawn, impl, by_role
 
 
 # -- plans -------------------------------------------------------------------------------------------
@@ -292,7 +295,7 @@ def build(repo, slug, d, text, state, cwd):
     t.update({k: base[k] for k in ("id", "repo", "slug", "task_dir", "worktree", "state", "state_words", "mode",
                                    "shape", "milestone", "updated", "last_log", "questions_open")})
     t["repo_path"] = None if repo_c.value == "unknown" else repo_c.value
-    t["running"] = {"roles": [], "last_spawn": None}
+    t["running"] = {"roles": [], "last_spawn": None, "spawns": []}
     t["steps"] = {"plan": None, "total": None, "done": None, "percent": None, "current": None, "items": []}
     t["overall"] = {"percent": None, "estimate": False, "basis": "steps"}
     try:
@@ -305,14 +308,17 @@ def build(repo, slug, d, text, state, cwd):
         m = re.match(r"^M?(\d+)\b", status.get("milestone") or "")
         ms_no = int(m.group(1)) if m else None
         t["program"], t["milestone_no"] = program, ms_no
-        request, spawn, impl = journal_facts(jtext)
+        request, spawn, impl, by_role = journal_facts(jtext)
         roadmap = parse(db.read_text(os.path.join(d, "roadmap.md"), db.MAX_PLAN)) if program else None
         plan = None if program else parse(db.read_text(os.path.join(d, "plan.md"), db.MAX_PLAN))
         t["summary"] = summary_of(roadmap if program else plan) or trim(request, SUMMARY_MAX)
-        t["running"] = {"roles": [r for r in base["roles"] if r["state"] in ("in_progress", "waiting")
-                                  and not (r["role"] or "").startswith("orchestrator")],
-                        "last_spawn": spawn}
-        t["steps"] = steps_block(d, program, ms_no, rows, spawn, state, impl)
+        running = [r for r in base["roles"] if r["state"] in ("in_progress", "waiting")
+                   and not (r["role"] or "").startswith("orchestrator")]
+        # parallel agents: last_spawn is only the newest, so each running role also gets its own
+        t["running"] = {"roles": running, "last_spawn": spawn,
+                        "spawns": [by_role[r["role"]] for r in running if r["role"] in by_role]}
+        ms_rows = db.rows_of_milestone(rows, journal, ms_no) if program else rows
+        t["steps"] = steps_block(d, program, ms_no, ms_rows, spawn, state, impl)
         t["milestones"] = milestones_block(d, ms_no, journal) if program else None
         t["overall"] = overall(program, t["steps"], t["milestones"])
     except Exception as exc:   # one odd task never takes the list down

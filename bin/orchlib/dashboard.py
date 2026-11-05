@@ -229,6 +229,7 @@ class Journal(object):
         self.usage_first = None
         self.usage_last = None
         self.milestones_done = set()
+        self.milestone_starts = {}   # milestone -> ts of its first milestone_start
         self.end = None           # (ts, outcome) of the newest task_end
         if text is None:
             return
@@ -243,6 +244,8 @@ class Journal(object):
             if not isinstance(rec, dict):
                 continue
             kind = rec.get("kind") if isinstance(rec.get("kind"), str) else rec.get("event")
+            if kind == "milestone_start" and is_int(rec.get("milestone")) and isinstance(rec.get("ts"), str):
+                self.milestone_starts.setdefault(rec["milestone"], rec["ts"])
             if not isinstance(kind, str):
                 continue
             ts = rec.get("ts") if isinstance(rec.get("ts"), str) else None
@@ -314,6 +317,16 @@ def step_total(task_dir, program, milestone_no):
     except Exception:
         return None
     return n or None
+
+
+def rows_of_milestone(rows, journal, ms_no):
+    """The rows written since milestone `ms_no` started. A program keeps finished milestones' rows in status.md,
+    and their step numbers belong to other plans. A row with no timestamp stays, and so does every row when the
+    journal has no milestone_start for it."""
+    start = journal.milestone_starts.get(ms_no)
+    if not start:
+        return rows
+    return [(role, row) for role, row in rows if not row.get("ts") or row["ts"] >= start]
 
 
 def steps_done_from(rows, total):
@@ -392,7 +405,7 @@ def build_task(repo, slug, d, status_text, state, journal):
               "note": cell(row.get("notes"), 160), "pct": pct_of(row.get("pct"))}
              for r, row in rows[:MAX_ROLES]]
     total = step_total(d, program, ms_no)
-    done = steps_done_from(rows, total)
+    done = steps_done_from(rows_of_milestone(rows, journal, ms_no) if program else rows, total)
     n_open, open_qs = questions_of(d)
     current = None   # what is going on now: the first working role that is not the orchestrator
     for want in ("in_progress", "waiting", "blocked"):

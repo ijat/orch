@@ -258,6 +258,28 @@ class TestProgram(Base):
         self.assertEqual((t["steps"]["done"], t["steps"]["total"]), (1, 2))
         self.assertEqual(t["summary"], "- goal: a program")
 
+    def test_earlier_milestones_rows_do_not_count(self):
+        start = {"ts": "2026-03-01T10:00Z", "kind": "milestone_start", "milestone": 2}
+        files = {"roadmap.md": self.ROADMAP, "m02-two/plan.md": plan_text(["1", "2", "3"])}
+        for slug, rows, journal, done in (
+                ("part", "| implementer:m1a | done | 2026-03-01T09:00Z | 3 | |\n"
+                         "| implementer | in_progress | 2026-03-01T12:00Z | 1 | |", [start], 1),
+                ("fix", "| implementer | done | 2026-03-01T09:00Z | fix round 2 | |", [start], 0),
+                ("same", "| implementer:a | done | 2026-03-01T10:00Z | 2 | |", [start], 2),
+                ("nots", "| implementer:a | done | | 2 | |", [start], 2),
+                ("nojournal", "| implementer:m1a | done | 2026-03-01T09:00Z | 3 | |", [], 3)):
+            self.task(slug, mode="standard", shape="roadmap", milestone="M2 (two)", files=files, journal=journal,
+                      rows=rows)
+            self.assertEqual(self.one()["steps"]["done"], done, slug)
+            shutil.rmtree(os.path.join(self.root, "app", slug))
+
+    def test_dashboard_counts_the_same_rows(self):
+        journal = db.Journal(json.dumps({"ts": "2026-03-01T10:00Z", "kind": "milestone_start", "milestone": 2}), "a/b")
+        rows = [("implementer:m1a", {"ts": "2026-03-01T09:00Z", "step": "3"}),
+                ("implementer", {"ts": "2026-03-01T12:00Z", "step": "1"})]
+        self.assertEqual(db.steps_done_from(db.rows_of_milestone(rows, journal, 2), 3), 1)
+        self.assertEqual(db.rows_of_milestone(rows, journal, 9), rows)
+
     def test_ambiguous_milestone_dir(self):                      # (d)
         self.program(extra={"m02-other/plan.md": plan_text(["1"])})
         t = self.one()
@@ -303,6 +325,26 @@ class TestRunning(Base):
         t = self.one()
         self.assertIs(t["running"]["last_spawn"]["returned"], True)
         self.assertIsNone(t["steps"]["current"])
+
+    def test_each_running_role_has_its_own_spawn(self):
+        rows = ("| implementer:a | in_progress | 2026-03-01T12:00Z | | |\n"
+                "| implementer:b | in_progress | 2026-03-01T12:00Z | | |\n"
+                "| implementer:c | in_progress | 2026-03-01T12:00Z | | |\n"
+                "| planner | done | 2026-03-01T11:00Z | | |")
+
+        def spawn(role, tier, step):
+            return {"kind": "spawn", "role": role, "agent": "orch-implementer", "tier": tier, "steps": [step],
+                    "ts": "2026-03-01T12:00Z"}
+        self.task("a", rows=rows, files={"plan.md": plan_text(["1", "2", "3"])}, journal=[
+            spawn("planner", "opus/high", 0), spawn("implementer:a", "haiku/low", 1),
+            spawn("implementer:a", "opus/medium", 1), spawn("implementer:b", "sonnet/high", 2),
+            {"kind": "return", "role": "implementer:a", "outcome": "done"}])
+        running = self.one()["running"]
+        self.assertEqual([(s["role"], s["tier"], s["steps"], s["returned"]) for s in running["spawns"]],
+                         [("implementer:a", "opus/medium", ["1"], True),
+                          ("implementer:b", "sonnet/high", ["2"], False)])   # not planner (done), not c (no spawn)
+        self.assertEqual(running["last_spawn"]["role"], "implementer:b")
+        self.assertIs(running["last_spawn"]["returned"], False)
 
     def test_pct_through_status_json(self):
         rows = ("| orchestrator | in_progress | 2026-03-01T12:00Z | | | |\n"
