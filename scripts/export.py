@@ -31,7 +31,7 @@ FILES = [
     *[f"skills/orch-init/references/{n}.md" for n in (
         "architecture", "typescript", "python", "rust", "go", "dotnet", "swift", "godot", "non-code")],
     *[f"skills/orchestrate/templates/{n}.md" for n in (
-        "follow-ups", "guide", "journal", "log", "notes", "plan", "policy", "questions", "retro", "review", "review-visual",
+        "claude-md-block", "follow-ups", "guide", "journal", "log", "notes", "plan", "policy", "questions", "retro", "review", "review-visual",
         "roadmap", "security-ledger", "security-review", "sketch", "status")],
     *[f"agents/{n}.md" for n in (
         "orch-planner", "orch-implementer", "orch-code-reviewer", "orch-security-reviewer",
