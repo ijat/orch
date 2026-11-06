@@ -341,15 +341,47 @@ class TestCheckin(Base):
         self.assertEqual((code, self.clock.t - BASE), (11, 59 + 1800 + 1))
         self.assertNotIn('final', line)
 
-    def test_a_final_row_shares_the_stamp_and_the_limit_of_4(self):
+    def test_a_final_row_fires_once_per_spawn_and_a_re_arm_does_not_repeat_it(self):
         d = self.final_task('done')
-        fired = []
-        for _ in range(6):
-            code, line = self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=6 * 3600)
-            fired.append((code, self.clock.t - BASE))
-        self.assertEqual([c for c, _ in fired], [11, 11, 11, 11, 13, 13])
-        gaps = [fired[i + 1][1] - fired[i][1] for i in range(3)]
-        self.assertEqual(gaps, [3600, 7200, 7200])                 # no re-fire at once after a re-arm
+        code, line = self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=6 * 3600)
+        self.assertEqual((code, self.clock.t - BASE), (11, 360))
+        self.assertIn('final=done', line)
+        for _ in range(2):                                           # re-armed: nothing more for this spawn
+            self.assertEqual(self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=6 * 3600)[0], 13)
+
+    def test_a_new_spawn_gets_its_own_final_report(self):
+        d = self.final_task('done')
+        self.assertEqual(self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=3600)[0], 11)
+        t = self.clock.t
+        d = self.final_task('done', more=[{'ts': ts(t), 'kind': 'return', 'role': 'implementer'},
+                                          {'ts': ts(t + 60), 'kind': 'spawn', 'role': 'implementer'}],
+                            row_ts=ts(t + 60))
+        code, line = self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=3600)
+        self.assertEqual((code, 'final=done' in line), (11, True))
+
+    def final_after_checkins(self, n):
+        """n earlier in_progress CHECKINs journaled (30, 90, 210, 330 min), then the row goes done 10 min later."""
+        marks = [30, 90, 210, 330][:n]
+        done_at = (marks[-1] if marks else 0) + 10
+        self.clock = Clock(BASE + done_at * 60)
+        more = [{'ts': ts(BASE + m * 60), 'kind': 'checkin', 'role': 'implementer'} for m in marks]
+        return self.final_task('done', more=more, row_ts=ts(BASE + done_at * 60))
+
+    def test_a_final_row_fires_5_minutes_after_the_row_whatever_check_ins_came_before(self):
+        for n in (0, 1, 2, 3, 4):
+            d = self.final_after_checkins(n)
+            start = self.clock.t
+            code, line = self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=3600)
+            self.assertEqual((code, self.clock.t - start), (11, 360), 'n=%d' % n)
+            self.assertIn('silent_min=5 interval=5 final=done', line)
+            shutil.rmtree(self.state, True)
+
+    def test_a_final_report_does_not_use_up_the_in_progress_check_ins(self):
+        d = self.final_after_checkins(0)
+        self.assertEqual(self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=3600)[0], 11)
+        with open(os.path.join(self.state, 'checkin-%s.json' % KEY)) as fh:
+            stamp = json.load(fh)['implementer']
+        self.assertEqual((stamp['n'], stamp['final']), (0, True))
 
     def test_return_journaled_no_journal_garbled_files_never_due(self):
         d = self.spawned(more=[{'ts': ts(BASE + 60), 'kind': 'return', 'role': 'implementer'}])

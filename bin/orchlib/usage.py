@@ -1043,8 +1043,9 @@ def due_checkin(task_dir, now, stamps):
     """-> (role, silent_min, interval_min, spawn_id, n, final) for the earliest overdue open spawn, else None;
     `final` is the row's state when it is done/blocked/failed (no `orch return` followed), else None.
     A row is due only if `in_progress` (or final, see below) AND its role's latest journal `spawn` comes after its
-    latest `return`. A final row is reported once it has stood FINAL_FIRST_MIN minutes, then on the same ladder;
-    a `waiting` row never is.
+    latest `return`. A final row is reported once, FINAL_FIRST_MIN minutes after it went final, whatever in_progress
+    CHECKINs the spawn had before and outside their limit; the stamp's `final` flag stops a second one. A `waiting`
+    row never is.
     Activity = spawn, the role's log.md lines, its row timestamp, journal `checkin`s since the spawn;
     the ladder base also counts this key's CHECKIN stamp, so a re-armed wait can't re-fire at once."""
     from . import flow
@@ -1081,7 +1082,10 @@ def due_checkin(task_dir, now, stamps):
         if stamp.get('spawn') != spawn_id:
             stamp = {}
         n = max(len(jci), int(stamp.get('n') or 0))
-        if n >= len(CHECKIN_LADDER):
+        final = row.get('state') if row.get('state') in FINAL_STATES else None
+        if final and stamp.get('final'):
+            continue
+        if not final and n >= len(CHECKIN_LADDER):
             continue
         acts = [t_spawn] + jci
         if logs.get(role, 0) >= t_spawn:
@@ -1091,11 +1095,10 @@ def due_checkin(task_dir, now, stamps):
             acts.append(t_row)
         last_act = max(acts)
         base = max([last_act] + ([float(stamp['last'])] if isinstance(stamp.get('last'), (int, float)) else []))
-        final = row.get('state') if row.get('state') in FINAL_STATES else None
-        minutes = FINAL_FIRST_MIN if final and n == 0 else CHECKIN_LADDER[n]
+        minutes = FINAL_FIRST_MIN if final else CHECKIN_LADDER[n]
         interval = minutes * 60
         if now >= base + interval and (best is None or base + interval < best[0]):
-            best = (base + interval, role, int((now - last_act) // 60), minutes, spawn_id, n + 1, final)
+            best = (base + interval, role, int((now - last_act) // 60), minutes, spawn_id, n if final else n + 1, final)
     return best[1:] if best else None
 
 
@@ -1173,7 +1176,9 @@ class Wait:
         if not c:
             return None
         role, silent, interval, spawn_id, n, final = c
-        stamps[role] = {'spawn': spawn_id, 'n': n, 'last': now}
+        prev = stamps.get(role) if isinstance(stamps.get(role), dict) else {}
+        stamps[role] = {'spawn': spawn_id, 'n': n, 'last': now,
+                        'final': bool(final) or (prev.get('spawn') == spawn_id and bool(prev.get('final')))}
         _write_atomic(path, json.dumps(stamps, sort_keys=True))
         return role, silent, interval, final
 
