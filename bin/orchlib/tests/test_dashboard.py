@@ -202,6 +202,8 @@ class TestData(Base):
         self.assertEqual(w("spawn", {}), "Started unknown (unknown)")
         self.assertEqual(w("return", {"role": "planner", "outcome": "blocked"}), "planner finished: blocked")
         self.assertEqual(w("review_round", {"reviewer": "security", "round": 2, "verdict": "fail"}), "security review round 2: fail")
+        self.assertEqual(w("review_round", {"reviewer": "code", "round": 1, "verdict": "pass", "check": True, "cycle": 2}),
+                         "code review check of round 1: pass")           # a check is not a round
         self.assertEqual(w("auto_merge", {"sha": "abcdef0123", "base": "main"}), "Merged abcdef0 into main")
         self.assertEqual(w("auto_merge", {"sha": "not hex!", "base": "main"}), "Merged unknown into main")
         self.assertEqual(w("gate", {"gate": "merge", "outcome": "declined"}), "merge gate: declined")

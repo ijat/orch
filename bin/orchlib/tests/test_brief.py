@@ -909,6 +909,20 @@ class TestNarrowReviewAndCheck(BriefBase):
     def journal_round(self, rnd, *more):
         self.cmd_ok(*(self.J + ("round:=%d" % rnd,) + more))
 
+    def journal_check(self, rnd, blockers=0, should_fix=0, *more):
+        """Journal the check just briefed for `rnd` with the given counts still open."""
+        verdict = "pass" if blockers == 0 and should_fix == 0 else "findings"
+        self.cmd_ok("journal", "review_round", "reviewer=code", "round:=%d" % rnd, "blockers:=%d" % blockers,
+                    "should_fix:=%d" % should_fix, "nits:=0", "verdict=" + verdict, "check:=true", *more)
+
+    def blocker_round(self):
+        """Brief and journal round 1 with a blocker and a should-fix open; return that sha."""
+        self.brief("review")
+        sha = self.tip()
+        self.cmd_ok("journal", "review_round", "reviewer=code", "round:=1", "blockers:=1", "should_fix:=1", "nits:=0",
+                    "verdict=findings")
+        return sha
+
     def round_one(self):
         """Brief and journal round 1 at the current tip; return that sha."""
         self.brief("review")
@@ -988,13 +1002,129 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.journal_round(1, "check=true")
         self.assertIs(self.journal_lines(self.d)[-1]["check"], True)
 
-    def test_a_second_check_for_one_round_is_refused(self):
+    def test_a_second_check_follows_a_check_that_left_something_open(self):
+        self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        one_check = self.tip()
+        path1, _ = self.brief("review", "--check")
+        self.assertEqual(os.path.basename(path1), "review-code-r1-check.md")
+        self.journal_check(1, 0, 1)                            # check 1: the should-fix is not fixed
+        self.assertEqual(self.journal_lines(self.d)[-1]["cycle"], 1)
+        self.commit(self.wt, "more.txt", "x\n")
+        path2, text = self.brief("review", "--check")
+        self.assertEqual(os.path.basename(path2), "review-code-r1-check-2.md")
+        self.assertEqual(text.split("\n")[0], "# Brief: code review fix-batch check, round 1 — myapp/add-login")
+        self.assertIn("- cycle: 2", text)
+        self.assertIn("- range: %s..%s" % (one_check, self.tip()), text)       # from the previous check's sha
+        self.assertIn("`## Check 2 of round 1`", text)
+        self.assertEqual(merge.brief_header(path2, 1, False, None), self.tip())
+
+    def test_a_check_after_a_clean_check_is_refused_and_the_commit_takes_round_n_plus_one(self):
         self.round_one()
         self.commit(self.wt, "fix.txt", "x\n")
         self.brief("review", "--check")
-        self.journal_round(1, "check:=true")
+        self.journal_check(1)
         self.commit(self.wt, "more.txt", "x\n")
-        self.assertIn("already journaled", self.refused(2, "review", "--check"))
+        err = self.refused(2, "review", "--check")
+        self.assertIn("left nothing open", err)
+        self.assertIn("round 2", err)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check-2.md")))
+
+    def test_a_fourth_check_of_a_round_is_refused_and_names_the_stop_rule(self):
+        self.round_one()
+        for cycle in (1, 2, 3):
+            self.commit(self.wt, "fix%d.txt" % cycle, "x\n")
+            self.brief("review", "--check")
+            self.journal_check(1, 0, 1)
+        self.assertEqual([r["cycle"] for r in self.journal_lines(self.d) if r.get("check")], [1, 2, 3])
+        self.commit(self.wt, "fix4.txt", "x\n")
+        err = self.refused(2, "review", "--check")
+        self.assertIn("cap is 3 cycles", err)
+        self.assertIn("step 9", err)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check-4.md")))
+
+    def test_the_check_line_carries_its_cycle_and_binds_its_own_brief(self):
+        self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.brief("review", "--check")
+        self.journal_check(1, 0, 1)                                          # no cycle given: numbered 1
+        self.commit(self.wt, "more.txt", "x\n")
+        self.brief("review", "--check")
+        second = self.tip()
+        self.journal_check(1, 0, 0)                                          # no cycle given: numbered 2
+        rec = self.journal_lines(self.d)[-1]
+        self.assertEqual((rec["check"], rec["cycle"], rec["sha"]), (True, 2, second))
+        self.assertIs(type(rec["cycle"]), int)
+        rc, _, err = self.cmd(*(self.J + ("round:=1", "check:=true", "cycle=0")))
+        self.assertEqual(rc, 1, err)
+        rc, _, err = self.cmd(*(self.J + ("round:=1", "cycle=2")))            # a cycle without check
+        self.assertEqual(rc, 1, err)
+        self.assertIn("cycle belongs to a fix-batch check", err)
+
+    def test_a_check_is_allowed_after_a_blocker_and_names_the_check_heading(self):
+        one = self.blocker_round()
+        self.commit(self.wt, "fix.txt", "x\n")
+        path, text = self.brief("review", "--check")
+        self.assertEqual(os.path.basename(path), "review-code-r1-check.md")
+        self.assertIn("- range: %s..%s" % (one, self.tip()), text)
+        self.assertIn("`## Check of round 1`", text)
+        self.assertNotIn("fresh round", text)
+
+    def test_a_round_after_a_check_that_left_something_open_is_refused(self):
+        self.blocker_round()
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.brief("review", "--check")
+        self.journal_check(1, 1, 0)                              # the blocker is still there
+        self.commit(self.wt, "more.txt", "x\n")
+        err = self.refused(2, "review")
+        self.assertIn("left 1 finding(s) open", err)
+        self.assertIn("--check", err)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r2.md")))
+        self.brief("review", "--check")                          # the way on is check 2
+
+    def test_the_fresh_round_after_a_blocker_chain_starts_at_the_round_and_asks_for_the_surroundings(self):
+        one = self.blocker_round()
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.brief("review", "--check")
+        check_sha = self.tip()
+        self.journal_check(1)                                    # the check passes
+        self.set_field(review_round="1/3")
+        self.commit(self.wt, "late.txt", "x\n")
+        path, text = self.brief("review")
+        self.assertEqual(os.path.basename(path), "review-code-r2.md")
+        self.assertIn("- range: %s..%s" % (one, self.tip()), text)
+        self.assertNotEqual(one, check_sha)
+        self.assertIn("This is the fresh round after a blocker", text)
+        self.assertIn("Read the code around the fixes", text)
+        self.assertNotIn("- check: true", text)
+
+    def test_a_blocker_reported_only_by_a_check_also_gets_the_fresh_round(self):
+        one = self.round_one()                                   # round 1: should-fix only
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.brief("review", "--check")
+        self.journal_check(1, 1, 0)                              # check 1: a new blocker
+        self.commit(self.wt, "fix2.txt", "x\n")
+        self.brief("review", "--check")
+        self.journal_check(1)                                    # check 2: passes
+        self.set_field(review_round="1/3")
+        _, text = self.brief("review")
+        self.assertIn("- range: %s..%s" % (one, self.tip()), text)
+        self.assertIn("This is the fresh round after a blocker", text)
+
+    def test_a_clean_should_fix_chain_keeps_the_range_from_the_last_check(self):
+        self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.brief("review", "--check")
+        self.journal_check(1, 0, 1)
+        self.commit(self.wt, "fix2.txt", "x\n")
+        self.brief("review", "--check")
+        checked = self.tip()
+        self.journal_check(1)
+        self.set_field(review_round="1/3")
+        self.commit(self.wt, "late.txt", "x\n")
+        _, text = self.brief("review")
+        self.assertIn("- range: %s..%s" % (checked, self.tip()), text)
+        self.assertNotIn("fresh round", text)
 
     def test_a_check_needs_a_journaled_round(self):
         self.assertIn("none is journaled", self.refused(2, "review", "--check"))
@@ -1002,22 +1132,6 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.assertIn("none is journaled", self.refused(2, "review", "--check"))
         self.journal_round(1)
         self.assertIn("round 4 of the code review is not journaled", self.refused(2, "review", "--check", "--round", "4"))
-
-    def test_a_check_is_refused_after_a_round_that_left_a_blocker(self):
-        self.brief("review")
-        one = self.tip()
-        self.cmd_ok("journal", "review_round", "reviewer=code", "round:=1", "blockers:=1", "should_fix:=2", "nits:=0",
-                    "verdict=findings")
-        self.commit(self.wt, "fix.txt", "x\n")
-        err = self.refused(2, "review", "--check")
-        self.assertIn("1 blocker(s) open", err)
-        self.assertIn("Brief round 2", err)
-        self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check.md")))
-        # the way on is a real round 2 with the narrow range
-        self.set_field(review_round="1/3")
-        path, text = self.brief("review")
-        self.assertEqual(os.path.basename(path), "review-code-r2.md")
-        self.assertIn("- range: %s..%s" % (one, self.tip()), text)
 
     def test_a_check_is_refused_after_a_clean_round_and_the_commit_takes_round_n_plus_one(self):
         # rounds 1-3 passed clean, review_round 3/3, then one more commit (a gate fix): a check would skip the round and the cap
@@ -1043,7 +1157,6 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.cmd_ok("journal", "review_round", "reviewer=code", "round:=2", "blockers:=1", "should_fix:=0", "nits:=0",
                     "verdict=findings")
         self.commit(self.wt, "fix2.txt", "x\n")
-        self.assertIn("1 blocker(s) open", self.refused(2, "review", "--check"))
         err = self.refused(2, "review", "--check", "--round", "1")
         self.assertIn("round 1 is not the latest code review round (2)", err)
         self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check.md")))
@@ -1064,7 +1177,7 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.commit(self.wt, "fix.txt", "x\n")
         self.brief("review", "--check")
         checked = self.tip()
-        self.journal_round(1, "check:=true")
+        self.journal_check(1)
         self.set_field(review_round="1/3")
         self.commit(self.wt, "fix2.txt", "x\n")
         path, text = self.brief("review")
@@ -1103,6 +1216,13 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.assertEqual(merge.brief_header(path, 1, True, 2), self.tip())
         self.journal_round(1, "check:=true")
         self.assertEqual(self.journal_lines(self.d)[-1]["milestone"], 2)
+        self.commit(self.wt, "more.txt", "x\n")
+        path, text = self.brief("review", "--check")
+        self.assertEqual(os.path.basename(path), "review-code-m02-r1-check-2.md")
+        self.assertIn("- cycle: 2", text)
+        self.journal_check(1)
+        rec = self.journal_lines(self.d)[-1]
+        self.assertEqual((rec["milestone"], rec["cycle"], rec["sha"]), (2, 2, self.tip()))
 
 
 class TestFixBrief(BriefBase):
@@ -1152,6 +1272,15 @@ class TestFixBrief(BriefBase):
         self.assertIn("(Round 2) - F1: still open — the salt is a constant.", findings)
         self.assertIn("(Check of round 2) - F3: not fixed — the loop is still there.", findings)
         self.assertNotIn("F2: resolved", findings)
+
+    def test_notes_under_every_check_heading_of_the_round_are_carried(self):
+        wr(os.path.join(self.d, "review.md"), self.REVIEW.replace("@R@", self.repo)
+           + "\n## Check of round 2\n\n- F3: not fixed — first.\n\n## Check 2 of round 2\n\n- F3: not fixed — second.\n"
+           + "\n## Check 3 of round 2\n\n- F1: resolved\n")
+        _, text = self.brief("fix", "1", "--findings", "F3")
+        findings = sec(text, "Findings to fix")
+        self.assertIn("(Check of round 2) - F3: not fixed — first.", findings)
+        self.assertIn("(Check 2 of round 2) - F3: not fixed — second.", findings)
 
     def test_names_never_overwrite_and_extra(self):
         extra = os.path.join(self.tmp, "class.md")

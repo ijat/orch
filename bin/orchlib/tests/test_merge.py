@@ -159,9 +159,9 @@ class GitBase(core.Base):
         args = ["journal", "final_gate", "verdict=%s" % verdict, "sha=%s" % (sha or self.tip()), "command=make test"]
         self.cmd_ok(*args)
 
-    def brief(self, reviewer, rnd, sha, ms=None, lines=None, check=False):
+    def brief(self, reviewer, rnd, sha, ms=None, lines=None, check=False, cycle=1):
         name = "review-%s-m%02d-r%d" % (reviewer, ms, rnd) if ms else "review-%s-r%d" % (reviewer, rnd)
-        name += "-check.md" if check else ".md"
+        name += ("-check-%d.md" % cycle if cycle >= 2 else "-check.md") if check else ".md"
         path = os.path.join(self.d, "briefs", name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         head = lines if lines is not None else (
@@ -172,14 +172,16 @@ class GitBase(core.Base):
         return path
 
     def review(self, reviewer="code", rnd=1, sha=None, blockers=0, should_fix=0, nits=0, verdict="pass", ms=None,
-               brief=True, check=False):
+               brief=True, check=False, cycle=None):
         sha = sha or self.tip()
         if brief:
-            self.brief(reviewer, rnd, sha, ms, check=check)
+            self.brief(reviewer, rnd, sha, ms, check=check, cycle=cycle or 1)
         args = ["journal", "review_round", "reviewer=%s" % reviewer, "round:=%d" % rnd, "blockers:=%d" % blockers,
                 "should_fix:=%d" % should_fix, "nits:=%d" % nits, "verdict=%s" % verdict]
         if check:
             args.append("check:=true")
+            if cycle:
+                args.append("cycle:=%d" % cycle)
         if ms:
             args.append("milestone:=%d" % ms)
         self.cmd_ok(*args)
@@ -473,6 +475,56 @@ class TestReviewAndGate(GitBase):
         rec = self.kinds("review_round")[-1]
         self.assertEqual((rec["check"], rec["round"], rec["sha"]), (True, 1, self.tip()))
         self.assertTrue(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check.md")))
+        self.merge_ok("--check", "--recheck-ok")
+
+    def test_a_blocker_chain_that_ends_on_a_passed_check_refuses_and_names_the_fresh_round(self):
+        self.setup_task()
+        self.review(rnd=1, blockers=1, should_fix=1, verdict="findings")
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.gate()
+        self.review(rnd=1, check=True)                            # the check of the blocker's fixes passes
+        self.refuse_merge("code review", "had a blocker", "fresh round 2")
+        self.commit(self.wt, "more.txt", "x\n")                   # the fresh round reads the whole chain
+        self.gate()
+        self.review(rnd=2)
+        self.merge_ok("--check", "--recheck-ok")
+
+    def test_a_blocker_reported_only_by_a_check_also_needs_the_fresh_round(self):
+        self.setup_task()
+        self.review(rnd=1, should_fix=1, verdict="findings")
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.review(rnd=1, check=True, blockers=1, verdict="findings")
+        self.commit(self.wt, "fix2.txt", "x\n")
+        self.gate()
+        self.review(rnd=1, check=True, cycle=2)                   # check 2 passes
+        self.refuse_merge("code review", "had a blocker", "fresh round 2")
+
+    def test_a_should_fix_chain_of_several_checks_merges_on_a_clean_check_at_the_tip(self):
+        self.setup_task()
+        self.review(rnd=1, should_fix=1, verdict="findings")
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.review(rnd=1, check=True, should_fix=1, verdict="findings")
+        self.commit(self.wt, "fix2.txt", "x\n")
+        self.gate()
+        self.refuse_merge("code review", "should_fix is 1")
+        self.review(rnd=1, check=True, cycle=2)
+        rec = self.kinds("review_round")[-1]
+        self.assertEqual((rec["check"], rec["cycle"], rec["sha"]), (True, 2, self.tip()))
+        self.assertTrue(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check-2.md")))
+        self.merge_ok("--check", "--recheck-ok")
+
+    def test_a_check_line_binds_the_brief_of_its_own_cycle(self):
+        self.setup_task()
+        self.gate()
+        self.brief("code", 1, self.tip(), check=True, cycle=1)    # only cycle 1's brief exists
+        self.hand_line(check=True, cycle=2)
+        self.refuse_merge("code review", "round 1: no valid review brief", "review-code-r1-check-2.md")
+
+    def test_a_check_line_without_cycle_reads_as_cycle_one(self):
+        self.setup_task()
+        self.gate()
+        self.brief("code", 1, self.tip(), check=True)
+        self.hand_line(check=True)                                # an old line: no cycle key
         self.merge_ok("--check", "--recheck-ok")
 
     def test_a_check_at_an_old_sha_refuses(self):

@@ -333,6 +333,12 @@ def is_zero(v):
     return type(v) is int and v == 0
 
 
+def line_cycle(r):
+    """The fix-and-check cycle of a check line; a line without a usable `cycle` reads as cycle 1."""
+    v = r.get("cycle")
+    return v if type(v) is int and v >= 1 else 1
+
+
 def brief_problem(ctx, r):
     """None when the review line's sha is the one in its round's review brief (the commit the reviewer was
     briefed on), else the reason. A line written around `orch journal` has no such guarantee, so the merge
@@ -342,7 +348,7 @@ def brief_problem(ctx, r):
         return "review line has no usable round, so its review brief cannot be found"
     reviewer = r.get("reviewer")
     path = brief_path(ctx.task_dir, reviewer, rnd, ctx.program, ctx.ms if ctx.program else None,
-                      r.get("check") is True)
+                      r.get("check") is True, line_cycle(r))
     try:
         pinned = brief_header(path, rnd, ctx.program, ctx.ms if ctx.program else None)
     except OrchError as exc:
@@ -406,6 +412,12 @@ def cond_code_review(ctx):
     rounds = [r for r in scoped(ctx, "review_round") if r.get("reviewer") == "code"]
     if rounds:
         problems = review_problems(rounds[-1], ctx.tip, False, ctx)
+        if not problems and rounds[-1].get("check") is True:
+            rnd = rounds[-1].get("round")
+            if any(not is_zero(r.get("blockers")) for r in rounds if r.get("round") == rnd):
+                problems = ["round %s or one of its checks had a blocker; a passed check does not satisfy the merge, "
+                            "brief the fresh round %s (`orch brief review`)"
+                            % (rnd, rnd + 1 if type(rnd) is int else "N+1")]
         if not problems:
             return Cond(4, "code review", True, "round %s passed at %s" % (rounds[-1].get("round"), ctx.tip[:9]))
     else:
@@ -725,10 +737,11 @@ def register(add):
 
 # -- sha rules for `orch journal` ----------------------------------------------------------------
 
-def brief_path(task_dir, reviewer, rnd, program, ms, check=False):
-    """A fix-batch check keeps its round's number and has its own brief (`...-r<N>-check.md`)."""
+def brief_path(task_dir, reviewer, rnd, program, ms, check=False, cycle=1):
+    """A fix-batch check keeps its round's number and has its own brief: `...-r<N>-check.md` for the first
+    cycle, `...-r<N>-check-<K>.md` for cycle K >= 2."""
     name = "review-%s-m%02d-r%d" % (reviewer, ms, rnd) if program else "review-%s-r%d" % (reviewer, rnd)
-    name += "-check.md" if check else ".md"
+    name += ("-check-%d.md" % cycle if cycle >= 2 else "-check.md") if check else ".md"
     return os.path.join(task_dir, "briefs", name)
 
 
@@ -828,7 +841,21 @@ def bind_sha(task_dir, status, kind, pairs, program, auto_ms):
             rest.append(("check", ":=", "true"))       # `check=true` and `check:=true` write the same line
     if check and reviewer != "code":
         raise OrchError("a fix-batch check (check=true) exists for the code review only", 1)
-    path = brief_path(task_dir, reviewer, rnd, program, ms, check)
+    cycle = 1
+    if check:
+        if "cycle" in values:
+            cycle = jr.coerce(jr.load_schema(), "review_round", "cycle", *values["cycle"])
+            if not isinstance(cycle, int) or isinstance(cycle, bool) or cycle < 1:
+                raise OrchError("review_round cycle must be a positive integer", 1)
+        else:                                          # the next cycle of this round, as `orch brief review --check` numbered it
+            done = [r for r in read_journal_strict(task_dir)[0]
+                    if flow.kind_of(r) == "review_round" and r.get("reviewer") == "code" and r.get("round") == rnd
+                    and r.get("check") is True and (not program or norm_ms(r.get("milestone")) == ms)]
+            cycle = len(done) + 1
+        rest = [p for p in rest if p[0] != "cycle"] + [("cycle", ":=", str(cycle))]
+    elif "cycle" in values:
+        raise OrchError("review_round cycle belongs to a fix-batch check (check:=true)", 1)
+    path = brief_path(task_dir, reviewer, rnd, program, ms, check, cycle)
     sha = brief_header(path, rnd, program, ms)
     if not commit_of(repo, sha):
         raise OrchError("%s: the reviewed sha %s is not a commit of %s" % (path, sha, repo), 1)
