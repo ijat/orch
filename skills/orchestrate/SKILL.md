@@ -290,7 +290,7 @@ is written**, and the other files point here.
 | Loop | Cap | What starts a round | At the cap |
 |---|---|---|---|
 | Code review (step 9) | 3 rounds | a review whose blocker chain ended on a passed check: one **fresh** round N+1 (round 1 is the first review). Should-fix alone never starts one, nor does a nit. A commit landing after a review or check passed also starts one (below) | stop: no fourth round at the same tier (step 9) |
-| Code review fix-and-check cycles (step 9) | 3 per round | any finding left open (blocker or should-fix, routed or new) at the review or at a check: one more fix batch, then a check by the same reviewer. Checks are not rounds | a blocker still open: step 9's stop; only should-fix open: parked with `orch follow-up`, and the review passes |
+| Code review fix-and-check cycles (step 9) | 3 per round | any finding left open (blocker or should-fix, routed or new) at the review or at a check: one more fix batch, then a check by the same reviewer. Checks are not rounds | a blocker still open: never raised; step 9's stop, a parked question (`orch ask`) for the user; only should-fix open: parked with `orch follow-up`, and the review passes |
 | Security review (step 9) | 3 rounds | any routed security finding; all are routed, nits too (`orch merge` needs 0 nits) | same stop |
 | Lite mode (`LITE.md`) | 2 rounds | as code review | switch to standard and go on from round 3 |
 | Director, per item (`orch-director`) | 2 redo rounds | a redo verdict, or a `stuck` | record both variants; pick or escalate (the director's file); never a third |
@@ -299,7 +299,8 @@ is written**, and the other files point here.
 - **Raising a cap** (a loop that is converging, one more round is cheaper than a restart): an orchestrator running
   at Opus level or higher decides it alone, with no alert, and journals it (`orch journal override what="<loop> cap
   raised to N: <why>"`). Any other orchestrator parks a question (`orch ask`). Never raise a cap to repeat the same
-  failing fix at the same tier.
+  failing fix at the same tier. **The fix-and-check cycles row is never raised**, by any orchestrator: a blocker open
+  after cycle 3 is the user's call.
 - **Code review is fix, check, then a fresh round after a blocker.** One review's blockers and should-fix always go
   to the implementer in **one batch**; a batch plus its check is one **cycle** (3 per round). What follows:
   - **The check.** After any review with something open, `orch brief review --check` (same round number,
@@ -315,7 +316,9 @@ is written**, and the other files point here.
     **fresh round** N+1 (`orch brief review`): its range runs from round N's reviewed sha, the reviewer reads the code
     around the fixes and does not re-raise closed findings. `orch merge` refuses a blocker chain that ends on a
     check, so the fresh round cannot be skipped. A chain that only ever held should-fix passes at the clean check.
-  - **At the cap** (check 3 still open): a **blocker** open is step 9's stop. Only **should-fix** open: park each with
+  - **At the cap** (check 3 still open): a **blocker** open is step 9's stop, and this cap is never raised: park a
+    question (`orch ask`) whose options name the disputed or stuck finding; a fresh `fable/high` pass happens only if
+    the user picks it there. Only **should-fix** open: park each with
     `orch follow-up "<text>" --finding <id> --severity should-fix --file <path>` (in `<repo-name>/follow-ups.md`, plus a
     `follow_up` journal line); parked findings are not counted open, so the review passes.
   - **The tip moved after a review or check passed** (a gate failure fixed at the tip, a security fix commit): the
@@ -640,7 +643,9 @@ A fix-batch check (step 9) is journaled the same way with `check:=true`, `cycle:
 5. Increment `review_round` in `status.md` for each real round, never for a check; log it
    (`orch set review_round=<n>/3 --log "<round n>"`).
 
-After round 3 with a blocker (or a routed security finding) still open, or after cycle 3 of a round with a blocker still open, **stop** — no fourth round or cycle at the same tier. The same
+After cycle 3 of a round with a blocker still open, **stop**: the cycle cap is never raised and you spend no pass of your own on it. Park a question (`orch ask`) whose options name the disputed or stuck finding; Fable happens only if the user picks it there.
+
+After round 3 with a blocker (or a routed security finding) still open, **stop** — no fourth round at the same tier. The same
 stop applies when a commit awaits review after round 3 (§ Review loops, the tip-moved case): no round 4 without the
 raising rule, so raise the cap (Opus level or higher, journal `override`) or park a question (`orch ask`). If the open
 findings share a category (concurrency, one algorithm, one bug class), escalate the implementer tier
