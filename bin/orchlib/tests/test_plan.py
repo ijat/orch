@@ -336,6 +336,41 @@ class TestCheck(unittest.TestCase):
                                                "- steps: 1. a (S); 2. b (S)\n")
         self.assertIn("Summary lists 2 step(s), Steps has 5 block(s)", self.warns(inline))
 
+    def gate_warns(self, text):
+        return [m for m in self.warns(text) if "whole gate" in m]
+
+    def test_warn_done_when_asks_for_whole_gate(self):
+        base = fixture("standard.md")
+        # last step: not exempt
+        last = base.replace("- done when: the file has an entry.", "- done when: final gate green.")
+        w = self.gate_warns(last)
+        self.assertEqual(len(w), 1)
+        self.assertIn("step 10:", w[0])
+        self.assertIn("orchestrator runs the gate", w[0])
+        # middle step
+        mid = base.replace("- done when: the views test passes.", "- done when: the gate is green.")
+        w = self.gate_warns(mid)
+        self.assertEqual(len(w), 1)
+        self.assertIn("step 3:", w[0])
+        # project-specific gate names and targeted tests are not asks
+        self.assertEqual(self.gate_warns(base.replace("- done when: the views test passes.", "- done when: dump gate 18/18.")), [])
+        self.assertEqual(self.gate_warns(base), [])
+        # explicit exception
+        ok = base.replace("- done when: the views test passes.", "- done when: the gate is green.\n- full-gate: this step changes the gate itself.")
+        self.assertEqual(self.gate_warns(ok), [])
+        self.assertEqual(self.fails(ok), self.fails(base))
+        # WARN never FAIL
+        self.assertEqual([m for m in self.fails(mid) if "gate" in m], [])
+        # other spellings of the ask
+        for phrase in ("full test suite passes", "all tests pass", "the entire gate passes", "repo suite is clean"):
+            self.assertEqual(len(self.gate_warns(base.replace("- done when: the views test passes.", "- done when: %s." % phrase))), 1, phrase)
+
+    def test_full_gate_is_a_known_field(self):
+        text = fixture("standard.md").replace("- done when: the views test passes.", "- done when: x.\n- full-gate: why")
+        st = [s for s in pl.parse_plan(text).steps if s.id == "3"][0]
+        self.assertEqual(st.field_text("full-gate"), "why")
+        self.assertEqual(st.field_text("done when"), "x.")
+
     def test_lite(self):
         text = fixture("lite.md")
         self.assertEqual(self.fails(text, lite=True), [])
