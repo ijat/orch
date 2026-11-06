@@ -159,8 +159,9 @@ class GitBase(core.Base):
         args = ["journal", "final_gate", "verdict=%s" % verdict, "sha=%s" % (sha or self.tip()), "command=make test"]
         self.cmd_ok(*args)
 
-    def brief(self, reviewer, rnd, sha, ms=None, lines=None):
-        name = "review-%s-m%02d-r%d.md" % (reviewer, ms, rnd) if ms else "review-%s-r%d.md" % (reviewer, rnd)
+    def brief(self, reviewer, rnd, sha, ms=None, lines=None, check=False):
+        name = "review-%s-m%02d-r%d" % (reviewer, ms, rnd) if ms else "review-%s-r%d" % (reviewer, rnd)
+        name += "-check.md" if check else ".md"
         path = os.path.join(self.d, "briefs", name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         head = lines if lines is not None else (
@@ -171,12 +172,14 @@ class GitBase(core.Base):
         return path
 
     def review(self, reviewer="code", rnd=1, sha=None, blockers=0, should_fix=0, nits=0, verdict="pass", ms=None,
-               brief=True):
+               brief=True, check=False):
         sha = sha or self.tip()
         if brief:
-            self.brief(reviewer, rnd, sha, ms)
+            self.brief(reviewer, rnd, sha, ms, check=check)
         args = ["journal", "review_round", "reviewer=%s" % reviewer, "round:=%d" % rnd, "blockers:=%d" % blockers,
                 "should_fix:=%d" % should_fix, "nits:=%d" % nits, "verdict=%s" % verdict]
+        if check:
+            args.append("check=true")
         if ms:
             args.append("milestone:=%d" % ms)
         self.cmd_ok(*args)
@@ -459,6 +462,39 @@ class TestReviewAndGate(GitBase):
         self.merge_ok("--check", "--recheck-ok")
         self.review(rnd=2, should_fix=1)
         self.refuse_merge("code review")
+
+    def test_a_clean_check_at_the_tip_passes_the_merge(self):
+        self.setup_task()
+        self.review(rnd=1, should_fix=1, verdict="findings")      # round 1 found a should-fix
+        self.commit(self.wt, "fix.txt", "x\n")                     # the fix batch
+        self.gate()
+        self.refuse_merge("code review", "should_fix is 1")
+        self.review(rnd=1, check=True)                            # the check of the fix commits, clean
+        rec = self.kinds("review_round")[-1]
+        self.assertEqual((rec["check"], rec["round"], rec["sha"]), (True, 1, self.tip()))
+        self.assertTrue(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check.md")))
+        self.merge_ok("--check", "--recheck-ok")
+
+    def test_a_check_at_an_old_sha_refuses(self):
+        self.setup_task()
+        self.review(rnd=1)
+        self.review(rnd=1, check=True)                            # checked at the old tip
+        self.commit(self.wt, "later.txt", "x\n")                   # more commits after the check
+        self.gate()
+        self.refuse_merge("code review", "reviewed", "the tip is %s" % self.tip()[:9])
+
+    def test_a_check_with_a_should_fix_left_open_refuses(self):
+        self.setup_task()
+        self.gate()
+        self.review(rnd=1, check=True, should_fix=1, verdict="findings")
+        self.refuse_merge("code review", "should_fix is 1")
+
+    def test_a_check_line_needs_its_own_check_brief(self):
+        self.setup_task()
+        self.gate()
+        self.brief("code", 1, self.tip())                         # the round's brief exists, the check's does not
+        self.hand_line(check=True)
+        self.refuse_merge("code review", "round 1: no valid review brief", "review-code-r1-check.md")
 
     def test_a_security_review_never_stands_in_for_the_code_review(self):
         self.setup_task()

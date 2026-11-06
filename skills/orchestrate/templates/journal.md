@@ -48,13 +48,13 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 | `final_gate` | the final-gate commands ran | `verdict`, `sha` (commit the gate ran on), `command` |
 | `continue_gate` | retired 2026-11-04; old journals only | `decision` (continue/split), `agent_id`, `ctx`, `ctx_src` (transcript/notice/none), `planner_tier`, `routed` (array of `"<step>=<tier>"`), `steps`, `reasons` (array of failed condition codes), `plan_says` |
 
-`review_round` counts are the findings still open **after** the round; `verdict` is `pass` only at 0 blockers and 0 should-fix (security: and 0 nits).
+`review_round` counts are the findings still open **after** the round; a fix-batch check is a `review_round` line with `check=true` (not a table field, so ordinary lines stay free of it): it keeps its round's number and binds to `briefs/review-code-r<N>-check.md`, never starts a round, and counts as the latest code review line for `orch merge` and for the next `orch brief review` range. `verdict` is `pass` only at 0 blockers and 0 should-fix (security: and 0 nits).
 
 Types — `orch journal` coerces and checks these (`k=v` is coerced; `k:=json` must match or be `null`).
 A field not listed is a string, or free JSON when written with `:=`:
 
 - integer: `review_round.{round,blockers,should_fix,nits}`, `plan_review.{round,blockers,should,notes}`, `return.{tokens,tool_uses,duration_ms}`, `spawn.{usage_5h,usage_7d}`, `pause.usage_5h`, `resume.usage_5h`, `blocker.rung`, `task_end.rounds`, `checker.{fails,warns}`, `checkin.silent_min`, `pilot.{items,tokens,rounds,est_rest_tokens}`, `plan_revision.n`, `milestone_plan.revision`, `milestone_end.rounds`, `review_point.{rounds,blockers,should_fix,nits,late}`, `checkpoint.questions`, `continue_gate.ctx`, `*.milestone`
-- boolean: `security_offer.late`, `sketch.{sketch_wrong,escalated}`, `plan_shape.overridden`, `checkpoint.asked`, `auto_security.ran`, `assumed_decision.reversible`, `merge_point.tree_equal`
+- boolean: `review_round.check`, `security_offer.late`, `sketch.{sketch_wrong,escalated}`, `plan_shape.overridden`, `checkpoint.asked`, `auto_security.ran`, `assumed_decision.reversible`, `merge_point.tree_equal`
 - array: `*.alternatives`, `spawn.steps`, `security_offer.areas`, `auto_security.areas`, `plan_shape.criteria`, `replan.changed`, `review_point.span`, `milestone_end.tiers`, `milestone_plan.rows`, `continue_gate.{steps,routed,reasons}`
 
 In a program, every other line also carries `milestone` (number, or null before the first one).
