@@ -289,8 +289,8 @@ is written**, and the other files point here.
 
 | Loop | Cap | What starts a round | At the cap |
 |---|---|---|---|
-| Code review (step 9) | 3 rounds | a review with an open **blocker**: its whole batch is fixed, then re-reviewed as round N+1 (round 1 is the first review). Should-fix alone never starts one (it gets a check), nor does a nit | stop: no fourth round at the same tier (step 9) |
-| Security review (step 9) | 3 rounds | any routed finding: blocker or should-fix. Nits go to the digest | same stop |
+| Code review (step 9) | 3 rounds | a review with an open **blocker**: its whole batch is fixed, then re-reviewed as round N+1 (round 1 is the first review). Should-fix alone never starts one (it gets a check), nor does a nit. A commit landing after a review or check passed also starts one (below) | stop: no fourth round at the same tier (step 9) |
+| Security review (step 9) | 3 rounds | any routed security finding; all are routed, nits too (`orch merge` needs 0 nits) | same stop |
 | Lite mode (`LITE.md`) | 2 rounds | as code review | switch to standard and go on from round 3 |
 | Director, per item (`orch-director`) | 2 redo rounds | a redo verdict, or a `stuck` | record both variants; pick or escalate (the director's file); never a third |
 | Plan reviewer (`PROGRAM.md` §1.3) | 3 passes | a `blocker` finding | a parked question: the open blockers go to the user |
@@ -308,14 +308,19 @@ is written**, and the other files point here.
     round number, `check:=true`, its own brief). A check is not a round and does not touch `review_round`;
     `--check` refuses (exit 2) after a review that had a blocker. A check's outcomes: nothing open: the review
     passes. A new **should-fix**: `orch follow-up "<text>" --finding <id> --severity should-fix --file <path>` parks
-    it in `<repo-name>/follow-ups.md` (and a `follow_up` journal line); it is not routed and not counted open. A new
-    **nit**: the digest. A new or still-open **blocker**: the loop reopens as round N+1 (route it, then
-    `orch brief review`, whose range now starts at the check's sha).
+    it in `<repo-name>/follow-ups.md` (and a `follow_up` journal line); it is not routed and not counted open. A
+    routed should-fix the check reports **not fixed**: parked the same way, with the check's note as the text; it
+    does not start a round. A new **nit**: the digest. A new **blocker**: the loop reopens as round N+1 (route it,
+    then `orch brief review`, whose range now starts at the check's sha).
+  - **The tip moved after a review or check passed** (a gate failure fixed at the tip, a security fix commit): the
+    passed line no longer covers the tip, and `orch merge` needs a code line at the tip. Brief a real round N+1
+    (`orch brief review`, narrow range from the last reviewed sha), not a check. It is counted in `review_round`
+    and against the cap, so at the cap it needs the raising rule above; otherwise the cap stop stands.
   - `verdict` is `pass` only with zero findings open. Pre-existing findings go to the digest, as before.
 - **Security stays on rounds.** Every routed security finding is fixed and re-reviewed as the next round of the
   security loop; there is no check and no follow-up lane for it.
 - **Severity does not depend on the loop.** A reviewer rates a finding by what it does, never by whether the
-  rating would start a round. The definitions of blocker, should-fix and nit are unchanged (`templates/review.md`).
+  rating would start a round. The definitions of blocker, should-fix and nit are in `templates/review.md`.
 - **Commits.** Every fix is committed before the implementer returns, one commit per finding or per batch of one
   class. The review range sees only commits, so `orch brief review` refuses a dirty worktree.
 - **The gate repeats at every new tip** (step 8: beside the check or re-review).
@@ -606,7 +611,8 @@ A fix-batch check (step 9) is journaled the same way with `check:=true` and the 
 3. **Security review: re-review.** Re-review only the touched files, unless the reviewer named a broader concern.
    Name the closed findings in the brief; the reviewer doesn't re-raise them. After commits, brief round N+1
    (`orch brief security`).
-4. **A new round** (a review with a blocker open, a blocker found by a check, or any routed security finding): after
+4. **A new round** (a review with a blocker open, a blocker found by a check, any routed security finding, or a commit
+   landing after a review or check passed, § Review loops): after
    the batch is committed, brief round N+1 (`orch brief review`; `orch brief security` for security); never re-brief round
    N — it refuses. A review that had a blocker is never followed by a check, only by round N+1. A check never takes
    a round number of its own, so the next real round is N+1 whether or not a check came between.
