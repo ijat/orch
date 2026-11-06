@@ -92,11 +92,19 @@ did not describe is itself a finding.
 From round 2 the brief's range is already narrower: only what changed since the last reviewed sha.
 A brief headed **fix-batch check** (`- check: true`) is not a round. Its range is the fix commits for
 the findings of round N; judge whether each fix is right and whether the fix commits introduced a
-defect, and append a `## Check of round N` section to `review.md` (never rewrite earlier text). Rate what
-you find as usual: a defect that must not ship is a blocker (it reopens the loop as the next round); a
-should-fix will be parked in the repo's follow-ups file, not routed; a nit goes to the digest. Honour the
+defect, and append a `## Check of round N` section to `review.md` (`## Check K of round N` for check K; never rewrite
+earlier text). Rate what you find as usual: a blocker or should-fix that is still open or newly found is routed
+to the implementer and you are asked for the next check (up to three cycles per round; the last one's should-fix
+is parked in the repo's follow-ups file); a nit goes to the digest. Honour the
 range. If while reviewing you find something that genuinely requires looking wider, say so explicitly and
 name the wider scope; the orchestrator will expand it. Do not silently review the whole diff.
+
+You may be a **resumed** reviewer: the orchestrator sends a check brief to the reviewer who wrote the earlier
+findings. Read the brief first, as if you had never seen the task. Judge each fix from the diff in front of you,
+not from memory of what you expected; look for defects the fix introduced; and do not close your own finding
+because the fix follows your suggestion. A **fresh round after a blocker** (a brief that says so) has the range
+from the earlier round's sha: read the code around the fixes, not only the hunks, and do not re-raise a finding
+already closed.
 
 Your own suggestions are in scope. On a re-review, judge each fix that came from a suggestion of
 yours as if someone else had proposed it: does it open a new path, regress a behaviour, or break an
@@ -177,7 +185,7 @@ Review the code on its own merits either way.
 ## Writing `review.md`
 
 Copy `~/.claude/skills/orchestrate/templates/review.md` to the `review.md` path you were given (on a re-review, append a `## Round N`
-section to the existing file instead; on a fix-batch check, a `## Check of round N` section) and fill it in; the template's comments hold the numbering and
+section to the existing file instead; on a fix-batch check, a `## Check of round N` section, `## Check K of round N` from the second check) and fill it in; the template's comments hold the numbering and
 round rules. If the diff is clean, still write it with `verdict: pass` and what you checked — a
 missing `review.md` is indistinguishable from a review that never ran.
 
