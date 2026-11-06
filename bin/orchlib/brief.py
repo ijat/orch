@@ -667,6 +667,11 @@ def check_round(c, ns):
     if type(blockers) is int and blockers > 0:
         raise OrchError("--check: round %d left %d blocker(s) open; a blocker is re-reviewed as a round, not checked. "
                         "Brief round %d (`orch brief review`)." % (rnd, blockers, rnd + 1), 2)
+    should_fix = line[-1].get("should_fix")
+    if type(should_fix) is int and should_fix == 0:
+        raise OrchError("--check: round %d routed no should-fix, so there is no fix batch to check; a commit after a "
+                        "passed review is re-reviewed as a round. Brief round %d (`orch brief review`)."
+                        % (rnd, rnd + 1), 2)
     return rnd
 
 

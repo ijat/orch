@@ -902,7 +902,9 @@ class TestProgramReviewBrief(BriefBase):
 
 class TestNarrowReviewAndCheck(BriefBase):
     """From round 2 the code review reads <last reviewed sha>..<tip>; --check briefs the fix commits of a round."""
-    J = ("journal", "review_round", "reviewer=code", "blockers:=0", "should_fix:=0", "nits:=0", "verdict=pass")
+    # a round that routed one should-fix (so a fix batch exists for a check); CLEAN is a passed review
+    J = ("journal", "review_round", "reviewer=code", "blockers:=0", "should_fix:=1", "nits:=0", "verdict=findings")
+    CLEAN = ("journal", "review_round", "reviewer=code", "blockers:=0", "should_fix:=0", "nits:=0", "verdict=pass")
 
     def journal_round(self, rnd, *more):
         self.cmd_ok(*(self.J + ("round:=%d" % rnd,) + more))
@@ -1016,6 +1018,22 @@ class TestNarrowReviewAndCheck(BriefBase):
         path, text = self.brief("review")
         self.assertEqual(os.path.basename(path), "review-code-r2.md")
         self.assertIn("- range: %s..%s" % (one, self.tip()), text)
+
+    def test_a_check_is_refused_after_a_clean_round_and_the_commit_takes_round_n_plus_one(self):
+        # rounds 1-3 passed clean, review_round 3/3, then one more commit (a gate fix): a check would skip the round and the cap
+        self.brief("review")
+        for n in (1, 2, 3):
+            if n > 1:
+                self.commit(self.wt, "r%d.txt" % n, "x\n")
+                self.set_field(review_round="%d/3" % (n - 1))
+                self.brief("review")
+            self.cmd_ok(*(self.CLEAN + ("round:=%d" % n,)))
+        self.set_field(review_round="3/3")
+        self.commit(self.wt, "gatefix.txt", "x\n")
+        err = self.refused(2, "review", "--check")
+        self.assertIn("round 3 routed no should-fix", err)
+        self.assertIn("Brief round 4", err)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r3-check.md")))
 
     def test_a_check_for_an_older_round_is_refused_after_a_later_blocker_round(self):
         self.round_one()                                       # round 1: should-fix only, journal_round default
