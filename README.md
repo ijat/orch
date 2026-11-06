@@ -52,7 +52,7 @@ flowchart LR
   A notification goes out only for a parked question, an automatic merge, a hard stop or the end of a task.
 - **Work survives crashes and usage limits.** All state lives in Markdown files: plan, status, log,
   review and journal. A dead session, a closed terminal or a usage pause resumes from the files, not
-  from scratch.
+  from scratch. Say "resume" in the repo and it finds the task itself.
 - **Separate reviewers check the work.** A code reviewer with a fresh context, plus a security reviewer
   when the rule fires (security-bound logic or network exposure; `policy.md` can force it or ask first).
   Every run or skip is journaled. They review against the approved plan, for up to 3 fix rounds.
@@ -142,6 +142,8 @@ are counted from the review files themselves.
 - The visual director loop, pilot batches and check-ins (2026-10-15) have run in real tasks, but
   too few to measure.
 - Program mode (roadmaps of milestones) has run twice.
+- Taking over on a bare "resume" (2026-11-06) passed trigger probes: it fired on 10 of 10 resume prompts
+  and 0 of 8 others. A full resume through that path has not been run yet.
 - The numbers above come from one person's projects. Your mileage will vary with codebase and model
   versions.
 
@@ -154,6 +156,10 @@ You approve the plan. Between that and the merge it runs on its own; you see the
 
 ```mermaid
 flowchart TD
+    Z([You: resume]) --> Y{orch current:<br/>one certain task here?}
+    Y -->|yes| R
+    Y -->|stale, several or maybe running| Q[Asks you which task] --> R
+    Y -->|none| N[Says so, lists other repos' tasks]
     A([You: orchestrate this]) --> B[Resume check:<br/>unfinished task for this repo?]
     B -->|yes| R[Resume from status.md + log.md]
     B -->|no| C[Create task dir<br/>~/.claude/orchestrations/repo/task/]
@@ -303,6 +309,8 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `bin/orch-install-code-index.sh` | Installs the pinned `orch-index` release binary (macOS and Linux) for `orch-graph`, see Code index below |
 | `bin/orch`, `bin/orchlib/` | The `orch` command: one call per state change (`spawn`, `return`, `role`, `journal`, `ask`), role briefs, plan checks (including guides), the guarded `merge`, and `migrate` for old task directories. Python 3.9+ standard library only; `orchlib/tests/` holds its tests |
 | `bin/orchlib/dashboard.py`, `bin/orchlib/dashboard.html` | `orch dashboard`: a read-only page of active tasks, questions waiting for you and recent events, served on 127.0.0.1 only |
+| `bin/orchlib/current.py` | `orch current`: maps a directory or worktree to its task and prints `resume`, `ask` or `none`. Read-only |
+| `bin/orchlib/instructions.py`, `skills/orchestrate/templates/claude-md-block.md` | `orch install-instructions`: writes, updates or removes the rules block in `~/.claude/CLAUDE.md` |
 | `skills/orchestrate/templates/policy.md`, `…/questions.md` | Per-repo stop policy (`~/.claude/orchestrations/<repo>/policy.md`) and the queue of parked questions in a task |
 
 ## Code index (optional)
@@ -440,6 +448,7 @@ cd orch && git pull
 ~/.claude/bin/orch migrate --dry-run   # report what would change in your task directories
 ~/.claude/bin/orch migrate             # add the new status.md fields to active tasks
 ~/.claude/bin/orch migrate --all       # optional: finished tasks too
+~/.claude/bin/orch install-instructions --dry-run   # refresh the CLAUDE.md rules, see below
 ```
 
 `orch migrate` only touches `status.md`. It backs up every file it changes under
@@ -475,9 +484,19 @@ Say "orchestrate this" (or "lite mode" for a small task, or "orchestrate interac
 the session) and describe the work. Task files go to
 `~/.claude/orchestrations/<repo>/<task>/`.
 
-To pick work back up, open a session in the repo or its worktree and say "resume". `orch current` finds the
-task for that directory: one task resumes at once; a stale task, several tasks, or one another session may be running comes back
-as a question.
+To pick work back up, open a new session in the repo or its worktree and say "resume", "continue", "start"
+or the same thing in other words. This needs the rules from `orch install-instructions`. Claude runs
+`orch current`, which matches the directory against each task's recorded repo path and worktree:
+
+| `orch current` says | When | What Claude does |
+|---|---|---|
+| `resume <repo>/<slug>` | One live task here | Resumes it without asking |
+| `ask` | Tasks here, but none is certain: stale over 7 days, several live, matched by folder name only, or touched in the last 15 minutes (another session may be running it) | Asks you which one |
+| `none` | No active task here | Says so, lists other repos' tasks, and offers the next step from the project's `STATE.md` if it has one |
+
+From inside a task's worktree, that task wins over the repo's others. In a session already working on
+something, "continue" just means carry on, and a prompt that names other work is that work.
+`orch show` lists every repo's unfinished tasks.
 
 To watch your tasks, run `orch dashboard --serve` (add `--port N` to change the port, `--open` to open
 a browser). It serves a read-only page on `127.0.0.1:8765` and writes nothing. `orch dashboard --json`
