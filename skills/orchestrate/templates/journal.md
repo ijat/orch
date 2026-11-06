@@ -21,6 +21,7 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 | `blocker` | a role returns blocked | `role`, `need` (≤ 1 line), `rung` (1/2/3 — where it got resolved), `resolved_by` |
 | `security_offer` | old lines; new tasks only when `policy.md` says `security: ask` and the user was asked | `areas` (array), `answer` (accepted/declined/not_offered), `late` (bool) |
 | `review_round` | each reviewer return | `round`, `reviewer`, `blockers`, `should_fix`, `nits`, `verdict`, `sha` |
+| `follow_up` | `orch follow-up` parked a should-fix or nit in the repo's `follow-ups.md` | `finding`, `severity` (should-fix/nit), `file`, `text` |
 | `gate` | plan or merge approval | `gate` (plan/roadmap/merge/pilot), `outcome` (approved/revised/declined) |
 | `plan_revision` | a revision appended | `n`, `trigger` (blocker/user/review) |
 | `sketch` | a sketched step finishes | `step`, `followed` (full/partial/no), `sketch_wrong` (bool), `escalated` (bool) |

@@ -359,6 +359,77 @@ class TestEnd(FlowBase):
         self.assertIn("usage: no spawn lines", out)
 
 
+class TestFollowUp(FlowBase):
+    def path(self):
+        return os.path.join(os.path.dirname(self.d), "follow-ups.md")
+
+    def add(self, text="Rename the helper", finding="F3", severity="should-fix", *more):
+        return self.ok("follow-up", text, "--finding", finding, "--severity", severity, *(list(more) + ["-t", T]))
+
+    def rows(self):
+        return [l for l in self.text().splitlines() if l.startswith("| 20")]
+
+    def text(self):
+        with open(self.path(), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_the_first_add_creates_the_file_from_the_template(self):
+        self.assertFalse(os.path.exists(self.path()))
+        self.add("Rename the helper", "F3", "should-fix", "--file", "src/auth.py")
+        text = self.text()
+        self.assertTrue(text.startswith("# Follow-ups: myapp\n"), text[:40])
+        self.assertIn("| date (UTC) | task | finding | severity | file | text |", text)
+        rows = self.rows()
+        self.assertEqual(len(rows), 1)
+        self.assertRegex(rows[0], r"^\| \d{4}-\d\d-\d\dT\d\d:\d\dZ \| add-login \| F3 \| should-fix \| src/auth.py \| Rename the helper \|$")
+        rec = self.journal()[-1]
+        self.assertEqual((rec["kind"], rec["finding"], rec["severity"], rec["file"], rec["text"]),
+                         ("follow_up", "F3", "should-fix", "src/auth.py", "Rename the helper"))
+
+    def test_a_second_add_appends_and_never_rewrites(self):
+        self.add()
+        first = self.text()
+        self.add("Trim the log line", "F4", "nit")
+        self.assertTrue(self.text().startswith(first))
+        self.assertEqual(len(self.rows()), 2)
+        self.assertIn("| F4 | nit | - | Trim the log line |", self.rows()[1])
+        self.assertEqual(self.kinds().count("follow_up"), 2)
+        self.assertIsNone(self.journal()[-1]["file"])
+
+    def test_text_stays_on_one_line_and_cannot_break_the_table(self):
+        self.assertIn("single line", self.refuse(1, "follow-up", "two\nlines", "--finding", "F1", "--severity", "nit", "-t", T))
+        self.assertFalse(os.path.exists(self.path()))
+        self.add("a | b", "F1", "nit")
+        self.assertTrue(self.rows()[0].endswith("| a / b |"), self.rows()[0])
+
+    def test_bad_severity_and_missing_finding_are_refused(self):
+        before = self.snapshot()
+        self.refuse(1, "follow-up", "x", "--finding", "F1", "--severity", "blocker", "-t", T)
+        self.refuse(1, "follow-up", "x", "--severity", "nit", "-t", T)       # --finding is required
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse(os.path.exists(self.path()))
+
+    def test_the_digest_lists_this_tasks_follow_ups_and_prints_nothing_without_any(self):
+        retro = "# Retro\n\n- outcome: merged\n"
+        for slug in ("quiet", "other"):
+            self.init(slug=slug)
+            with open(os.path.join(self.tdir(slug=slug), "retro.md"), "w") as fh:
+                fh.write(retro)
+        with open(os.path.join(self.d, "retro.md"), "w") as fh:
+            fh.write(retro)
+        self.ok("follow-up", "Other task's row", "--finding", "F9", "--severity", "nit", "-t", "myapp/other")
+        out, _ = self.ok("end", "merged", "-t", "myapp/quiet")          # none of its own: no line
+        self.assertNotIn("follow-up", out)
+        self.add("Rename the helper", "F3", "should-fix")
+        self.add("Trim the log line", "F4", "nit")
+        out, _ = self.ok("end", "merged", "-t", T)
+        self.assertIn("follow-ups parked: 2", out)
+        self.assertIn("F3 should-fix: Rename the helper", out)
+        self.assertIn("F4 nit: Trim the log line", out)
+        self.assertNotIn("Other task's row", out)
+        self.assertLessEqual(len(out.splitlines()), 25)
+
+
 class TestQuestions(FlowBase):
     def qpath(self):
         return os.path.join(self.d, "questions.md")
