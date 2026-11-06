@@ -559,8 +559,35 @@ def branch_sha(c):
 RANGE_RE = re.compile(r"^(.+?)(\.\.\.?)(.+)$")
 
 
-def review_range(c, ns, tip):
-    """(range text, reviewed sha)."""
+def code_lines(c):
+    """The journaled code `review_round` lines in this task's scope (one milestone in a program), oldest first."""
+    out = []
+    for rec in flow.read_journal(c.task_dir):
+        if flow.kind_of(rec) != "review_round" or rec.get("reviewer") != "code":
+            continue
+        if c.program and rec.get("milestone") != c.ms:
+            continue
+        out.append(rec)
+    return out
+
+
+def narrow_range(c, tip):
+    """('<last reviewed sha>..<tip>', tip), or (None, why) when there is no usable earlier code review."""
+    lines = code_lines(c)
+    if not lines:
+        return None, "no earlier code review is journaled"
+    sha = lines[-1].get("sha")
+    if not isinstance(sha, str) or not merge.HEX_RE.match(sha.lower()) or not merge.commit_of(c.repo_path, sha.lower()):
+        return None, "the last code review line has no usable sha"
+    sha = sha.lower()
+    if not merge.git(c.repo_path, "merge-base", "--is-ancestor", sha, tip).ok:
+        return None, "the last reviewed sha %s is not an ancestor of the tip" % sha[:9]
+    return "%s..%s" % (sha, tip), None
+
+
+def review_range(c, ns, tip, reviewer="code", rnd=1, check=False):
+    """(range text, reviewed sha). From round 2 (and for a check) the code review covers only what changed
+    since the last reviewed sha; security and round 1 keep the whole branch."""
     if ns.range:
         m = RANGE_RE.match(ns.range)
         if not m:
@@ -574,6 +601,11 @@ def review_range(c, ns, tip):
         if not sha or not base_sha:
             raise OrchError("--range %s does not resolve in %s" % (ns.range, c.repo_path), 1)
         return "%s%s%s" % (left, op, sha), sha
+    if reviewer == "code" and (rnd >= 2 or check):
+        rng, why = narrow_range(c, tip)
+        if rng:
+            return rng, tip
+        print("orch: %s; reviewing the whole range instead" % why, file=sys.stderr)
     if c.program and re.match(r"^[0-9a-fA-F]{7,64}$", c.reviewed_through or ""):
         if not merge.commit_of(c.repo_path, c.reviewed_through.lower()):
             raise OrchError("reviewed_through %s is not a commit of %s" % (c.reviewed_through, c.repo_path), 1)
@@ -599,13 +631,43 @@ def next_round(c):
     return int(m.group(1)) + 1 if m else 1
 
 
-def check_not_journaled(c, reviewer, rnd):
+def check_not_journaled(c, reviewer, rnd, check=False):
     for rec in flow.read_journal(c.task_dir):
         if flow.kind_of(rec) != "review_round" or rec.get("reviewer") != reviewer or rec.get("round") != rnd:
             continue
+        if (rec.get("check") is True) != check:
+            continue
         if c.program and rec.get("milestone") != c.ms:
             continue
+        if check:
+            raise OrchError("the fix-batch check of round %d is already journaled; a round has one check" % rnd, 2)
         raise OrchError("round %d of the %s review is already journaled; brief the next round (--round %d)" % (rnd, reviewer, rnd + 1), 2)
+
+
+def check_round(c, ns):
+    """The round a fix-batch check belongs to: --round, else the latest journaled code round that is not itself a
+    check. Exit 2 when that round is not journaled."""
+    real = [r for r in code_lines(c) if r.get("check") is not True and type(r.get("round")) is int]
+    if ns.round is not None:
+        rnd = ns.round
+    elif real:
+        rnd = real[-1]["round"]
+    else:
+        raise OrchError("--check needs a journaled code review round whose fixes it checks; none is journaled", 2)
+    if rnd < 1:
+        raise OrchError("--round must be at least 1", 1)
+    if not any(r["round"] == rnd for r in real):
+        raise OrchError("--check: round %d of the code review is not journaled" % rnd, 2)
+    return rnd
+
+
+def refuse_dirty(c):
+    wd = work_dir(c)
+    r = merge.git(wd, "status", "--porcelain") if wd else None
+    if r is not None and r.ok and r.out.strip():
+        n = len([l for l in r.out.splitlines() if l.strip()])
+        raise OrchError("the worktree %s has %d uncommitted path(s); the review reads `git diff <range>`, which only "
+                        "sees commits. Commit the fixes first." % (wd, n), 2)
 
 
 def check_not_repinned(c, reviewer, rnd, path, sha):
@@ -623,7 +685,7 @@ def check_not_repinned(c, reviewer, rnd, path, sha):
                         "Brief the next round (--round %d), not this one." % (rnd, reviewer, old[:9], sha[:9], rnd + 1), 2)
 
 
-def build_review_brief(c, ns, reviewer, rnd, rng, sha):
+def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False):
     plan = c.plan
     steps = plan.steps
     all_files = []
@@ -634,15 +696,24 @@ def build_review_brief(c, ns, reviewer, rnd, rng, sha):
     keys = pl.Keys([], all_files, c.roots)
     role = "%s-reviewer" % reviewer
     fname = "review.md" if reviewer == "code" else "security-review.md"
-    head = ["# Brief: %s review, round %d — %s/%s" % (reviewer, rnd, c.repo_name, c.slug),
+    head = ["# Brief: %s review%s, round %d — %s/%s" % (reviewer, " fix-batch check" if check else "", rnd,
+                                                      c.repo_name, c.slug),
             "- reviewed sha: %s" % sha,
             "- round: %d" % rnd]
     if c.program:
         head.append("- milestone: %d" % c.ms)
     head.append("- range: %s" % rng)
+    head.append("- diff: git diff %s" % rng)
+    if check:
+        head.append("- check: true")
     out = ["\n".join(head),
            "Review exactly this range. If the branch has moved past %s, say so in your review file and don't "
-           "review the newer commits." % sha,
+           "review the newer commits. Read it with the `- diff:` command above, run in the worktree." % sha]
+    if check:
+        out.append("This is a check of the fix commits for round %d, not a new round. Judge whether the fixes are "
+                   "right and whether they introduced a defect. Append your findings to the review file under a "
+                   "`## Check of round %d` heading; leave earlier text as it is." % (rnd, rnd))
+    out += [
            "- worktree: %s" % (c.wt or "none (read the repo)"),
            "- branch: %s   base: %s" % (c.branch, c.base),
            "- plan: %s" % c.plan_path,
@@ -679,14 +750,22 @@ def build_review_brief(c, ns, reviewer, rnd, rng, sha):
 
 
 def cmd_brief_review(ns, c, reviewer):
-    rnd = ns.round if ns.round is not None else next_round(c)
+    check = bool(ns.check)
+    if check and reviewer != "code":
+        raise OrchError("--check belongs to the code review (orch brief review --check)", 1)
+    if check:
+        rnd = check_round(c, ns)
+    else:
+        rnd = ns.round if ns.round is not None else next_round(c)
     if rnd < 1:
         raise OrchError("--round must be at least 1", 1)
+    if reviewer == "code":
+        refuse_dirty(c)
     tip = branch_sha(c)
-    rng, sha = review_range(c, ns, tip)
-    check_not_journaled(c, reviewer, rnd)
-    text = build_review_brief(c, ns, reviewer, rnd, rng, sha)
-    path = merge.brief_path(c.task_dir, reviewer, rnd, c.program, c.ms)
+    check_not_journaled(c, reviewer, rnd, check)
+    rng, sha = review_range(c, ns, tip, reviewer, rnd, check)
+    text = build_review_brief(c, ns, reviewer, rnd, rng, sha, check)
+    path = merge.brief_path(c.task_dir, reviewer, rnd, c.program, c.ms, check)
     with TaskLock(c.task_dir):
         check_not_repinned(c, reviewer, rnd, path, sha)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -797,6 +876,8 @@ def cmd_brief(ns, extra):
         raise OrchError("--tier must look like sonnet/high", 1)
     if ns.escalation is not None and ns.escalation not in ("none", "proactive", "post-failure"):
         raise OrchError("--escalation must be none, proactive or post-failure", 1)
+    if ns.check and ns.kind != "review":
+        raise OrchError("--check belongs to `orch brief review` (the fix-batch check of the code review)", 1)
     c = load_ctx(ns)
     if ns.kind in ("implement", "director"):
         return cmd_brief_work(ns, c, ns.kind)
@@ -819,5 +900,6 @@ def register(add):
     sp.add_argument("--tradeoff", default=None)
     sp.add_argument("--range", default=None)
     sp.add_argument("--round", type=int, default=None)
+    sp.add_argument("--check", action="store_true")
     sp.add_argument("--extra", default=None)
     pl.register(add)
