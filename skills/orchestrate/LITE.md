@@ -25,13 +25,14 @@ earn an `opus/max` planner). The user may force lite anyway — journal it as `o
 - **Step 7:** after creating the worktree, `SendMessage` the **same** agent — its context is the
   saving — with the worktree path and "phase 2: implement" (no brief). If that agent is gone (crash,
   resumed session), spawn a fresh one at the same tier on phase 2; `plan.md` carries everything.
-- **Step 9:** fixes go to the same agent the same way, under SKILL.md § Review loops (blockers and should-fix in
-  one batch; open findings get fix-and-check cycles, and a blocker chain then a fresh round). **Max 2 rounds**; a blocker still open after
-  round 2, or a commit awaiting review after round 2 → switch to standard and continue under the standard rules. A blocker
+- **Step 9:** cycle 1 fixes go to the same agent the same way, under SKILL.md § Review loops (blockers and should-fix in
+  one batch; open findings get fix-and-check cycles, and a blocker chain then a fresh round). Cycles 2 and 3 of a round
+  are fresh spawns at higher tiers (`TIERS.md` § Fix rounds), as in standard. **Max 2 rounds**; a blocker still open after
+  round 2, a commit awaiting review after round 2, or a fresh round due after round 2 → switch to standard and continue under the standard rules. A blocker
   still open after cycle 3 of a round is the cycle stop in § Review loops (a parked question), in either mode.
 
 **Switching to standard** — when the agent returns `blocked` with `need: scope_exceeded`, the plan
-fails eligibility, or round 2 ends with a blocker open or a commit awaiting review: journal a `mode_switch` (`from`, `to`,
+fails eligibility, or round 2 ends with a blocker open, a commit awaiting review or a fresh round due: journal a `mode_switch` (`from`, `to`,
 `reason`), set `mode: standard` in `status.md`, and continue at the matching standard step. A
 switch at planning spawns a real planner that is given the lite `plan.md` as its starting findings.
 Don't argue an agent out of `scope_exceeded`.
