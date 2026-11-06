@@ -895,6 +895,8 @@ def safe_estimate(**kw):
 DEGRADED_SEC = 600     # UNKNOWN (or k_src=none with a stale anchor) this long mid-wait -> exit 4
 PAUSE_CAP = 5 * 3600 + 600
 CHECKIN_LADDER = (30, 60, 120, 120)   # minutes; at most len() CHECKINs per open spawn
+FINAL_STATES = ('done', 'blocked', 'failed')
+FINAL_FIRST_MIN = 5                   # a final row with no `orch return` is first reported after this long
 REFRESH_EVERY = 600
 REFRESH_VERDICT = 120
 REFRESH_OFF = 86400
@@ -1038,15 +1040,18 @@ def _log_activity(task_dir):
 
 
 def due_checkin(task_dir, now, stamps):
-    """-> (role, silent_min, interval_min, spawn_id) for the earliest overdue open spawn, else None.
-    A row is due only if `in_progress` AND its role's latest journal `spawn` comes after its latest `return`.
+    """-> (role, silent_min, interval_min, spawn_id, n, final) for the earliest overdue open spawn, else None;
+    `final` is the row's state when it is done/blocked/failed (no `orch return` followed), else None.
+    A row is due only if `in_progress` (or final, see below) AND its role's latest journal `spawn` comes after its
+    latest `return`. A final row is reported once it has stood FINAL_FIRST_MIN minutes, then on the same ladder;
+    a `waiting` row never is.
     Activity = spawn, the role's log.md lines, its row timestamp, journal `checkin`s since the spawn;
     the ladder base also counts this key's CHECKIN stamp, so a re-armed wait can't re-fire at once."""
     from . import flow
     from . import status as st
     try:
         rows = [(r, row) for r, row in st.Status.load(os.path.join(task_dir, 'status.md')).roles()
-                if row.get('state') == 'in_progress']
+                if row.get('state') == 'in_progress' or row.get('state') in FINAL_STATES]
     except Exception:
         return None
     journal = flow.read_journal(task_dir)
@@ -1086,9 +1091,11 @@ def due_checkin(task_dir, now, stamps):
             acts.append(t_row)
         last_act = max(acts)
         base = max([last_act] + ([float(stamp['last'])] if isinstance(stamp.get('last'), (int, float)) else []))
-        interval = CHECKIN_LADDER[n] * 60
+        final = row.get('state') if row.get('state') in FINAL_STATES else None
+        minutes = FINAL_FIRST_MIN if final and n == 0 else CHECKIN_LADDER[n]
+        interval = minutes * 60
         if now >= base + interval and (best is None or base + interval < best[0]):
-            best = (base + interval, role, int((now - last_act) // 60), CHECKIN_LADDER[n], spawn_id, n + 1)
+            best = (base + interval, role, int((now - last_act) // 60), minutes, spawn_id, n + 1, final)
     return best[1:] if best else None
 
 
@@ -1165,10 +1172,10 @@ class Wait:
         c = due_checkin(self.task_dir, now, stamps)
         if not c:
             return None
-        role, silent, interval, spawn_id, n = c
+        role, silent, interval, spawn_id, n, final = c
         stamps[role] = {'spawn': spawn_id, 'n': n, 'last': now}
         _write_atomic(path, json.dumps(stamps, sort_keys=True))
-        return role, silent, interval
+        return role, silent, interval, final
 
     def _refresh(self, e, now):
         if not self.refresh or not self.sid:
@@ -1266,7 +1273,8 @@ class Wait:
                 if self.task_dir:
                     c = self._checkin(now)
                     if c:
-                        return 11, self.line('CHECKIN', e, role=c[0], silent_min=c[1], interval=c[2])
+                        extra = {'final': c[3]} if c[3] else {}
+                        return 11, self.line('CHECKIN', e, role=c[0], silent_min=c[1], interval=c[2], **extra)
                 if self._refresh(e, now):
                     return 12, self.line('REFRESH', e)
             self.sleep(self.interval)
