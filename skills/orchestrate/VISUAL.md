@@ -4,7 +4,7 @@ Read this when a plan step has `visual:` or `pilot:`. Part of `SKILL.md` step 7.
 
 **Visual steps** (plan step has `visual: <acceptance>`): `orch spawn` the director first (background,
 default `opus/high`), then the implementer at the plan's tier, each given the other's agent ID (`Agent`
-has no name parameter). They loop by `SendMessage` pointers to `visual-s<S>-<N>.md` (protocol in both
+has no name parameter; in the `--extra` file of its `orch brief`, or by `SendMessage`, never added to the printed spawn prompt). They loop by `SendMessage` pointers to `visual-s<S>-<N>.md` (protocol in both
 role files); you relay only if one returns `blocked` with `need: … unreachable`. Either ends its turn
 while it waits for the other, so completion notices arrive mid-loop. **A return whose `status.md` row
 reads `waiting` is not a finish:** no `orch return` (it refuses a non-final row), don't advance, keep the
