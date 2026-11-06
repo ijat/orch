@@ -121,6 +121,28 @@ class TestSpawnPrompt(BriefBase):
         path, _ = self.brief("review", "--tier", "opus/high", "--escalation", "none", "--tradeoff", "t")
         self.assertNotIn("orch: next work", self.last_out)
 
+    def test_reused_form_for_a_code_check_and_a_security_round_two_never_for_a_real_round(self):
+        flags = ("--tier", "opus/high", "--escalation", "none", "--tradeoff", "t")
+        self.brief("review", *flags)                                           # round 1: a real round
+        self.assertNotIn("orch: next work", self.last_out)
+        self.brief("security", *flags)                                          # security round 1
+        self.assertNotIn("orch: next work", self.last_out)
+        self.cmd_ok("journal", "review_round", "reviewer=code", "round:=1", "blockers:=0", "should_fix:=1", "nits:=0",
+                    "verdict=findings")
+        self.commit(self.wt, "fix.txt", "x\n")
+        path, _ = self.brief("review", "--check", *flags)                       # a check resumes the code reviewer
+        self.assertIn("--- reused code-reviewer: SendMessage unchanged instead ---\norch: next work \u2014 brief %s\n" % path,
+                      self.last_out)
+        self.assertEqual(self.last_out.count("orch: next work"), 1)
+        self.cmd_ok("journal", "review_round", "reviewer=code", "round:=1", "blockers:=0", "should_fix:=0", "nits:=0",
+                    "verdict=pass", "check:=true")
+        self.commit(self.wt, "fix2.txt", "x\n")
+        self.brief("review", "--round", "2", *flags)                            # a real round 2: never resumed
+        self.assertNotIn("orch: next work", self.last_out)
+        path, _ = self.brief("security", "--round", "2", *flags)                # security round 2 resumes
+        self.assertIn("--- reused security-reviewer: SendMessage unchanged instead ---\norch: next work \u2014 brief %s\n" % path,
+                      self.last_out)
+
     def test_tradeoff_collapses_to_one_line(self):
         self.brief("implement", "1", "--tier", "sonnet/high", "--escalation", "none", "--tradeoff", "a\nb  c")
         self.assertIn("tradeoff: a b c\n", self.prompt(self.last_out) + "\n")

@@ -791,6 +791,43 @@ class TestReuse(FlowBase):
         argv, env = self.reuse("2026-03-01T10:05Z")
         self.assertIn("no returned implementer", self.refuse(1, *argv, env=env))
 
+    def reviewer_first(self, role, agent, tier="opus/high"):
+        self.ok("spawn", role, "--agent", agent, "--tier", tier, env=self.at("2026-03-01T10:00Z"))
+        self.ok("return", role, "--outcome", "done", env=self.at("2026-03-01T10:10Z"))
+
+    def test_a_warm_reviewer_is_reused_and_its_return_is_journaled_normally(self):
+        for role, agent in (("code-reviewer", "orch-code-reviewer"), ("security-reviewer", "orch-security-reviewer")):
+            self.setUp()
+            self.reviewer_first(role, agent)
+            self.ok("spawn", role, "--agent", agent, "--tier", "opus/high", "--reused", env=self.at("2026-03-01T11:05Z"))
+            spawn = [r for r in self.journal() if r["kind"] == "spawn"][-1]
+            self.assertEqual((spawn["role"], spawn["reused"]), (role, True))
+            self.ok("return", role, "--outcome", "done", env=self.at("2026-03-01T11:30Z"))
+            ret = [r for r in self.journal() if r["kind"] == "return"][-1]
+            self.assertEqual((ret["role"], ret["outcome"], ret["agent"]), (role, "done", agent))
+
+    def test_a_reviewer_refusal_names_the_role_and_writes_nothing(self):
+        self.reviewer_first("code-reviewer", "orch-code-reviewer")
+        before = self.snapshot()
+        err = self.refuse(1, "spawn", "code-reviewer", "--agent", "orch-code-reviewer", "--tier", "opus/high", "--reused",
+                          env=self.at("2026-03-01T11:06Z"))
+        self.assertIn("idle", err)
+        err = self.refuse(1, "spawn", "code-reviewer", "--agent", "orch-code-reviewer", "--tier", "sonnet/high", "--reused",
+                          env=self.at("2026-03-01T10:20Z"))
+        self.assertIn("last code-reviewer ran at opus/high", err)
+        err = self.refuse(1, "spawn", "security-reviewer", "--agent", "orch-security-reviewer", "--tier", "opus/high",
+                          "--reused", env=self.at("2026-03-01T10:20Z"))
+        self.assertIn("no returned security-reviewer", err)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_every_other_role_is_refused(self):
+        from orchlib import flow
+        for role in ("planner", "plan-reviewer", "director", "implementer:part-a", "reviewer"):
+            journal = [{"kind": "spawn", "role": role, "tier": "opus/high"},
+                       {"kind": "return", "role": role, "outcome": "done", "ts": "2026-03-01T10:10Z"}]
+            self.assertIn("implementer, code-reviewer, security-reviewer",
+                          flow.reuse_refusal(journal, role, "opus/high", "2026-03-01T10:20Z", None))
+
     def test_another_milestone_is_refused(self):
         from orchlib import flow
         journal = [{"kind": "spawn", "role": "implementer", "tier": "sonnet/high", "milestone": 1},
