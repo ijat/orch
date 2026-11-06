@@ -8,7 +8,7 @@ import shutil
 from .paths import OrchError, require_write_allowed, tilde, write_atomic
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE = os.path.join(HERE, "claude-md-block.md")
+TEMPLATE = os.path.join(os.path.dirname(os.path.dirname(HERE)), "skills", "orchestrate", "templates", "claude-md-block.md")
 BEGIN = "<!-- orch:begin"
 END = "<!-- orch:end"
 HEADING_RE = re.compile(r"^(#{1,6})\s")
