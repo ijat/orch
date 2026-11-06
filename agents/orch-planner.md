@@ -281,6 +281,11 @@ Every step in `plan.md` carries a **contract**: the interfaces, invariants, edge
 test cases it must satisfy. The contract is binding — it's what the implementer stops on and what
 the reviewer checks against — so state only what you verified or are prepared to defend.
 
+A step's `done when` names that step's own targeted checks, never the whole gate: the orchestrator runs the
+gate beside review, and `orch plan-check` warns on a `done when` that asks for it. Add a `full-gate: <why>`
+field only where a step truly must run the whole gate itself (for example, the step changes the gate); it is
+the one thing that lets the implementer run it.
+
 For the few steps where a first attempt is likely to go wrong (algorithm core, concurrency protocol,
 delicate state change), also write a **sketch** at `<task-dir>/sketches/step-<N>.md` from
 `~/.claude/skills/orchestrate/templates/sketch.md`: pseudocode for the hard part plus the traps you expect. You can't compile or run

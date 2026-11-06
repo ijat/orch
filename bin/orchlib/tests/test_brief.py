@@ -66,8 +66,8 @@ class BriefBase(GitBase):
 
     def brief(self, *args, **kw):
         out, err = self.cmd_ok("brief", *args)
+        self.last_out, self.last_err = out, err
         lines = out.strip().splitlines()
-        self.assertEqual(len(lines), 2, out)
         self.assertTrue(re.match(r"^brief \d+\.\d KB vs plan \d+\.\d KB$", lines[1]), lines[1])
         return lines[0], rd(lines[0])
 
@@ -78,6 +78,52 @@ class BriefBase(GitBase):
 
     def put_plan(self, text):
         wr(os.path.join(self.d, "plan.md"), text)
+
+
+class TestSpawnPrompt(BriefBase):
+    def prompt(self, out):
+        m = re.search(r"^--- spawn prompt \(send unchanged\) ---\n(.*?)\n--- (?:reused|end)", out, re.M | re.S)
+        self.assertTrue(m, out)
+        return m.group(1)
+
+    def test_every_kind_prints_the_prompt(self):
+        flags = ("--tier", "sonnet/high", "--escalation", "none", "--tradeoff", "sonnet/high: default; new logic")
+        for args in (("implement", "1"), ("director", "1"), ("review",), ("security",)):
+            path, _ = self.brief(*(args + flags))
+            lines = self.last_out.splitlines()
+            self.assertEqual(lines[0], path)
+            self.assertTrue(re.match(r"^brief \d+\.\d KB vs plan \d+\.\d KB$", lines[1]), lines[1])
+            self.assertEqual(self.prompt(self.last_out),
+                             "tier: sonnet/high\nescalation: none\ntradeoff: sonnet/high: default; new logic\n\n"
+                             "Your whole context is this brief: %s" % path)
+            self.assertEqual(self.last_err, "", args)
+
+    def test_no_operating_instruction(self):
+        path, _ = self.brief("implement", "1", "--tier", "sonnet/high", "--escalation", "none", "--tradeoff", "t")
+        body = self.last_out.split("\n", 2)[2].replace(path, "<path>").lower()
+        for word in ("test", "gate", "suite", "commit", "lint", "run "):
+            self.assertNotIn(word, body, word)
+
+    def test_missing_values_are_placeholders_with_a_note(self):
+        self.brief("implement", "1")
+        body = self.prompt(self.last_out)
+        self.assertIn("tier: <tier>\nescalation: <escalation>\ntradeoff: <tradeoff>", body)
+        self.assertEqual(len(self.last_err.strip().splitlines()), 1, self.last_err)
+        self.assertIn("--tier, --escalation, --tradeoff", self.last_err)
+        self.brief("implement", "1", "--tier", "sonnet/high")
+        self.assertIn("tier: sonnet/high\nescalation: <escalation>", self.prompt(self.last_out))
+        self.assertNotIn("--tier", self.last_err)
+
+    def test_reused_form_for_implement(self):
+        path, _ = self.brief("implement", "1", "--tier", "sonnet/high", "--escalation", "none", "--tradeoff", "t")
+        self.assertIn("\norch: next work \u2014 brief %s\n" % path, self.last_out)
+        self.assertEqual(self.last_out.count("orch: next work"), 1)
+        path, _ = self.brief("review", "--tier", "opus/high", "--escalation", "none", "--tradeoff", "t")
+        self.assertNotIn("orch: next work", self.last_out)
+
+    def test_tradeoff_collapses_to_one_line(self):
+        self.brief("implement", "1", "--tier", "sonnet/high", "--escalation", "none", "--tradeoff", "a\nb  c")
+        self.assertIn("tradeoff: a b c\n", self.prompt(self.last_out) + "\n")
 
 
 class TestImplementBrief(BriefBase):
@@ -868,6 +914,11 @@ class TestFixBrief(BriefBase):
         BriefBase.setUp(self)
         wr(os.path.join(self.d, "review.md"), self.REVIEW.replace("@R@", self.repo))
         wr(os.path.join(self.d, "security-review.md"), self.SECURITY.replace("@R@", self.repo))
+
+    def test_prints_spawn_prompt_and_reused_line(self):
+        path, _ = self.brief("fix", "1", "--findings", "F1", "--tier", "sonnet/high", "--escalation", "none", "--tradeoff", "t")
+        self.assertIn("tier: sonnet/high\nescalation: none\ntradeoff: t\n\nYour whole context is this brief: %s" % path, self.last_out)
+        self.assertIn("\norch: next work \u2014 brief %s\n" % path, self.last_out)
 
     def test_named_findings_verbatim_and_their_steps(self):
         path, text = self.brief("fix", "1", "--findings", "F1,S1")
