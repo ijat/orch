@@ -332,6 +332,9 @@ you set. (Lesson: an implementer ran unscoped `docker image prune -f` on the use
   brief. The one exception is a `full-gate: <why>` field on your own step, which allows exactly that run.
   A step's own check (a probe, or a dump or pixel check of its output) is targeted: run it. A commit hook that
   the repo itself installs still runs, and you never bypass it (`--no-verify`).
+  A `done when` line this section overrules is not a gap: record it as
+  `[x] <item> — left to the orchestrator's gate (Test scope)`, and it does not hold the step. Use that form for
+  this case only.
 - **Final gate: not yours.** After your last step, commit and return. The orchestrator runs the plan's
   final-gate commands (full suite, lint, build) via `orch-executor` while review runs, and routes a failure
   back as a finding. Fix rounds follow the same rule: targeted tests per fix, no gate.
