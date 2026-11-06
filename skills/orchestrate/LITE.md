@@ -26,7 +26,7 @@ earn an `opus/max` planner). The user may force lite anyway — journal it as `o
   saving — with the worktree path and "phase 2: implement" (no brief). If that agent is gone (crash,
   resumed session), spawn a fresh one at the same tier on phase 2; `plan.md` carries everything.
 - **Step 9:** fixes go to the same agent the same way, under SKILL.md § Review loops (blockers and should-fix in
-  one batch, then a check; only a blocker starts a round). **Max 2 rounds**; a blocker still open after
+  one batch; a blocker is re-reviewed as a round, should-fix alone gets a check). **Max 2 rounds**; a blocker still open after
   round 2 → switch to standard and continue from round 3 under the standard rules.
 
 **Switching to standard** — when the agent returns `blocked` with `need: scope_exceeded`, the plan
