@@ -1017,6 +1017,25 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.assertEqual(os.path.basename(path), "review-code-r2.md")
         self.assertIn("- range: %s..%s" % (one, self.tip()), text)
 
+    def test_a_check_for_an_older_round_is_refused_after_a_later_blocker_round(self):
+        self.round_one()                                       # round 1: should-fix only, journal_round default
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.set_field(review_round="1/3")
+        self.brief("review")                                   # round 2, narrow
+        self.cmd_ok("journal", "review_round", "reviewer=code", "round:=2", "blockers:=1", "should_fix:=0", "nits:=0",
+                    "verdict=findings")
+        self.commit(self.wt, "fix2.txt", "x\n")
+        self.assertIn("1 blocker(s) open", self.refused(2, "review", "--check"))
+        err = self.refused(2, "review", "--check", "--round", "1")
+        self.assertIn("round 1 is not the latest code review round (2)", err)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check.md")))
+
+    def test_a_check_for_the_latest_round_by_number_is_accepted(self):
+        self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        path, _ = self.brief("review", "--check", "--round", "1")
+        self.assertEqual(os.path.basename(path), "review-code-r1-check.md")
+
     def test_a_check_is_for_the_code_review_only(self):
         self.round_one()
         self.refused(1, "security", "--check")
@@ -1106,6 +1125,15 @@ class TestFixBrief(BriefBase):
         self.assertNotIn("### Step 10", steps)
         self.assertIn("role 'implementer' in_progress --note 'working on step(s) fix round 1'", sec(text, "Checkpoint commands"))
         self.assertIn("role 'implementer' done --step 'fix round 1'", sec(text, "Checkpoint commands"))
+
+    def test_notes_under_a_check_of_round_section_are_carried(self):
+        wr(os.path.join(self.d, "review.md"), self.REVIEW.replace("@R@", self.repo)
+           + "\n## Check of round 2\n\n- F3: not fixed — the loop is still there.\n- F2: resolved\n")
+        _, text = self.brief("fix", "1", "--findings", "F1,F3")
+        findings = sec(text, "Findings to fix")
+        self.assertIn("(Round 2) - F1: still open — the salt is a constant.", findings)
+        self.assertIn("(Check of round 2) - F3: not fixed — the loop is still there.", findings)
+        self.assertNotIn("F2: resolved", findings)
 
     def test_names_never_overwrite_and_extra(self):
         extra = os.path.join(self.tmp, "class.md")

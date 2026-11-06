@@ -646,7 +646,8 @@ def check_not_journaled(c, reviewer, rnd, check=False):
 
 def check_round(c, ns):
     """The round a fix-batch check belongs to: --round, else the latest journaled code round that is not itself a
-    check. Exit 2 when that round is not journaled."""
+    check. Exit 2 when that round is not journaled, or when --round names a round that is not the latest real one
+    (an older round's clean line would let a check follow a later round's open blocker)."""
     real = [r for r in code_lines(c) if r.get("check") is not True and type(r.get("round")) is int]
     if ns.round is not None:
         rnd = ns.round
@@ -659,6 +660,9 @@ def check_round(c, ns):
     line = [r for r in real if r["round"] == rnd]
     if not line:
         raise OrchError("--check: round %d of the code review is not journaled" % rnd, 2)
+    if rnd != real[-1]["round"]:
+        raise OrchError("--check: round %d is not the latest code review round (%d); a check follows the latest round "
+                        "only" % (rnd, real[-1]["round"]), 2)
     blockers = line[-1].get("blockers")
     if type(blockers) is int and blockers > 0:
         raise OrchError("--check: round %d left %d blocker(s) open; a blocker is re-reviewed as a round, not checked. "
@@ -795,7 +799,7 @@ def finding_blocks(path, wanted):
         found[fid] = plan.block(i, end)
     notes = dict((w, []) for w in wanted)
     for sec in plan.sections:
-        if not re.match(r"round\s+\d+", sec.norm):
+        if not re.match(r"(check of )?round\s+\d+", sec.norm):
             continue
         for s, e in pl.split_units(lines, mask, sec.start + 1, sec.end):
             text = plan.block(s, e)
