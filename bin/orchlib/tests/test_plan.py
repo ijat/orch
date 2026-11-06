@@ -365,6 +365,45 @@ class TestCheck(unittest.TestCase):
         for phrase in ("full test suite passes", "all tests pass", "the entire gate passes", "repo suite is clean"):
             self.assertEqual(len(self.gate_warns(base.replace("- done when: the views test passes.", "- done when: %s." % phrase))), 1, phrase)
 
+    def test_gate_warning_reads_the_binding_block_of_a_revised_step(self):
+        base = fixture("standard.md")
+        # a revision restating step 2 with a gate ask warns once, on the binding block
+        restated = base.replace("""- contract: sessions expire after one hour and are signed.
+- done when: `pytest tests/test_session.py` passes.""", """- contract: sessions expire after one hour and are signed.
+- done when: final gate green.""")
+        self.assertNotEqual(restated, base)
+        w = self.gate_warns(restated)
+        self.assertEqual(len(w), 1, w)
+        self.assertIn("step 2:", w[0])
+        # a revision-added step warns too
+        added = base.rstrip("\n") + """
+
+## Revision 3 — 2026-03-04
+
+- trigger: review
+
+### Step 99 — late step
+
+- size: S
+- files: /home/u/Projects/myapp/x.py
+- do: x.
+- contract: y.
+- done when: all tests pass.
+"""
+        w = self.gate_warns(added)
+        self.assertEqual(len(w), 1, w)
+        self.assertIn("step 99:", w[0])
+        # the original block's ask is superseded by a restatement: the warning follows the binding block only
+        orig_ask = base.replace("- contract: sessions expire after one hour.\n- done when: `pytest tests/test_session.py` passes.",
+                                "- contract: sessions expire after one hour.\n- done when: final gate green.")
+        self.assertNotEqual(orig_ask, base)
+        self.assertEqual(self.gate_warns(orig_ask), [])
+        # and a restatement that adds `full-gate:` over an original that asked for the gate does not warn
+        both = orig_ask.replace("- contract: sessions expire after one hour and are signed.\n- done when: `pytest tests/test_session.py` passes.",
+                                "- contract: sessions expire after one hour and are signed.\n- done when: final gate green.\n- full-gate: why")
+        self.assertNotEqual(both, orig_ask)
+        self.assertEqual(self.gate_warns(both), [])
+
     def test_full_gate_is_a_known_field(self):
         text = fixture("standard.md").replace("- done when: the views test passes.", "- done when: x.\n- full-gate: why")
         st = [s for s in pl.parse_plan(text).steps if s.id == "3"][0]
