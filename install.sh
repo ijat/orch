@@ -4,7 +4,8 @@
 #   ./install.sh --dry-run  only list what would change
 # Refuses (exit 2, in both modes, before listing or writing anything) when ~/.claude/.orch-sync exists:
 # that install is managed by scripts/sync-live.py, and this script would overwrite it.
-# It never edits settings.json. The README shows the hook and statusline entries to add yourself.
+# It never edits settings.json or CLAUDE.md. The README shows the hook and statusline entries to add yourself;
+# `orch install-instructions` writes the CLAUDE.md rules.
 set -euo pipefail
 dry=0; [ "${1:-}" = "--dry-run" ] && dry=1
 repo="$(cd "$(dirname "$0")" && pwd)"
@@ -34,5 +35,6 @@ done < <(cd "$repo" && find skills agents bin -type f -not -path '*/__pycache__/
 [ $dry = 1 ] || mkdir -p "$dest/orchestrations" 2>/dev/null || true
 echo "new $new, updated $changed, unchanged $same$([ $dry = 1 ] && echo ' (dry run)')"
 [ $changed -gt 0 ] && [ $dry = 0 ] && echo "backups of replaced files: $backup"
+[ $dry = 1 ] || echo "To have Claude offer orch and resume pending tasks unprompted: ~/.claude/bin/orch install-instructions --dry-run, then without --dry-run."
 [ $dry = 1 ] || echo "Upgrading an existing install? Run ~/.claude/bin/orch migrate --dry-run, then ~/.claude/bin/orch migrate."
 exit 0
