@@ -94,7 +94,7 @@ can be Fable-tier from the first plan); otherwise `opus/high`.
 
 **Implementer** — route every spawn (plan step, fix round, pilot, lite task) with `TIERS.md`
 § Implementer routing (first match wins; `sonnet/high` unless it routes elsewhere). On a `post-failure`
-escalation, give the new tier the prior pass's diff and notes (path in the prompt); its contract
+escalation, give the new tier the prior pass's diff and notes (their paths in the `--extra` file of its `orch brief`); its contract
 requires naming what the prior pass got wrong.
 
 Record the tier, the escalation kind and the **`tradeoff` line** (`TIERS.md`) in the spawn prompt (the role copies it
@@ -102,7 +102,9 @@ into its file's header; the planner's goes in the `plan.md` header). For every r
 (implementer, director, code and security reviewer, fix rounds) pass the three to `orch brief` (`--tier`,
 `--escalation`, `--tradeoff`) and send the spawn prompt it prints, unchanged: never a hand-written one. `--extra`
 carries facts, never test scope or gate instructions; only a step's `full-gate:` field lets the implementer run
-the gate. **Before spawning any Fable-tier
+the gate. `--extra` takes the path of a file, not inline text. Any other value a spawn needs goes in that file, and
+so into the brief: the prior pass's diff and notes paths on a `post-failure` spawn, the security-ledger path for the
+security reviewer, a peer's agent ID on a visual step. **Before spawning any Fable-tier
 agent, tell the user and say why** — it's the most expensive rung.
 
 ## Task directory
@@ -320,7 +322,7 @@ in doubt, route it through the pipeline.
 ## Security ledger
 
 `<repo-name>/security-ledger.md` holds the repo's security findings across all tasks; the reviewer owns it
-(`templates/security-ledger.md`). Give its path to every `orch-security-reviewer` spawn (it may not exist yet).
+(`templates/security-ledger.md`). Give its path to every `orch-security-reviewer` spawn (it may not exist yet), in the `--extra` file of `orch brief security`.
 
 ## Lessons learned
 
@@ -517,7 +519,7 @@ in `status.md` (row `skipped`) and journal an `override` whose `what` says "revi
 `orch brief review` writes the code reviewer's brief (worktree, the range `<base>...orch/<task-slug>` pinned
 to the tip's sha, the plan's steps, decisions and revisions, the absolute `review.md` path); spawn
 `orch-code-reviewer` with the spawn prompt `orch brief` printed, unchanged. If step 5 said it runs, `orch brief security` and spawn
-`orch-security-reviewer` the same way, with `security-review.md` and the security-ledger path. The two
+`orch-security-reviewer` the same way, with `security-review.md` and the security-ledger path (in its `--extra` file). The two
 may run concurrently.
 
 **Gate alongside review.** In the same turn, start `orch-executor` in the background on the plan's Verification
