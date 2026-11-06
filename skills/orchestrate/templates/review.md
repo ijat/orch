@@ -8,6 +8,12 @@
 
 ## Findings
 
+<!-- Severity is what the defect is, never whether rating it so would start a round:
+- blocker: must not ship. A wrong result, data loss, a security hole, or a broken contract on a normal path.
+- should-fix: a real defect that can ship for now: an edge case, a missing test for new behaviour, text that misleads.
+- nit: no behaviour change: style, naming, a stale comment.
+-->
+
 ### F1 — <one-line summary>
 - severity: blocker | should-fix | nit
 - origin: introduced | pre-existing — <blame evidence for pre-existing: commit or "on base">
