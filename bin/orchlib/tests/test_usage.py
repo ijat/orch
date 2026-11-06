@@ -228,7 +228,13 @@ class TestAnchor(Home):
 class TestAccount(Home):
     """The account rule: one account's samples only (usage.py docstring). Accounts are fake 8-char ids."""
     A, B = 'aaaaaaaa', 'bbbbbbbb'
-    R7 = 1793890800            # the 2026-11-01 log shape: both accounts share this weekly reset
+    R7 = 1793890800            # the 2026-11-01 log shape: both accounts share this weekly reset (fixed-timestamp tests only)
+
+    def setUp(self):
+        Home.setUp(self)
+        # tests that run on the current clock need a weekly reset that is still ahead of it (`_seven` ignores a past
+        # reset), so it follows the clock; R7 above belongs to the tests whose timestamps are fixed
+        self.r7 = int(self.now) + 4 * 86400
 
     def line(self, t, p5, r5, p7, r7, acct, sid=SID):
         self.log('%d %s %s %s %s %s%s' % (t, p5, r5, p7, r7, sid, '' if acct is None else ' ' + acct))
@@ -342,8 +348,8 @@ class TestAccount(Home):
 
     def test_logged_in_account_with_untagged_log_changes_nothing(self):
         r5, now = self.r5, self.now
-        self.line(now - 900, 60, r5, 50, self.R7, None)
-        self.line(now - 60, 30, r5, 5, self.R7, None)
+        self.line(now - 900, 60, r5, 50, self.r7, None)
+        self.line(now - 60, 30, r5, 5, self.r7, None)
         self.legacy('5h', r5, [(now - 30, 31)])
         before = self.est()
         self.set_acct(self.B + '-1111')
@@ -353,13 +359,13 @@ class TestAccount(Home):
 
     def test_logged_in_account_without_its_own_line_counts_nothing_else(self):
         r5, now = self.r5, self.now
-        self.line(now - 900, 60, r5, 50, self.R7, self.A)
-        self.line(now - 60, 30, r5, 52, self.R7, None)                 # untagged: not known to be B's
+        self.line(now - 900, 60, r5, 50, self.r7, self.A)
+        self.line(now - 60, 30, r5, 52, self.r7, None)                 # untagged: not known to be B's
         self.legacy('5h', r5, [(now - 30, 31)])
         self.set_acct(self.B + '-1111')
         e = self.est()
         self.assertEqual((e.p5, e.p7), (None, None))
-        self.line(now - 20, 5, r5, 3, self.R7, self.B)                # B's first line: its run starts, T = now - 20
+        self.line(now - 20, 5, r5, 3, self.r7, self.B)                # B's first line: its run starts, T = now - 20
         e = self.est()
         self.assertEqual((e.p5, e.p7), (5, 3))
 
@@ -375,32 +381,32 @@ class TestAccount(Home):
 
     def test_a_b_a_keeps_earlier_a_window(self):
         r5, now = self.r5, self.now
-        self.line(now - 900, 60, r5, 50, self.R7, self.A)
-        self.line(now - 600, 90, r5, 5, self.R7, self.B)          # B in the same window: dropped when A is newest
-        self.line(now - 60, 30, r5, 52, self.R7, self.A)
+        self.line(now - 900, 60, r5, 50, self.r7, self.A)
+        self.line(now - 600, 90, r5, 5, self.r7, self.B)          # B in the same window: dropped when A is newest
+        self.line(now - 60, 30, r5, 52, self.r7, self.A)
         e = self.est()
         self.assertEqual((e.p5, e.p7), (60, 52))
         self.assertEqual(int(e.age5), 900)
 
     def test_newest_b_drops_a_but_keeps_b(self):
         r5, now = self.r5, self.now
-        self.line(now - 900, 60, r5, 50, self.R7, self.A)
-        self.line(now - 60, 30, r5, 5, self.R7, self.B)
+        self.line(now - 900, 60, r5, 50, self.r7, self.A)
+        self.line(now - 60, 30, r5, 5, self.r7, self.B)
         e = self.est()
         self.assertEqual((e.p5, e.p7), (30, 5))
 
     def test_untagged_newest_filters_nothing(self):
         r5, now = self.r5, self.now
-        self.line(now - 900, 60, r5, 50, self.R7, self.A)
-        self.line(now - 60, 30, r5, 5, self.R7, None)
+        self.line(now - 900, 60, r5, 50, self.r7, self.A)
+        self.line(now - 60, 30, r5, 5, self.r7, None)
         self.assertEqual((self.est().p5, self.est().p7), (60, 50))
 
     def test_malformed_seventh_field_is_untagged(self):
         r5, now = self.r5, self.now
-        self.line(now - 900, 60, r5, 50, self.R7, self.A)
-        self.line(now - 60, 30, r5, 5, self.R7, 'zz')
-        self.line(now - 50, 31, r5, 5, self.R7, 'AAAAAAAA')      # upper case is not an id either
-        self.line(now - 40, 32, r5, 5, self.R7, '--------')
+        self.line(now - 900, 60, r5, 50, self.r7, self.A)
+        self.line(now - 60, 30, r5, 5, self.r7, 'zz')
+        self.line(now - 50, 31, r5, 5, self.r7, 'AAAAAAAA')      # upper case is not an id either
+        self.line(now - 40, 32, r5, 5, self.r7, '--------')
         s5, s7 = usage.load_log(self.home, with_acct=True)
         self.assertEqual([s[-1] for s in s5], [self.A, None, None, None])
         self.assertEqual(self.est().p5, 60)
@@ -408,9 +414,9 @@ class TestAccount(Home):
         self.assertEqual([len(s) for s in s5], [4, 4, 4, 4])     # default shape unchanged
 
     def test_load_log_accepts_6_and_7_fields(self):
-        self.log('%d 10 %d 20 %d s1' % (self.now - 20, self.r5, self.R7),
-                 '%d 11 %d 21 %d s2 %s' % (self.now - 10, self.r5, self.R7, self.A),
-                 '%d 12 %d 22 %d s3 %s extra' % (self.now - 5, self.r5, self.R7, self.A))
+        self.log('%d 10 %d 20 %d s1' % (self.now - 20, self.r5, self.r7),
+                 '%d 11 %d 21 %d s2 %s' % (self.now - 10, self.r5, self.r7, self.A),
+                 '%d 12 %d 22 %d s3 %s extra' % (self.now - 5, self.r5, self.r7, self.A))
         s5, s7 = usage.load_log(self.home)
         self.assertEqual([round(s[1]) for s in s5], [10, 11])
         s5, s7 = usage.load_log(self.home, with_acct=True)
@@ -438,10 +444,10 @@ class TestAccount(Home):
 
     def test_untagged_and_legacy_before_t_dropped_in_estimate(self):
         r5, now = self.r5, self.now
-        self.line(now - 1200, 70, r5, 50, self.R7, None)          # before T: A or whatever, dropped
-        self.line(now - 600, 20, r5, 10, self.R7, self.B)         # T
-        self.line(now - 500, 25, r5, 10, self.R7, None)           # after T: counted
-        self.line(now - 30, 30, r5, 10, self.R7, self.B)
+        self.line(now - 1200, 70, r5, 50, self.r7, None)          # before T: A or whatever, dropped
+        self.line(now - 600, 20, r5, 10, self.r7, self.B)         # T
+        self.line(now - 500, 25, r5, 10, self.r7, None)           # after T: counted
+        self.line(now - 30, 30, r5, 10, self.r7, self.B)
         self.legacy('5h', r5, [(now - 1100, 88), (now - 400, 33)])
         e = self.est()
         self.assertEqual(int(e.p5), 33)
@@ -454,7 +460,7 @@ class TestAccount(Home):
 
     def persisting_samples(self, acct):
         for j, p in enumerate((5, 15, 25)):
-            self.line(self.now - 900 + 60 * j, p, self.r5, 10, self.R7, acct)
+            self.line(self.now - 900 + 60 * j, p, self.r5, 10, self.r7, acct)
         self.transcript([('m1', self.r5 - 18000 + 60, OPUS, 2500000, 0)])
 
     def test_k_is_saved_per_account_and_leaves_others_alone(self):
@@ -475,10 +481,10 @@ class TestAccount(Home):
         os.makedirs(self.state, exist_ok=True)
         with open(os.path.join(self.state, 'k.json'), 'w') as fh:
             json.dump({'k': 3.0, 'windows': [[1, 3.0]], 'by_acct': {self.A: {'k': 9.0, 'windows': [[2, 9.0]]}}}, fh)
-        self.line(self.now - 30, 20, self.r5, 10, self.R7, self.B)     # no window cost: k would come from history
+        self.line(self.now - 30, 20, self.r5, 10, self.r7, self.B)     # no window cost: k would come from history
         e = self.est()
         self.assertEqual((e.k, e.k_src), (None, 'none'))
-        self.line(self.now - 20, 21, self.r5, 10, self.R7, self.A)
+        self.line(self.now - 20, 21, self.r5, 10, self.r7, self.A)
         self.assertEqual((self.est().k, self.est().k_src), (9.0, 'prev'))
 
     def test_untagged_run_keeps_by_acct_and_old_k_json_loads(self):
@@ -493,7 +499,7 @@ class TestAccount(Home):
         d['by_acct'] = {self.A: {'k': 9.0, 'windows': []}}
         with open(os.path.join(self.state, 'k.json'), 'w') as fh:
             json.dump(d, fh)
-        self.line(self.now - 5, 40, self.r5, 10, self.R7, None)
+        self.line(self.now - 5, 40, self.r5, 10, self.r7, None)
         self.transcript([('m2', self.r5 - 18000 + 120, OPUS, 2500000, 0)])
         self.est()
         self.assertEqual(self.kjson()['by_acct'], {self.A: {'k': 9.0, 'windows': []}})
