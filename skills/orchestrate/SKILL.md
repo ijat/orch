@@ -468,7 +468,9 @@ steps, sizes `S` or `M` with at most one `M`, each depending only on steps befor
 `briefs/…md`, that role's whole context: worktree, steps, the Decisions and revisions touching them,
 findings, sketch path, checkpoint commands, matching repo lessons. `orch spawn`, then spawn one
 implementer at the chosen tier with the **tier, escalation and tradeoff lines** (`TIERS.md` § Record
-it) and the brief's absolute path — not plan sections; there is no second lessons read. When a sketched
+it) and the brief's absolute path — not plan sections; there is no second lessons read. Send the spawn prompt
+`orch brief` printed unchanged (pass `--tier`, `--escalation` and `--tradeoff` to it); `--extra` carries facts,
+never test scope or gate instructions (only a step's `full-gate:` field lets the implementer run the gate). When a sketched
 step completes, read the implementer's `sketch-followed` / `sketch-deviation` note in `notes.md` and
 journal a `sketch` line. When a `haiku/*` spawn returns, read its `contract-check` (`orch return` prints
 it) before anything else; a gap re-routes the step (`TIERS.md` § Haiku gate). A `brief-gap:` note in
@@ -477,7 +479,7 @@ it) before anything else; a gap re-routes the step (`TIERS.md` § Haiku gate). A
 **Reuse while the cache is warm.** For the next implementer work in a milestone (a step, a batch or a fix round),
 if you hold the last implementer's agent ID, first try `orch spawn implementer --reused …` at the routed tier. It
 refuses, writing nothing, unless that implementer returned `done` within 55 minutes, in this milestone, at the same
-tier, and the tier isn't `haiku/*`. Accepted → `SendMessage` it `orch: next work — brief <absolute path>` instead of
+tier, and the tier isn't `haiku/*`. Accepted → `SendMessage` it `orch: next work — brief <absolute path>` (the line `orch brief` printed, unchanged) instead of
 spawning. Refused → spawn fresh without `--reused`. A failed send → `orch return implementer --outcome failed`,
 then spawn fresh. Never reuse for a `visual:` step, a pilot, a parallel track or an escalation. Context growth is
 left to autocompaction.

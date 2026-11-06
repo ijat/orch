@@ -72,7 +72,11 @@
 - guide: guides/step-1.md | none  <!-- the Haiku route: TIERS.md § Implementer routing, template guide.md -->
 - pilot: <first ~5 items run alone to measure cost before the rest> | none  <!-- steps with ~20+ similar items -->
 - visual: <what the director judges by eye, and the reference> | none  <!-- only where acceptance needs eyes, not a number -->
-- done when: <how the implementer knows it worked>
+- done when: <how the implementer knows it worked: this step's own targeted checks, never the whole gate>
+
+<!-- The orchestrator runs the final gate beside review; `orch plan-check` warns on a `done when` that asks
+     for it. Rare exception: add a `full-gate: <why this step must run the whole gate>` field to the step
+     (same list form as the fields above). -->
 
 <!-- Write a sketch (template: sketch.md) only for a step where a first attempt at the implementer's
      tier is likely to go wrong: an algorithm core, a concurrency protocol, a delicate state change.
