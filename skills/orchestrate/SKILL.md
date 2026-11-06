@@ -98,7 +98,11 @@ escalation, give the new tier the prior pass's diff and notes (path in the promp
 requires naming what the prior pass got wrong.
 
 Record the tier, the escalation kind and the **`tradeoff` line** (`TIERS.md`) in the spawn prompt (the role copies it
-into its file's header; the planner's goes in the `plan.md` header). **Before spawning any Fable-tier
+into its file's header; the planner's goes in the `plan.md` header). For every role that has a brief
+(implementer, director, code and security reviewer, fix rounds) pass the three to `orch brief` (`--tier`,
+`--escalation`, `--tradeoff`) and send the spawn prompt it prints, unchanged: never a hand-written one. `--extra`
+carries facts, never test scope or gate instructions; only a step's `full-gate:` field lets the implementer run
+the gate. **Before spawning any Fable-tier
 agent, tell the user and say why** — it's the most expensive rung.
 
 ## Task directory
@@ -469,8 +473,7 @@ steps, sizes `S` or `M` with at most one `M`, each depending only on steps befor
 findings, sketch path, checkpoint commands, matching repo lessons. `orch spawn`, then spawn one
 implementer at the chosen tier with the **tier, escalation and tradeoff lines** (`TIERS.md` § Record
 it) and the brief's absolute path — not plan sections; there is no second lessons read. Send the spawn prompt
-`orch brief` printed unchanged (pass `--tier`, `--escalation` and `--tradeoff` to it); `--extra` carries facts,
-never test scope or gate instructions (only a step's `full-gate:` field lets the implementer run the gate). When a sketched
+`orch brief` printed, unchanged (§ Tier selection says how); `--extra` carries facts only. When a sketched
 step completes, read the implementer's `sketch-followed` / `sketch-deviation` note in `notes.md` and
 journal a `sketch` line. When a `haiku/*` spawn returns, read its `contract-check` (`orch return` prints
 it) before anything else; a gap re-routes the step (`TIERS.md` § Haiku gate). A `brief-gap:` note in
@@ -513,7 +516,7 @@ in `status.md` (row `skipped`) and journal an `override` whose `what` says "revi
 
 `orch brief review` writes the code reviewer's brief (worktree, the range `<base>...orch/<task-slug>` pinned
 to the tip's sha, the plan's steps, decisions and revisions, the absolute `review.md` path); spawn
-`orch-code-reviewer` with its path. If step 5 said it runs, `orch brief security` and spawn
+`orch-code-reviewer` with the spawn prompt `orch brief` printed, unchanged. If step 5 said it runs, `orch brief security` and spawn
 `orch-security-reviewer` the same way, with `security-review.md` and the security-ledger path. The two
 may run concurrently.
 
@@ -529,8 +532,8 @@ should-fix (security: and 0 nits):
 
 ### 9. Fix / re-review — max 3 rounds
 
-1. Route findings to an implementer as concrete fixes (`orch brief fix <round> --findings F1,F2`; `S<n>` for
-   security findings), at the tier `TIERS.md` § Fix rounds gives
+1. Route findings to an implementer as concrete fixes (`orch brief fix <round> --findings F1,F2`, with `--tier`, `--escalation` and `--tradeoff`, and send the
+   spawn prompt it printed, unchanged; `S<n>` for security findings), at the tier `TIERS.md` § Fix rounds gives
    (`sonnet/high` whoever wrote the code, unless the fix itself carries an Opus signal; an exact-edit list may go to Haiku; a
    class raised again in round 2 moves up a rung). When a finding is one instance of a class
    (state reset, validation, cleanup), name the whole class and the invariant the fix must keep, in
