@@ -455,30 +455,29 @@ statusline input only on Pro/Max plans.
 ### Make Claude use it without being asked
 
 Installing the skill isn't enough on its own: Claude loads a skill only when your request matches its
-description, so in practice it runs when you say "orchestrate". To have Claude raise it itself, add this
-to `~/.claude/CLAUDE.md` (loaded in every session):
+description, so in practice it runs when you say "orchestrate". To have Claude offer it, and take over
+pending work when you say "resume" or "continue", install the rules into `~/.claude/CLAUDE.md`
+(loaded in every session):
 
-```markdown
-## Orchestration mode — offer it before non-trivial work
-
-- Before a new feature, a bugfix or refactor spanning several files, or anything that would warrant a
-  written plan: offer me orchestration mode (standard; lite for small, low-risk tasks; interactive to
-  plan it with me in this session) or normal single-session mode. Recommend one, let me pick, ask
-  once, then get on with it.
-- Don't offer it for questions, read-only research, trivial edits, or when I already chose the approach.
-- If I pick it, load the `orchestrate` skill and follow it. Orchestration tasks run in a git worktree
-  by default: choosing the mode is the request.
+```bash
+~/.claude/bin/orch install-instructions --dry-run   # print the diff
+~/.claude/bin/orch install-instructions             # write it, with a backup beside the file
 ```
 
-To skip the question, replace the first bullet with "When a task would warrant orchestration mode, use
-it without asking first." To make planning together the default, end it with "Recommend interactive
-mode when the task needs a real plan."
+The rules go in a marked block, so a re-run updates them and `--uninstall` removes them; your other text
+is left alone. Edits inside the block are lost on a re-run. If the file already has hand-written orch
+rules, the command refuses rather than duplicate them: check `--dry-run --replace-existing`, then run with
+`--replace-existing` to swap them for the block.
 
 ## Use
 
 Say "orchestrate this" (or "lite mode" for a small task, or "orchestrate interactive" to plan it with
 the session) and describe the work. Task files go to
 `~/.claude/orchestrations/<repo>/<task>/`.
+
+To pick work back up, open a session in the repo or its worktree and say "resume". `orch current` finds the
+task for that directory: one task resumes at once; a stale task, several tasks, or one another session may be running comes back
+as a question.
 
 To watch your tasks, run `orch dashboard --serve` (add `--port N` to change the port, `--open` to open
 a browser). It serves a read-only page on `127.0.0.1:8765` and writes nothing. `orch dashboard --json`
