@@ -72,8 +72,8 @@ Weigh these for every non-default choice:
 - **Ability:** can this model do the task at all? Haiku is for lookups, running commands, and small
   implementation steps whose every contract item a command checks (measured 2026-10-21: equal to
   Sonnet there; in real repos it skips the items no test checks); not design. Sonnet handles most
-  implementation. Opus handles ambiguous design and hard debugging. Fable is for the cases Opus
-  already failed or is likely to.
+  implementation. Opus handles ambiguous design and hard debugging. Fable is for the cases an `opus/max`
+  pass already failed, or that the user asks for.
 - **Performance / urgency:** is the user waiting? Fable turns can run for minutes, and `max` effort
   is slower than `high`. If the user said it's urgent, prefer a faster tier and say what that risks.
 - **Cost:** check `orch usage` first. At `WARN` stay on or below the default tier
@@ -83,7 +83,7 @@ Weigh these for every non-default choice:
   categories than Sonnet 5.5, so it is the safer choice for security tooling. Context is 1M on every model, so it never
   decides the choice.
 - **Escalation history:** a `post-failure` escalation moves up a rung, never sideways (implementer exceptions: an exact-edit fix list, and fix rounds, which are routed fresh — § Fix rounds). Never jump
-  from the default straight to Fable (`SKILL.md`; implementer ladder below).
+  from the default straight to Fable (`SKILL.md`; implementer ladder below); Fable follows a failed `opus/max` pass on the same work, or the user's request, and nothing else.
 
 ## Typical choices
 
@@ -93,9 +93,9 @@ Weigh these for every non-default choice:
 | Clear task, well-trodden design | planner `opus/high` (default) | — |
 | Small, unambiguous task | planner `opus/medium` or `sonnet/high` | fewer alternatives explored; not for anything sensitive |
 | Ambiguous, cross-cutting, high blast radius | planner `opus/max` | slower, more tokens |
-| Critical / irreversible / failed at `opus/max` | planner `fable/max` | 2.5× Opus cost, minutes-long turns; tell the user |
+| A plan written at `opus/max` failed on its design (`post-failure`), or the user asks | planner `fable/max` | 2.5× Opus cost, minutes-long turns; tell the user. Never a first plan |
 | Plan review (roadmap or `opus/max` plan) | plan reviewer `sonnet/high`; `opus/medium` if any milestone is sensitive | depth — it checks four questions, it doesn't re-plan |
-| Review of a large or sensitive diff | reviewer `opus/xhigh` or `fable/high` | cost; tell the user if Fable |
+| Review of a large or sensitive diff | reviewer `opus/xhigh` (Fable only after an `opus/max` review failed, or on the user's request) | cost; tell the user if Fable |
 
 ## Implementer routing
 
@@ -118,7 +118,6 @@ run, plus a fix pass). So Haiku gets only the steps its gate admits.
 |---|---|---|
 | `lite` | the brief says `mode: lite` | `status.md` |
 | `history` | this work (the step, or the code a fix touches) already ran and failed: a routed review finding, `blocked: stuck`, a looping check-in, a `[ ]` in its `contract-check` | `review.md`, `status.md`, `notes.md` |
-| `ceiling` | the planner names `fable/*` for the step, with a reason | plan Summary `implementer tier:`, the step |
 | `flag` | the planner flags the step as a concurrency protocol, a complex or performance-sensitive algorithm, or a delicate state change (persisted format, migration, irreversible op), or names `opus/*` for it **with one of those reasons**; a roadmap row's tier is the planner's budgeting estimate and never a flag (each step is routed from the milestone's `plan.md`), and "sensitive" or "security" alone is not a flag reason | plan Summary, the step, Risks |
 | `boundary` | the step implements security-bound logic: an authn/authz decision, crypto/key/token handling, parsing or deserializing untrusted input, a sandbox or permission check, credential-bearing deploy config | step 5 list + the step's `do:` |
 | `sensitive` | the step's files are in a sensitive area, boundary or not | plan `sensitive areas:`, Files touched |
@@ -143,7 +142,7 @@ ones), or brief length on its own (clean up to 1,104 words when every item was c
 
 1. `lite` → `opus/medium` (it must plan as well as code); `opus/high` at the edge of lite eligibility (the eligibility check passed but you recorded a caveat: an open design choice, a borderline file count, or a near-sensitive area). Never Haiku (unmeasured at planning) or Fable (that need means standard mode). [observed: 12 lite tasks, 0.5 review rounds on average]
 2. `history` → § Escalation ladder.
-3. `ceiling` → `fable/high`; tell the user first. [current rule]
+3. *(retired 2026-11-06: a planner can no longer route a step to Fable. Fable comes only from the § Escalation ladder or the user's request.)*
 4. `flag`, `unknown_cause` or `refusal` → `opus/medium` (`proactive`). `boundary` alone → `sonnet/high`: the security review is due on it (SKILL.md step 5), and that review, not the writer's tier, is the security check. `boundary` when the user declined a due security review → `opus/high`. [judgment since 2026-10-28; was `opus/medium`]
 5. `guide`, with G1 and G6 holding → `haiku/high`. The guide replaces G2–G5: size, unchecked items, prose and brief length don't bar a guided step. [measured 2026-10-28, see § Guided Haiku]
 6. The Haiku gate passes → `haiku/medium`. [measured]
@@ -189,7 +188,7 @@ When a Haiku spawn returns `done`, read its `contract-check` in `notes.md` befor
 
 ### Fix rounds, pilots, visual and parallel steps
 
-- **Fix rounds** start at `sonnet/high` whatever tier wrote the code — no writer floor. They go to
+- **Fix rounds** (one batch per review, SKILL.md § Review loops) start at `sonnet/high` whatever tier wrote the code — no writer floor. They go to
   `opus/medium` only when the fix itself carries a `flag` (it changes the concurrency protocol, the
   algorithm or the state change the step was flagged for, not a rename or a log line beside it),
   `unknown_cause` (the finding's cause must be found), or `refusal`, or by the ladder: a class already
@@ -201,7 +200,7 @@ When a Haiku spawn returns `done`, read its `contract-check` in `notes.md` befor
   on code Haiku didn't write, with G1 and G6 holding — may go to `haiku/medium`. [judgment]
 - Code Haiku wrote that gets any routed finding → `sonnet/high` (`post-failure`).
 - A round-2 finding in a class already raised in round 1 → the next rung (`post-failure`,
-  `review_pattern`). After round 3, SKILL.md step 9.
+  `review_pattern`). At the cap, SKILL.md step 9 and § Review loops.
 - **Pilots:** a mechanical step that passes the Haiku gate and whose items each have their own check pilots at `haiku/medium`. It
   continues at `haiku/medium`, in spawns of ≤ ~10 items, only if the pilot passed its gates with
   every `contract-check` line `[x]`; otherwise offer the retier to `sonnet/high` at the pilot gate. Other pilots run
@@ -212,8 +211,7 @@ When a Haiku spawn returns `done`, read its `contract-check` in `notes.md` befor
 
 ### Escalation ladder
 
-`haiku/medium | haiku/high (guided) → sonnet/high → opus/medium → opus/high → fable/high` — at most one rung per failure
-(except an Opus ability failure, which goes from `opus/medium` straight to `fable/high`; see the table),
+`haiku/medium | haiku/high (guided) → sonnet/high → opus/medium → opus/high → opus/max → fable/high` — at most one rung per failure,
 never sideways or down for the same work (one exception: an exact-edit fix list, above).
 
 | Failing tier | Failure | Next | Why |
@@ -224,15 +222,16 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 | `sonnet/high` | the same class again in round 2; `stuck` where the check is right and the approach keeps failing | `opus/medium` | change model, not effort: Opus costs 2× Sonnet per token [list prices]; `sonnet/xhigh` is for the no-Opus cap [judgment] |
 | `opus/medium` | round-1 findings that are neither diligence nor ability failures (routine review findings) | fix at `opus/medium` | same as Sonnet's round 1 [current rule] |
 | `opus/medium` | diligence: an omission, an edge case the contract named, thin tests, an unverified claim — the design is right | `opus/high` | raise effort within the model [judgment] |
-| `opus/medium` | ability: the same class after the Opus pass, the wrong mechanism twice, `stuck` on a hard item | `fable/high` | tell the user first [current rule] |
-| `opus/high` | any | `fable/high` | tell the user first [current rule] |
+| `opus/medium` | ability: the same class after the Opus pass, the wrong mechanism twice, `stuck` on a hard item | `opus/high` | Fable only follows a failed `opus/max` pass (2026-11-06; was a jump to `fable/high`) [current rule] |
+| `opus/high` | any | `opus/max` | raise effort within the model before changing model [current rule 2026-11-06] |
+| `opus/max` | any | `fable/high` | tell the user first [current rule] |
 | `fable/high` | any | planner revision if the plan is the problem, else the user | no `fable/xhigh` unless the user asks [judgment] |
 
 - **A plan defect at any rung** (the contract can't hold as written) goes to a planner revision, not
   a tier raise; an environment need (sudo, a device, a denial) goes to SKILL.md's rung ladder. [current rule]
 - **Skip a rung** only when the failure reveals a signal the first routing missed: run the
   procedure again with it (a Haiku step that turned out to touch concurrency → `opus/medium`). [judgment]
-- **Fable** needs a failed Opus pass on this work or a `ceiling` flag; never from Haiku or Sonnet. [current rule]
+- **Fable** needs a failed `opus/max` pass on this work, or the user's request; never from Haiku, Sonnet or a lower Opus rung, and no planner flag or first plan starts it. [current rule]
 - Every `post-failure` pass gets the prior diff, notes and findings (SKILL.md).
 
 ### Cells
@@ -252,10 +251,10 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 | `opus/low` | excluded until benchmarked | — | — | [judgment] first candidate for the next benchmark |
 | `opus/medium` | signal tier, rung 3 of the ladder | Opus signals (`flag`, `unknown_cause`, `refusal`); lite; post-failure from `sonnet/high` | gate-passing or plain steps; `boundary` alone; routine fix rounds | [observed, reference] |
 | `opus/high` | rung 4 | diligence failure at `opus/medium`; `boundary` when the user declined a due security review; lite at the edge | before `opus/medium` has tried non-boundary work | [judgment, observed] |
-| `opus/xhigh` | cap only | no-Fable cap: one fresh pass after `opus/high` | Fable is allowed | [judgment] |
-| `opus/max` | never | — | — | [judgment] past `xhigh`, re-plan |
+| `opus/xhigh` | unused on the ladder | a user request; a reviewer tier for a large diff | as an implementer rung: the ladder goes `opus/high → opus/max` | [judgment] |
+| `opus/max` | rung 5 | a failure at `opus/high`; the no-Fable cap's last pass | before `opus/high` has tried the work; as a first route | [judgment, 2026-11-06] |
 | `fable/low`, `fable/medium` | never (benchmark candidates) | — | — | [judgment] no measured gain over Opus, and every Fable spawn needs the user told |
-| `fable/high` | ceiling rung | after a failed Opus pass on this work; a `ceiling` flag | straight from Haiku or Sonnet | [current rule] |
+| `fable/high` | last rung | after a failed `opus/max` pass on this work; the user's request | straight from Haiku, Sonnet or a lower Opus rung; a planner flag | [current rule] |
 | `fable/xhigh` | on the user's request | the user asks after `fable/high` failed and the plan holds | otherwise | [judgment] |
 | `fable/max` | never for implementers | — | — | [judgment] planner tier |
 
@@ -266,7 +265,7 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 | No Haiku, or a repo lesson such as "no cheaper tiers" | gate-passing steps, pilots and exact-edit fixes → `sonnet/high` (`sonnet/medium` is allowed at 5h WARN, not required) | [observed] |
 | No Opus (and so no Fable unless the user says otherwise) | Opus-signal steps → `sonnet/xhigh`; ladder `haiku/medium → sonnet/high → sonnet/xhigh → sonnet/max` → the user | [judgment] |
 | Sonnet only | as no Opus; gate-passing steps → `sonnet/high` (`sonnet/medium` at 5h WARN) | [measured] |
-| No Fable | the ladder ends `opus/high → opus/xhigh` (one fresh pass) → the user | [judgment] |
+| No Fable | the ladder ends `opus/high → opus/max` → the user | [judgment] |
 | Effort ceiling, e.g. ≤ medium | `haiku/medium` gated, `sonnet/medium` otherwise, `opus/medium` for signals; escalate by model only | [observed] |
 | 5h WARN, STALE or UNKNOWN | no proactive `opus/high`, except a `boundary` step whose due security review the user declined (it keeps `opus/high`; if that can't run, pause); signal steps keep `opus/medium` (the plan earned it); Fable only with the user's OK; batch fix findings; never send a step that fails the gate to Haiku for budget — pause instead | [judgment] |
 | 5h STOP | pause (SKILL.md) | [current rule] |
@@ -274,7 +273,7 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 | User waiting / urgent | no Haiku; gate-passing steps → `sonnet/high`; Opus signal steps keep Opus, and say it is slower; no `opus/high` or Fable unless earned | [measured wall time; judgment] |
 
 When a cap blocks a needed escalation, tell the user what it is costing; don't quietly break it.
-Never lower a `boundary` or `sensitive` step's tier for budget or usage pressure; pause instead. When a cap removes a tier a rule requires (a `ceiling` flag with no Fable, lite mode with no Opus, the end of an effort-ceiling ladder), ask the user with `AskUserQuestion` instead of picking a substitute.
+Never lower a `boundary` or `sensitive` step's tier for budget or usage pressure; pause instead. When a cap removes a tier a rule requires (lite mode with no Opus, the end of an effort-ceiling ladder), ask the user with `AskUserQuestion` instead of picking a substitute.
 
 ### Cost and latency
 
@@ -295,7 +294,7 @@ figures carry its harder steps. Minutes come from journal `return.duration_ms`.
 
 ### Tell the user
 
-- Before any Fable spawn: why, which pass failed (or the planner's ceiling reason), and that per
+- Before any Fable spawn: why, which `opus/max` pass failed (or that the user asked), and that per
   token it costs ~1.6–1.8× an Opus pass (more per spawn: its turns are longer), with turns that can run many minutes. [current rule]
 - At the plan gate: the per-step tier map.
 - Once, when a cap blocks an escalation or holds an Opus-signal step below Opus, with what it risks.

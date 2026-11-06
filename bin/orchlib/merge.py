@@ -341,7 +341,8 @@ def brief_problem(ctx, r):
     if type(rnd) is not int or rnd < 1:
         return "review line has no usable round, so its review brief cannot be found"
     reviewer = r.get("reviewer")
-    path = brief_path(ctx.task_dir, reviewer, rnd, ctx.program, ctx.ms if ctx.program else None)
+    path = brief_path(ctx.task_dir, reviewer, rnd, ctx.program, ctx.ms if ctx.program else None,
+                      r.get("check") is True)
     try:
         pinned = brief_header(path, rnd, ctx.program, ctx.ms if ctx.program else None)
     except OrchError as exc:
@@ -724,8 +725,10 @@ def register(add):
 
 # -- sha rules for `orch journal` ----------------------------------------------------------------
 
-def brief_path(task_dir, reviewer, rnd, program, ms):
-    name = "review-%s-m%02d-r%d.md" % (reviewer, ms, rnd) if program else "review-%s-r%d.md" % (reviewer, rnd)
+def brief_path(task_dir, reviewer, rnd, program, ms, check=False):
+    """A fix-batch check keeps its round's number and has its own brief (`...-r<N>-check.md`)."""
+    name = "review-%s-m%02d-r%d" % (reviewer, ms, rnd) if program else "review-%s-r%d" % (reviewer, rnd)
+    name += "-check.md" if check else ".md"
     return os.path.join(task_dir, "briefs", name)
 
 
@@ -810,7 +813,22 @@ def bind_sha(task_dir, status, kind, pairs, program, auto_ms):
         ms = jr.coerce(jr.load_schema(), "review_round", "milestone", *values["milestone"]) if "milestone" in values else auto_ms
         if not isinstance(ms, int) or isinstance(ms, bool):
             raise OrchError("review_round in a program needs milestone:=<n> (none resolvable from status.md)", 1)
-    path = brief_path(task_dir, reviewer, rnd, program, ms)
+    check = False
+    if "check" in values:
+        mode, raw = values["check"]
+        if mode == ":=":
+            check = jr.coerce(jr.load_schema(), "review_round", "check", mode, raw)
+        else:
+            check = {"true": True, "false": False}.get(raw.strip(), "bad")
+        if check not in (True, False, None):
+            raise OrchError("review_round check must be true or false (write check:=true)", 1)
+        check = check is True
+        rest = [p for p in rest if p[0] != "check"]
+        if check:
+            rest.append(("check", ":=", "true"))       # `check=true` and `check:=true` write the same line
+    if check and reviewer != "code":
+        raise OrchError("a fix-batch check (check=true) exists for the code review only", 1)
+    path = brief_path(task_dir, reviewer, rnd, program, ms, check)
     sha = brief_header(path, rnd, program, ms)
     if not commit_of(repo, sha):
         raise OrchError("%s: the reviewed sha %s is not a commit of %s" % (path, sha, repo), 1)

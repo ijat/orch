@@ -12,7 +12,8 @@ from . import cli
 from . import journal as jr
 from . import questions as qs
 from . import status as st
-from .paths import OrchError, TEMPLATES_DIR, TaskLock, now, refresh_index, task_names, warn_stderr, write_atomic
+from .paths import (OrchError, TEMPLATES_DIR, TaskLock, append_bytes, ends_with_newline, now, refresh_index, task_names,
+                    warn_stderr, write_atomic)
 
 ROLE_RE = re.compile(r"^[a-z][a-z0-9:_.-]*$")
 AGENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:_.-]*$")
@@ -378,6 +379,64 @@ def retro_is_template(task_dir):
     return None
 
 
+# -- follow-up ------------------------------------------------------------------------------------
+
+FOLLOW_SEVERITIES = ("should-fix", "nit")
+
+
+def follow_ups_path(task_dir):
+    return os.path.join(os.path.dirname(os.path.abspath(task_dir)), "follow-ups.md")
+
+
+def cell(text):
+    return re.sub(r"\s+", " ", text.replace("|", "/")).strip()
+
+
+def cmd_follow_up(ns, extra):
+    cli.require_write_allowed()
+    task_dir = cli.get_task(ns)
+    text = st.single_line(ns.text, "follow-up text")
+    if not text:
+        raise OrchError("follow-up text is empty", 1)
+    finding = st.single_line(ns.finding, "--finding")
+    if not finding:
+        raise OrchError("--finding is empty", 1)
+    if ns.severity not in FOLLOW_SEVERITIES:
+        raise OrchError("--severity must be one of: %s" % ", ".join(FOLLOW_SEVERITIES), 1)
+    fpath = st.single_line(ns.file, "--file") if ns.file is not None else ""
+    ts = now()
+    repo, slug = task_names(task_dir)
+    schema = jr.load_schema()
+    path = follow_ups_path(task_dir)
+    row = "| %s | %s | %s | %s | %s | %s |\n" % (ts, cell(slug), cell(finding), ns.severity, cell(fpath) or "-", cell(text))
+    with TaskLock(task_dir):
+        program, auto_ms = program_of(status_or_none(task_dir))
+        pairs = [("finding", "=", finding), ("severity", "=", ns.severity), ("file", ":=", json.dumps(fpath or None)),
+                 ("text", "=", text)]
+        rec, _ = jr.build_record(schema, "follow_up", pairs, ts, repo, slug, program, auto_ms)
+        data = jr.encode(rec)
+        if not os.path.exists(path):
+            try:
+                with open(os.path.join(TEMPLATES_DIR, "follow-ups.md"), encoding="utf-8") as fh:
+                    head = fh.read()
+            except OSError as exc:
+                raise OrchError("cannot read the follow-ups template: %s" % exc, 3)
+            try:
+                with open(path, "x", encoding="utf-8") as fh:      # exclusive: another task may have just made it
+                    fh.write(head.replace("<repo-name>", repo).rstrip("\n") + "\n")
+            except FileExistsError:
+                pass
+        append_row(path, row)
+        jr.append(os.path.join(task_dir, "journal.jsonl"), data)
+    print("follow-up %s (%s) -> %s" % (finding, ns.severity, path))
+    return 0
+
+
+def append_row(path, row):
+    prefix = b"" if ends_with_newline(path) else b"\n"
+    append_bytes(path, prefix + row.encode("utf-8"))
+
+
 def rounds_of(status):
     m = re.match(r"^\s*(\d+)\s*/", (status.get("review_round") or "") if status else "")
     return int(m.group(1)) if m else None
@@ -418,6 +477,11 @@ def digest(task_dir, outcome, rounds, final):
             out.append("security: %s (rule %s; areas %s)" % ("ran" if r.get("ran") else "skipped", r.get("rule"), ", ".join(map(str, areas)) or "-"))
     else:
         out.append("security: no auto_security line")
+    ups = [r for r in journal if kind_of(r) == "follow_up"]
+    if ups:
+        out.append("follow-ups parked: %d (%s)" % (len(ups), follow_ups_path(task_dir)))
+        for r in ups[:3]:
+            out.append("  %s %s: %s" % (r.get("finding"), r.get("severity"), cli.clip(str(r.get("text")), 70)))
     returns = [r for r in journal if kind_of(r) == "return"]
     toks = [r["tokens"] for r in returns if isinstance(r.get("tokens"), int) and not isinstance(r.get("tokens"), bool)]
     out.append("agent tokens reported: %d over %d returns (reported context sizes, not spend)" % (sum(toks), len(returns)))
@@ -491,6 +555,12 @@ def register(add):
     sp.add_argument("--tokens", type=int, default=None)
     sp.add_argument("--tool-uses", dest="tool_uses", type=int, default=None)
     sp.add_argument("--duration-ms", dest="duration_ms", type=int, default=None)
+
+    sp = add("follow-up", cmd_follow_up, "park a should-fix or nit in the repo's follow-ups.md (and a follow_up journal line)")
+    sp.add_argument("text")
+    sp.add_argument("--finding", required=True)
+    sp.add_argument("--severity", required=True, help="should-fix | nit")
+    sp.add_argument("--file", default=None)
 
     sp = add("end", cmd_end, "task_end line, final state, digest")
     sp.add_argument("outcome")

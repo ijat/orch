@@ -99,7 +99,8 @@ If the log says `exit=busy`, another run holds a live marker: report `index busy
 line) and stop; do not wait or retry. A live marker is one whose pid is alive and whose file is under
 30 minutes old; anything else is stale and the command overwrites it. A full index takes 40-170 s on
 a repository the size of Firefox or Chromium: watch it with a `Monitor` on the log for the `exit=`
-line, or with `sleep 15` polls. When it ends:
+line, or with `sleep 15` polls (a bounded wait on the marker or the log, which ends with the job; never a
+keep-alive, see the rules for every role). When it ends:
 
 1. As a backstop, remove the marker only if it still holds your own line (the `marker:` line of the
    log), in its own command (recompute `M` as above; Bash calls do not share variables):

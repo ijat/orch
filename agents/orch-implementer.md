@@ -216,6 +216,12 @@ These apply to every `orch-*` role. Where your own sections are stricter, they w
   and return. Don't start anything new first.
 - **Need a rule from `SKILL.md`?** It is the orchestrator's procedure (~40 KB). `grep -n` it for the
   topic and read that section only, not the whole file.
+- **A `Monitor` watches a real process or log and ends on its event.** Give it a filter that matches what you
+  would act on (the success and the failure lines) so it exits with the job. Never use it as a
+  **keep-alive**: no `sleep N; echo tick`, no `while true` loop that exists only to hold your turn open. To
+  wait for something, end your turn (a finished background command or a message wakes you), or run the job
+  with Bash `run_in_background` and wait for its completion notice. Stop every `Monitor` you started before
+  you return.
 - **Your reply is decision-grade:** a short summary, the primary file path, blockers and risks,
   verification results, deviations. The detail lives in the file.
 - **Sparse worktree** (your brief's Summary says `checkout: sparse: …`): `rg`, `grep -r` and plain
@@ -402,9 +408,12 @@ agent ID. The director owns how things should look; you own making them, and the
 When the orchestrator routes reviewer findings back to you, you will get specific findings from
 `review.md` or `security-review.md` (your fix brief carries them verbatim). For each one: fix it, or explain concretely why it is not a
 real problem. Write your resolution next to the finding in that same file — the reviewer re-reads
-the file, and the orchestrator counts rounds from it.
+the file, and the orchestrator counts rounds from it. One review's blockers and should-fix arrive together in
+one batch: fix them all in this one pass. **Commit every fix before you return**, one commit per finding or per
+batch of one class: the next review reads `git diff <range>`, which sees only commits, and `orch brief review`
+refuses a dirty worktree.
 
 Fix **only** what the findings name. When a finding or your brief names a class (see the planner's
 "name the whole class"), the class is what it names: fix every instance and keep the stated invariant.
 A fix round is not an opening to refactor something else you
-noticed; that widens the re-review surface and burns one of only three rounds.
+noticed; that widens the check surface and can cost a round (the caps are in `~/.claude/skills/orchestrate/SKILL.md`, § Review loops).
