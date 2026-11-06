@@ -29,7 +29,8 @@ says so; each milestone adds its own dirs with `sparse-checkout add`.
    `checker`.
 3. **Plan reviewer.** Spawn `orch-plan-reviewer` (default `sonnet/high`; `opus/medium` if any
    milestone is sensitive) with the roadmap path, repo path, and `plan-review.md` path. `blocker`
-   findings → one planner revision → re-run the checker and re-review only what changed. Journal
+   findings → one planner revision → re-run the checker and re-review only what changed; at most 3 passes in all
+   (SKILL.md § Review loops), then the open blockers park as a question. Journal
    `plan_review`.
 4. **Security decision** (SKILL.md step 5 rule) for every milestone, once, at this gate: one line each,
    `orch journal auto_security milestone:=<N> areas:='[…]' ran:=true rule=step5` (`ran:=false` for a skip).
@@ -64,9 +65,9 @@ reason — every time (`orch merge` reads the row, so last milestone's value mus
 4. **If the row is a review point:** (a `skip` row is not one — no reviewer runs) code review (plus security review where the step 5 rule scheduled it)
    over `git diff <reviewed_through>..HEAD` — every milestone since the previous review point.
    Brief the reviewers with that range (`orch brief review` — it defaults to `<reviewed_through>..<tip>`
-   once `reviewed_through` is a sha; `--range A..B` overrides) and the milestone plans it spans; `review.md` goes in the review-point milestone's dir. Fix rounds and the
-   round-3 stop are SKILL.md step 9, per review point, under the standard rules even when a spanned
-   milestone ran lite. Journal `review_point`; on pass set `reviewed_through` to HEAD
+   once `reviewed_through` is a sha; `--range A..B` overrides) and the milestone plans it spans; `review.md` goes in the review-point milestone's dir. Fix batches, checks, the
+   round caps and the round-3 stop are SKILL.md step 9 and § Review loops, per review point, under the standard rules even when a spanned
+   milestone ran lite (a check's range starts at the last reviewed sha in this milestone's journal lines). Journal `review_point`; on pass set `reviewed_through` to HEAD
    (`orch set reviewed_through=<sha>`).
 5. **Re-plan check** at each review point (§3).
 6. **If the row is a merge point:** SKILL.md step 10 — the sensitivity re-check, the final gate, then

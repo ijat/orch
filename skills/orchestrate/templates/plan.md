@@ -1,7 +1,7 @@
 # Plan: <task-slug>
 
-- tier: <model>/<effort> (e.g. opus/high, opus/max, fable/max)
-- tradeoff: <the orchestrator's one-line tier tradeoff, verbatim; for fable say proactive or post-failure>
+- tier: <model>/<effort> (e.g. opus/high, opus/max; fable/max only after a failed opus/max plan or on the user's request)
+- tradeoff: <the orchestrator's one-line tier tradeoff, verbatim; for fable say post-failure and which opus/max plan failed, or that the user asked>
 - repo: /abs/path
 - base branch: <branch>
 - planned at: <UTC>
