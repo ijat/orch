@@ -200,7 +200,8 @@ def cmd_spawn(ns, extra):
 
 # -- reuse ---------------------------------------------------------------------------------------
 
-REUSE_IDLE_MIN = 55    # stay inside the implementer's 1 h prompt cache
+REUSE_IDLE_MIN = 55    # stay inside the 1 h prompt cache (documented for the implementer; the reviewers assume the same)
+REUSE_ROLES = ("implementer", "code-reviewer", "security-reviewer")
 
 
 def minutes_between(a, b):
@@ -211,9 +212,9 @@ def minutes_between(a, b):
 
 
 def reuse_refusal(journal, role, tier, ts, milestone):
-    """Why the last implementer can't take the next work, or None when it can."""
-    if role != "implementer":
-        return "only the implementer role is reused"
+    """Why the last returned `role` can't take the next work, or None when it can."""
+    if role not in REUSE_ROLES:
+        return "only the %s roles are reused" % ", ".join(REUSE_ROLES)
     if tier.startswith("haiku/"):
         return "haiku tiers are not reused"
     spawn = ret = None
@@ -223,13 +224,13 @@ def reuse_refusal(journal, role, tier, ts, milestone):
         elif rec.get("role") == role and kind_of(rec) == "return":
             ret = rec
     if spawn is None or ret is None:
-        return "no returned implementer to reuse"
+        return "no returned %s to reuse" % role
     if ret.get("outcome") != "done":
-        return "the last implementer returned %s" % (ret.get("outcome") or "no outcome")
+        return "the last %s returned %s" % (role, ret.get("outcome") or "no outcome")
     if spawn.get("tier") != tier:
-        return "the last implementer ran at %s" % spawn.get("tier")
+        return "the last %s ran at %s" % (role, spawn.get("tier"))
     if ret.get("milestone") != milestone:
-        return "the last implementer belongs to another milestone"
+        return "the last %s belongs to another milestone" % role
     try:
         idle = minutes_between(ret["ts"], ts)
     except (KeyError, TypeError, ValueError):
@@ -547,7 +548,7 @@ def register(add):
     sp.add_argument("--trigger", default=None)
     sp.add_argument("--note", default=None)
     sp.add_argument("--reused", action="store_true",
-                    help="next work goes to the last implementer by SendMessage; refused unless its cache is still warm")
+                    help="next work goes to the last implementer, code-reviewer or security-reviewer by SendMessage; refused unless its cache is still warm")
 
     sp = add("return", cmd_return, "journal a subagent return and print what it left behind")
     sp.add_argument("role")

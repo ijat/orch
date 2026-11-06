@@ -442,7 +442,10 @@ def unique_path(directory, stem):
         n += 1
 
 
-def spawn_prompt(path, ns, kind):
+REUSE_ROLES = {"implement": "implementer", "fix": "implementer"}     # brief kinds whose prompt prints a SendMessage line
+
+
+def spawn_prompt(path, ns, kind, reuse=None):
     """The complete spawn prompt for this brief, so the orchestrator sends it unchanged: tier, escalation, tradeoff and
     the brief path, nothing else (no test scope, no gate, no operating instruction). A value not given is a visible
     placeholder."""
@@ -455,19 +458,22 @@ def spawn_prompt(path, ns, kind):
     for k, v in given:
         lines.append("%s: %s" % (k, " ".join(v.split()) if v else "<%s>" % k))
     lines += ["", "Your whole context is this brief: %s" % path]
-    if kind in ("implement", "fix"):
-        lines += ["--- reused implementer: SendMessage unchanged instead ---", "orch: next work \u2014 brief %s" % path]
+    reuse = reuse or REUSE_ROLES.get(kind)
+    if reuse:
+        lines += ["--- reused %s: SendMessage unchanged instead ---" % reuse, "orch: next work \u2014 brief %s" % path]
     lines.append("--- end ---")
     print("\n".join(lines))
 
 
-def emit(path, text, plan_size, ns=None, kind=None):
+def emit(path, text, plan_size, ns=None, kind=None, reuse=None):
+    """Write the brief and print its path and spawn prompt. `reuse` names the role a SendMessage line is printed for
+    (implement and fix briefs: the implementer; a code check or a security round 2+: that reviewer)."""
     data = (text.rstrip("\n") + "\n").encode("utf-8", "surrogateescape")
     write_atomic(path, data, 0o644)
     print(path)
     print("brief %.1f KB vs plan %.1f KB" % (len(data) / 1024.0, plan_size / 1024.0))
     if ns is not None:
-        spawn_prompt(path, ns, kind)
+        spawn_prompt(path, ns, kind, reuse)
 
 
 # -- implement / director -----------------------------------------------------------------------
@@ -853,7 +859,8 @@ def cmd_brief_review(ns, c, reviewer):
     with TaskLock(c.task_dir):
         check_not_repinned(c, reviewer, rnd, path, sha)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        emit(path, text, c.plan_size, ns, "review" if reviewer == "code" else "security")
+        reuse = "code-reviewer" if check else "security-reviewer" if reviewer == "security" and rnd >= 2 else None
+        emit(path, text, c.plan_size, ns, "review" if reviewer == "code" else "security", reuse)
     return 0
 
 
