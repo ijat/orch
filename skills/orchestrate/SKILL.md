@@ -316,14 +316,16 @@ is written**, and the other files point here.
     **fresh round** N+1 (`orch brief review`): its range runs from round N's reviewed sha, the reviewer reads the code
     around the fixes and does not re-raise closed findings. `orch merge` refuses a blocker chain that ends on a
     check, so the fresh round cannot be skipped. A chain that only ever held should-fix passes at the clean check.
-    The fresh round counts against the round cap: one due after round 3 (lite: after round 2) follows the raising rule
-    like the tip-moved case below (Opus level or higher: raise and journal `override`; any other orchestrator:
-    `orch ask`), never silent and never skipped.
+    The fresh round counts against the round cap: one due after round 3 follows the raising rule like the tip-moved
+    case below (Opus level or higher: raise and journal `override`; any other orchestrator: `orch ask`), never silent
+    and never skipped. In lite the round cap is `LITE.md`'s switch to standard.
   - **At the cap** (check 3 still open): this cap is never raised.
     - A **blocker** open is step 9's stop: park a question (`orch ask`) whose options name the disputed or stuck
       finding; a fresh `fable/high` pass happens only if the user picks it there. After the user's answer
       (`orch answer`), whatever it chose (a further fix, or a ruling that the finding is not a defect), `orch brief review`
-      briefs round N+1 over the open blocker, range from round N's reviewed sha. Without an answer recorded after
+      briefs round N+1 over the open blocker, range from round N's reviewed sha. A ruling is written into the finding's
+      `resolution` in `review.md` and passed in the round's `--extra`, so the round N+1 reviewer sees the finding as
+      closed and does not re-raise it. Without an answer recorded after
       check 3 it refuses (exit 2), and `--check` stays refused. Round N+1 counts against the round cap.
     - Only **should-fix** open: park each with
       `orch follow-up "<text>" --finding <id> --severity should-fix --file <path>` (in `<repo-name>/follow-ups.md`, plus a
@@ -647,8 +649,8 @@ A fix-batch check (step 9) is journaled the same way with `check:=true`, `cycle:
    Name the closed findings in the brief; the reviewer doesn't re-raise them. After commits, brief round N+1
    (`orch brief security`) and resume the same reviewer for it (step 7); a refused or failed resume is a fresh
    spawn on that brief. There is no tier climb and no check chain for security.
-4. **A new round** (the fresh round after a blocker chain's passed check, any routed security finding, or a commit
-   landing after a review or check passed, § Review loops): after
+4. **A new round** (the fresh round after a blocker chain's passed check, round N+1 after the user's answer at the
+   cycle stop, any routed security finding, or a commit landing after a review or check passed, § Review loops): after
    the batch is committed, brief round N+1 (`orch brief review`; `orch brief security` for security); never re-brief round
    N — it refuses. A check never takes a round number of its own, so the next real round is N+1 whether or not checks
    came between.
@@ -658,7 +660,7 @@ A fix-batch check (step 9) is journaled the same way with `check:=true`, `cycle:
 After cycle 3 of a round with a blocker still open, **stop**: the cycle cap is never raised and you spend no pass of your own on it. Park a question (`orch ask`) whose options name the disputed or stuck finding; Fable happens only if the user picks it there. Once the user has answered (`orch answer`), `orch brief review` briefs round N+1 over the open blocker (§ Review loops, at the cap).
 
 After round 3 with a blocker (or a routed security finding) still open, **stop** — no fourth round at the same tier. The same
-stop applies when a commit awaits review after round 3 (§ Review loops, the tip-moved case) and when a fresh round is due after round 3 (a blocker chain that passed in round 3; lite: round 2): no round 4 without the
+stop applies when a commit awaits review after round 3 (§ Review loops, the tip-moved case) and when a fresh round is due after round 3 (a blocker chain that passed in round 3; in lite the round cap is `LITE.md`'s switch to standard): no round 4 without the
 raising rule, so raise the cap (Opus level or higher, journal `override`) or park a question (`orch ask`). If the open
 findings share a category (concurrency, one algorithm, one bug class), escalate the implementer tier
 for one fresh pass with the accumulated findings as its brief. If they're genuinely disputed,
