@@ -197,6 +197,9 @@ def event_words(kind, rec):
     if kind == "return":
         return "%s finished: %s" % (clean(rec.get("role")), clean(rec.get("outcome")))
     if kind == "review_round":
+        if rec.get("check") is True:        # a fix-batch check is not a round
+            return "%s review check of round %s: %s" % (clean(rec.get("reviewer")), clean(rec.get("round"), 12),
+                                                        clean(rec.get("verdict")))
         return "%s review round %s: %s" % (clean(rec.get("reviewer")), clean(rec.get("round"), 12),
                                            clean(rec.get("verdict")))
     if kind == "auto_merge":

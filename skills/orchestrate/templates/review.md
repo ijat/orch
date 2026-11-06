@@ -33,12 +33,14 @@
 - a finding marked resolved, or disputed and then ruled on, is closed: never re-raise it or a
   restatement of it under a new number.
 
-A fix-batch check (a brief headed "fix-batch check") is not a round. Append instead:
+A fix-batch check (a brief headed "fix-batch check") is not a round. Append instead, headed
+"## Check of round N" for the first check and "## Check K of round N" for check K (up to 3 per round):
 
 ## Check of round N
 - reviewed at / range / verdict: ... (only the fix commits)
 - F1: fixed | not fixed — <evidence>
 - new findings continue the numbering in the same shape as above. Severity is what the defect is:
-  never rate by whether it would start a round (a blocker reopens the loop as round N+1; a should-fix is
-  parked in the repo's follow-ups file; a nit goes to the digest).
+  never rate by whether it would start a cycle or a round (a blocker or should-fix left open starts the
+  next fix-and-check cycle; after a blocker, a fresh round follows the passed check; a nit goes to the
+  digest).
 -->
