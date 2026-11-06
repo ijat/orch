@@ -198,6 +198,13 @@ When a Haiku spawn returns `done`, read its `contract-check` in `notes.md` befor
   follow the same rule; the security reviewer re-reviews the fix. One exception downward: an **exact-edit list** — at most 5 routed findings, each with `file:line` and
   a literal suggested change, none naming a class or invariant, none from the security reviewer,
   on code Haiku didn't write, with G1 and G6 holding — may go to `haiku/medium`. [judgment]
+- **Fix-and-check cycles** (up to 3 per code-review round, SKILL.md § Review loops) climb the implementer only; the
+  reviewer keeps its tier so it can be resumed. Cycle 1 is routed as above. Cycle 2 goes one rung up the ladder from
+  cycle 1's tier. Cycle 3 goes to `opus/max`, or stays there if the ladder already reached it. Cycles 2 and 3 are
+  `post-failure` fresh spawns (never resumed: SKILL.md step 7), each given the prior diff, notes and the check's
+  findings. This rule never reaches `fable/high`; Fable stays behind a failed `opus/max` pass. The cycle cap is never raised
+  (SKILL.md § Review loops): a blocker open after cycle 3 is a parked question, and Fable follows only if the user
+  picks it there. [judgment]
 - Code Haiku wrote that gets any routed finding → `sonnet/high` (`post-failure`).
 - A round-2 finding in a class already raised in round 1 → the next rung (`post-failure`,
   `review_pattern`). At the cap, SKILL.md step 9 and § Review loops.

@@ -20,6 +20,7 @@ NO_WORKTREE = ("not yet created", "unknown", "removed after merge")
 EXTRA_LIMIT = 1024 * 1024
 PRIOR_LIMIT = 20
 STAT_LIMIT = 200
+CHECK_CYCLES = 3          # fix-and-check cycles per code review round (SKILL.md, Review loops)
 GUARD_RE = re.compile(r"^(- (?:reviewed sha|round|milestone):)", re.M)
 FIX_ID_RE = re.compile(r"^[FS]\d+$")
 FALLBACK = ("Grep plan.md for the section you need (`grep -n '^#' <plan>`), read only that section, and write "
@@ -441,7 +442,10 @@ def unique_path(directory, stem):
         n += 1
 
 
-def spawn_prompt(path, ns, kind):
+REUSE_ROLES = {"implement": "implementer", "fix": "implementer"}     # brief kinds whose prompt prints a SendMessage line
+
+
+def spawn_prompt(path, ns, kind, reuse=None):
     """The complete spawn prompt for this brief, so the orchestrator sends it unchanged: tier, escalation, tradeoff and
     the brief path, nothing else (no test scope, no gate, no operating instruction). A value not given is a visible
     placeholder."""
@@ -454,19 +458,22 @@ def spawn_prompt(path, ns, kind):
     for k, v in given:
         lines.append("%s: %s" % (k, " ".join(v.split()) if v else "<%s>" % k))
     lines += ["", "Your whole context is this brief: %s" % path]
-    if kind in ("implement", "fix"):
-        lines += ["--- reused implementer: SendMessage unchanged instead ---", "orch: next work \u2014 brief %s" % path]
+    reuse = reuse or REUSE_ROLES.get(kind)
+    if reuse:
+        lines += ["--- reused %s: SendMessage unchanged instead ---" % reuse, "orch: next work \u2014 brief %s" % path]
     lines.append("--- end ---")
     print("\n".join(lines))
 
 
-def emit(path, text, plan_size, ns=None, kind=None):
+def emit(path, text, plan_size, ns=None, kind=None, reuse=None):
+    """Write the brief and print its path and spawn prompt. `reuse` names the role a SendMessage line is printed for
+    (implement and fix briefs: the implementer; a code check or a security round 2+: that reviewer)."""
     data = (text.rstrip("\n") + "\n").encode("utf-8", "surrogateescape")
     write_atomic(path, data, 0o644)
     print(path)
     print("brief %.1f KB vs plan %.1f KB" % (len(data) / 1024.0, plan_size / 1024.0))
     if ns is not None:
-        spawn_prompt(path, ns, kind)
+        spawn_prompt(path, ns, kind, reuse)
 
 
 # -- implement / director -----------------------------------------------------------------------
@@ -571,12 +578,80 @@ def code_lines(c):
     return out
 
 
-def narrow_range(c, tip):
-    """('<last reviewed sha>..<tip>', tip), or (None, why) when there is no usable earlier code review."""
+def is_check(rec):
+    return rec.get("check") is True
+
+
+def cycle_of(rec):
+    """The fix-and-check cycle a check line closes; a line without a usable `cycle` reads as cycle 1."""
+    v = rec.get("cycle")
+    return v if type(v) is int and v >= 1 else 1
+
+
+def open_count(rec):
+    """Blockers plus should-fix still open on a review line (non-integer counts read as 0: a line that does not
+    say what is open starts no further cycle)."""
+    return sum(rec.get(k) for k in ("blockers", "should_fix") if type(rec.get(k)) is int)
+
+
+def cycles_used(checks):
+    """How many fix-and-check cycles a round's check lines used. A corrected line for the same cycle (park the findings,
+    journal that check again) replaces the earlier one: it never uses up a cycle, so count distinct cycles."""
+    return len(set(cycle_of(r) for r in checks))
+
+
+def answered_after(c, ts):
+    """True when a question asked at or after `ts` has been answered with `orch answer` (status answered, not
+    withdrawn or assumed). Timestamps are minute-resolution UTC strings; a question asked in the same minute counts."""
+    if not isinstance(ts, str):
+        return False
+    for q in qs.load_questions(c.task_dir):
+        m = re.search(r"\bat\s+(\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?Z?)\s*$", q.fields.get("asked by", ""))
+        if q.status == "answered" and m and m.group(1) >= ts:
+            return True
+    return False
+
+
+def cap_unlocked(c, last):
+    """True when the round's cycles are spent, check 3 left a blocker open, and the user has answered a question
+    asked after that check line (D9): round N+1 may then be briefed over the open blocker."""
+    if not (is_check(last) and type(last.get("blockers")) is int and last["blockers"] > 0):
+        return False
+    if cycles_used(round_chain(c, last.get("round"))[1]) < CHECK_CYCLES:
+        return False
+    return answered_after(c, last.get("ts"))
+
+
+def round_chain(c, rnd):
+    """The journaled code lines of round `rnd`: ([real round lines], [check lines in journal order])."""
+    lines = [r for r in code_lines(c) if r.get("round") == rnd]
+    return [r for r in lines if not is_check(r)], [r for r in lines if is_check(r)]
+
+
+def fresh_round_start(c):
+    """The round line to start the fresh round from, or None. A blocker chain (round N or any of its checks held a
+    blocker) that ends on a passed check gets one fresh round N+1, read from round N's reviewed sha so the
+    reviewer sees every fix. A clean should-fix chain keeps the range from the check's sha."""
+    lines = code_lines(c)
+    if not lines or not is_check(lines[-1]):
+        return None
+    if open_count(lines[-1]) and not cap_unlocked(c, lines[-1]):
+        return None
+    real, checks = round_chain(c, lines[-1].get("round"))
+    if not real:
+        return None
+    if any(type(r.get("blockers")) is int and r["blockers"] > 0 for r in real[-1:] + checks):
+        return real[-1]
+    return None
+
+
+def narrow_range(c, tip, start=None):
+    """('<last reviewed sha>..<tip>', tip), or (None, why) when there is no usable earlier code review. `start` is
+    the journal line whose sha begins the range (default: the last code line, check lines included)."""
     lines = code_lines(c)
     if not lines:
         return None, "no earlier code review is journaled"
-    sha = lines[-1].get("sha")
+    sha = (start or lines[-1]).get("sha")
     if not isinstance(sha, str) or not merge.HEX_RE.match(sha.lower()) or not merge.commit_of(c.repo_path, sha.lower()):
         return None, "the last code review line has no usable sha"
     sha = sha.lower()
@@ -585,7 +660,7 @@ def narrow_range(c, tip):
     return "%s..%s" % (sha, tip), None
 
 
-def review_range(c, ns, tip, reviewer="code", rnd=1, check=False):
+def review_range(c, ns, tip, reviewer="code", rnd=1, check=False, start=None):
     """(range text, reviewed sha). From round 2 (and for a check) the code review covers only what changed
     since the last reviewed sha; security and round 1 keep the whole branch."""
     if ns.range:
@@ -602,7 +677,7 @@ def review_range(c, ns, tip, reviewer="code", rnd=1, check=False):
             raise OrchError("--range %s does not resolve in %s" % (ns.range, c.repo_path), 1)
         return "%s%s%s" % (left, op, sha), sha
     if reviewer == "code" and (rnd >= 2 or check):
-        rng, why = narrow_range(c, tip)
+        rng, why = narrow_range(c, tip, start)
         if rng:
             return rng, tip
         print("orch: %s; reviewing the whole range instead" % why, file=sys.stderr)
@@ -631,7 +706,7 @@ def next_round(c):
     return int(m.group(1)) + 1 if m else 1
 
 
-def check_not_journaled(c, reviewer, rnd, check=False):
+def check_not_journaled(c, reviewer, rnd, check=False, cycle=1):
     for rec in flow.read_journal(c.task_dir):
         if flow.kind_of(rec) != "review_round" or rec.get("reviewer") != reviewer or rec.get("round") != rnd:
             continue
@@ -640,15 +715,34 @@ def check_not_journaled(c, reviewer, rnd, check=False):
         if c.program and rec.get("milestone") != c.ms:
             continue
         if check:
-            raise OrchError("the fix-batch check of round %d is already journaled; a round has one check" % rnd, 2)
+            if cycle_of(rec) != cycle:
+                continue
+            raise OrchError("check %d of round %d is already journaled" % (cycle, rnd), 2)
         raise OrchError("round %d of the %s review is already journaled; brief the next round (--round %d)" % (rnd, reviewer, rnd + 1), 2)
 
 
+def cap_text(rnd, last):
+    """What to do when the round's cycles are spent and `last` (check 3) still has findings open. The cap is never raised."""
+    cycle = cycle_of(last)
+    fixed = ("journal check %d again with the parked findings not counted: `orch journal review_round reviewer=code "
+             "round:=%d check:=true cycle:=%d blockers:=0 should_fix:=0 nits:=0 verdict=pass` (the later line replaces the "
+             "earlier and uses up no cycle)" % (cycle, rnd, cycle))
+    if type(last.get("blockers")) is int and last["blockers"] > 0:
+        return ("round %d used its %d fix-and-check cycles and check %d left %d finding(s) open, a blocker among them. The "
+                "cycle cap is never raised (SKILL.md step 9): park a question for the user (`orch ask`, options naming the "
+                "stuck finding). After the user's answer (`orch answer`) `orch brief review` briefs round %d; there is no "
+                "check %d." % (rnd, CHECK_CYCLES, cycle, open_count(last), rnd + 1, CHECK_CYCLES + 1))
+    return ("round %d used its %d fix-and-check cycles and check %d left %d should-fix open. There is no check %d: park each "
+            "with `orch follow-up ... --severity should-fix`, then %s; the review then passes." % (rnd, CHECK_CYCLES, cycle, open_count(last), CHECK_CYCLES + 1, fixed))
+
+
 def check_round(c, ns):
-    """The round a fix-batch check belongs to: --round, else the latest journaled code round that is not itself a
-    check. Exit 2 when that round is not journaled, or when --round names a round that is not the latest real one
-    (an older round's clean line would let a check follow a later round's open blocker)."""
-    real = [r for r in code_lines(c) if r.get("check") is not True and type(r.get("round")) is int]
+    """(round, cycle) of the next fix-batch check: --round, else the latest journaled code round that is not itself
+    a check. A round allows CHECK_CYCLES checks; check K needs check K-1 journaled with something open, and check 1
+    needs the round itself to have something open (a blocker or a should-fix). Exit 2 when that round is not
+    journaled, or when --round names a round that is not the latest real one (an older round's clean line would let a
+    check follow a later round's open blocker)."""
+    real = [r for r in code_lines(c) if not is_check(r) and type(r.get("round")) is int]
     if ns.round is not None:
         rnd = ns.round
     elif real:
@@ -663,16 +757,20 @@ def check_round(c, ns):
     if rnd != real[-1]["round"]:
         raise OrchError("--check: round %d is not the latest code review round (%d); a check follows the latest round "
                         "only" % (rnd, real[-1]["round"]), 2)
-    blockers = line[-1].get("blockers")
-    if type(blockers) is int and blockers > 0:
-        raise OrchError("--check: round %d left %d blocker(s) open; a blocker is re-reviewed as a round, not checked. "
-                        "Brief round %d (`orch brief review`)." % (rnd, blockers, rnd + 1), 2)
-    should_fix = line[-1].get("should_fix")
-    if type(should_fix) is int and should_fix == 0:
+    checks = round_chain(c, rnd)[1]
+    last = checks[-1] if checks else line[-1]
+    blockers, should_fix = last.get("blockers"), last.get("should_fix")
+    if not (type(blockers) is int and blockers > 0) and type(should_fix) is int and should_fix == 0:
+        if checks:
+            raise OrchError("--check: check %d of round %d left nothing open, so there is nothing more to check; the "
+                            "commit after a passed check takes round %d (`orch brief review`)."
+                            % (len(checks), rnd, rnd + 1), 2)
         raise OrchError("--check: round %d routed no should-fix, so there is no fix batch to check; a commit after a "
                         "passed review is re-reviewed as a round. Brief round %d (`orch brief review`)."
                         % (rnd, rnd + 1), 2)
-    return rnd
+    if cycles_used(checks) >= CHECK_CYCLES:
+        raise OrchError(cap_text(rnd, last), 2)
+    return rnd, cycles_used(checks) + 1
 
 
 def refuse_dirty(c):
@@ -699,7 +797,7 @@ def check_not_repinned(c, reviewer, rnd, path, sha):
                         "Brief the next round (--round %d), not this one." % (rnd, reviewer, old[:9], sha[:9], rnd + 1), 2)
 
 
-def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False):
+def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fresh=False):
     plan = c.plan
     steps = plan.steps
     all_files = []
@@ -720,13 +818,19 @@ def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False):
     head.append("- diff: git diff %s" % rng)
     if check:
         head.append("- check: true")
+        head.append("- cycle: %d" % cycle)
     out = ["\n".join(head),
            "Review exactly this range. If the branch has moved past %s, say so in your review file and don't "
            "review the newer commits. Read it with the `- diff:` command above, run in the worktree." % sha]
     if check:
-        out.append("This is a check of the fix commits for round %d, not a new round. Judge whether the fixes are "
+        heading = "## Check of round %d" % rnd if cycle == 1 else "## Check %d of round %d" % (cycle, rnd)
+        out.append("This is check %d of the fix commits for round %d, not a new round. Judge whether the fixes are "
                    "right and whether they introduced a defect. Append your findings to the review file under a "
-                   "`## Check of round %d` heading; leave earlier text as it is." % (rnd, rnd))
+                   "`%s` heading; leave earlier text as it is." % (cycle, rnd, heading))
+    elif fresh:
+        out.append("This is the fresh round after a blocker. The range runs from the last real round's reviewed sha, "
+                   "so it holds every fix and check commit of that round. Read the code around the fixes, not only "
+                   "the diff hunks: the callers, the tests and what the changed lines depend on.")
     out += [
            "- worktree: %s" % (c.wt or "none (read the repo)"),
            "- branch: %s   base: %s" % (c.branch, c.base),
@@ -763,27 +867,56 @@ def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False):
     return "\n\n".join(out)
 
 
+def security_journaled(c):
+    """True when a security review_round line is journaled in this scope: only then does a security brief name a
+    reviewer to resume (the first security review, whatever its number, has none). The round number is not used: it
+    comes from the code review's counter."""
+    return any(flow.kind_of(r) == "review_round" and r.get("reviewer") == "security"
+               and (not c.program or r.get("milestone") == c.ms) for r in flow.read_journal(c.task_dir))
+
+
+def refuse_open_check(c):
+    """Round N+1 is refused while the latest check of round N left findings open: that is another fix cycle, or at the
+    cap (D8) a user decision. After check 3 left a blocker open, the user's answer (`orch answer`) opens the way (D9)."""
+    lines = code_lines(c)
+    if lines and is_check(lines[-1]) and open_count(lines[-1]):
+        last = lines[-1]
+        if cap_unlocked(c, last):
+            return
+        rnd = last.get("round")
+        if cycles_used(round_chain(c, rnd)[1]) >= CHECK_CYCLES:
+            raise OrchError(cap_text(rnd, last), 2)
+        raise OrchError("check %d of round %s left %d finding(s) open; fix them and brief the next check "
+                        "(`orch brief review --check`). A round N+1 comes after a passed check."
+                        % (cycle_of(last), rnd, open_count(last)), 2)
+
+
 def cmd_brief_review(ns, c, reviewer):
     check = bool(ns.check)
     if check and reviewer != "code":
         raise OrchError("--check belongs to the code review (orch brief review --check)", 1)
+    cycle = 1
     if check:
-        rnd = check_round(c, ns)
+        rnd, cycle = check_round(c, ns)
     else:
         rnd = ns.round if ns.round is not None else next_round(c)
     if rnd < 1:
         raise OrchError("--round must be at least 1", 1)
     if reviewer == "code":
         refuse_dirty(c)
+        if not check:
+            refuse_open_check(c)
     tip = branch_sha(c)
-    check_not_journaled(c, reviewer, rnd, check)
-    rng, sha = review_range(c, ns, tip, reviewer, rnd, check)
-    text = build_review_brief(c, ns, reviewer, rnd, rng, sha, check)
-    path = merge.brief_path(c.task_dir, reviewer, rnd, c.program, c.ms, check)
+    check_not_journaled(c, reviewer, rnd, check, cycle)
+    start = fresh_round_start(c) if reviewer == "code" and not check else None
+    rng, sha = review_range(c, ns, tip, reviewer, rnd, check, start)
+    text = build_review_brief(c, ns, reviewer, rnd, rng, sha, check, cycle, start is not None and not ns.range)
+    path = merge.brief_path(c.task_dir, reviewer, rnd, c.program, c.ms, check, cycle)
     with TaskLock(c.task_dir):
         check_not_repinned(c, reviewer, rnd, path, sha)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        emit(path, text, c.plan_size, ns, "review" if reviewer == "code" else "security")
+        reuse = "code-reviewer" if check else "security-reviewer" if reviewer == "security" and security_journaled(c) else None
+        emit(path, text, c.plan_size, ns, "review" if reviewer == "code" else "security", reuse)
     return 0
 
 
@@ -804,7 +937,7 @@ def finding_blocks(path, wanted):
         found[fid] = plan.block(i, end)
     notes = dict((w, []) for w in wanted)
     for sec in plan.sections:
-        if not re.match(r"(check of )?round\s+\d+", sec.norm):
+        if not re.match(r"(check(\s+\d+)? of )?round\s+\d+", sec.norm):
             continue
         for s, e in pl.split_units(lines, mask, sec.start + 1, sec.end):
             text = plan.block(s, e)
