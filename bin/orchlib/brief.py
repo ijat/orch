@@ -594,6 +594,34 @@ def open_count(rec):
     return sum(rec.get(k) for k in ("blockers", "should_fix") if type(rec.get(k)) is int)
 
 
+def cycles_used(checks):
+    """How many fix-and-check cycles a round's check lines used. A corrected line for the same cycle (park the findings,
+    journal that check again) replaces the earlier one: it never uses up a cycle, so count distinct cycles."""
+    return len(set(cycle_of(r) for r in checks))
+
+
+def answered_after(c, ts):
+    """True when a question asked at or after `ts` has been answered with `orch answer` (status answered, not
+    withdrawn or assumed). Timestamps are minute-resolution UTC strings; a question asked in the same minute counts."""
+    if not isinstance(ts, str):
+        return False
+    for q in qs.load_questions(c.task_dir):
+        m = re.search(r"\bat\s+(\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d)?Z?)\s*$", q.fields.get("asked by", ""))
+        if q.status == "answered" and m and m.group(1) >= ts:
+            return True
+    return False
+
+
+def cap_unlocked(c, last):
+    """True when the round's cycles are spent, check 3 left a blocker open, and the user has answered a question
+    asked after that check line (D9): round N+1 may then be briefed over the open blocker."""
+    if not (is_check(last) and type(last.get("blockers")) is int and last["blockers"] > 0):
+        return False
+    if cycles_used(round_chain(c, last.get("round"))[1]) < CHECK_CYCLES:
+        return False
+    return answered_after(c, last.get("ts"))
+
+
 def round_chain(c, rnd):
     """The journaled code lines of round `rnd`: ([real round lines], [check lines in journal order])."""
     lines = [r for r in code_lines(c) if r.get("round") == rnd]
@@ -605,7 +633,9 @@ def fresh_round_start(c):
     blocker) that ends on a passed check gets one fresh round N+1, read from round N's reviewed sha so the
     reviewer sees every fix. A clean should-fix chain keeps the range from the check's sha."""
     lines = code_lines(c)
-    if not lines or not is_check(lines[-1]) or open_count(lines[-1]):
+    if not lines or not is_check(lines[-1]):
+        return None
+    if open_count(lines[-1]) and not cap_unlocked(c, lines[-1]):
         return None
     real, checks = round_chain(c, lines[-1].get("round"))
     if not real:
@@ -691,6 +721,21 @@ def check_not_journaled(c, reviewer, rnd, check=False, cycle=1):
         raise OrchError("round %d of the %s review is already journaled; brief the next round (--round %d)" % (rnd, reviewer, rnd + 1), 2)
 
 
+def cap_text(rnd, last):
+    """What to do when the round's cycles are spent and `last` (check 3) still has findings open. The cap is never raised."""
+    cycle = cycle_of(last)
+    fixed = ("journal check %d again with the parked findings not counted: `orch journal review_round reviewer=code "
+             "round:=%d check:=true cycle:=%d blockers:=0 should_fix:=0 nits:=0 verdict=pass` (the later line replaces the "
+             "earlier and uses up no cycle)" % (cycle, rnd, cycle))
+    if type(last.get("blockers")) is int and last["blockers"] > 0:
+        return ("round %d used its %d fix-and-check cycles and check %d left %d finding(s) open, a blocker among them. The "
+                "cycle cap is never raised (SKILL.md step 9): park a question for the user (`orch ask`, options naming the "
+                "stuck finding). After the user's answer (`orch answer`) `orch brief review` briefs round %d; there is no "
+                "check %d." % (rnd, CHECK_CYCLES, cycle, open_count(last), rnd + 1, CHECK_CYCLES + 1))
+    return ("round %d used its %d fix-and-check cycles and check %d left %d should-fix open. There is no check %d: park each "
+            "with `orch follow-up ... --severity should-fix`, then %s; the review then passes." % (rnd, CHECK_CYCLES, cycle, open_count(last), CHECK_CYCLES + 1, fixed))
+
+
 def check_round(c, ns):
     """(round, cycle) of the next fix-batch check: --round, else the latest journaled code round that is not itself
     a check. A round allows CHECK_CYCLES checks; check K needs check K-1 journaled with something open, and check 1
@@ -723,12 +768,9 @@ def check_round(c, ns):
         raise OrchError("--check: round %d routed no should-fix, so there is no fix batch to check; a commit after a "
                         "passed review is re-reviewed as a round. Brief round %d (`orch brief review`)."
                         % (rnd, rnd + 1), 2)
-    if len(checks) >= CHECK_CYCLES:
-        raise OrchError("--check: round %d already had %d fix-and-check cycles and %d finding(s) are still open; the "
-                        "cap is %d cycles per round. Stop (SKILL.md step 9): park the open should-fix with "
-                        "`orch follow-up`; an open blocker stops the task." % (rnd, len(checks), open_count(last),
-                                                                              CHECK_CYCLES), 2)
-    return rnd, len(checks) + 1
+    if cycles_used(checks) >= CHECK_CYCLES:
+        raise OrchError(cap_text(rnd, last), 2)
+    return rnd, cycles_used(checks) + 1
 
 
 def refuse_dirty(c):
@@ -825,14 +867,28 @@ def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fre
     return "\n\n".join(out)
 
 
+def security_journaled(c):
+    """True when a security review_round line is journaled in this scope: only then does a security brief name a
+    reviewer to resume (the first security review, whatever its number, has none). The round number is not used: it
+    comes from the code review's counter."""
+    return any(flow.kind_of(r) == "review_round" and r.get("reviewer") == "security"
+               and (not c.program or r.get("milestone") == c.ms) for r in flow.read_journal(c.task_dir))
+
+
 def refuse_open_check(c):
-    """Round N+1 is refused while the latest check of round N left findings open: that is another fix cycle."""
+    """Round N+1 is refused while the latest check of round N left findings open: that is another fix cycle, or at the
+    cap (D8) a user decision. After check 3 left a blocker open, the user's answer (`orch answer`) opens the way (D9)."""
     lines = code_lines(c)
     if lines and is_check(lines[-1]) and open_count(lines[-1]):
         last = lines[-1]
+        if cap_unlocked(c, last):
+            return
+        rnd = last.get("round")
+        if cycles_used(round_chain(c, rnd)[1]) >= CHECK_CYCLES:
+            raise OrchError(cap_text(rnd, last), 2)
         raise OrchError("check %d of round %s left %d finding(s) open; fix them and brief the next check "
                         "(`orch brief review --check`). A round N+1 comes after a passed check."
-                        % (cycle_of(last), last.get("round"), open_count(last)), 2)
+                        % (cycle_of(last), rnd, open_count(last)), 2)
 
 
 def cmd_brief_review(ns, c, reviewer):
@@ -859,7 +915,7 @@ def cmd_brief_review(ns, c, reviewer):
     with TaskLock(c.task_dir):
         check_not_repinned(c, reviewer, rnd, path, sha)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        reuse = "code-reviewer" if check else "security-reviewer" if reviewer == "security" and rnd >= 2 else None
+        reuse = "code-reviewer" if check else "security-reviewer" if reviewer == "security" and security_journaled(c) else None
         emit(path, text, c.plan_size, ns, "review" if reviewer == "code" else "security", reuse)
     return 0
 

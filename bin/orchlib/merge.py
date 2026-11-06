@@ -851,7 +851,7 @@ def bind_sha(task_dir, status, kind, pairs, program, auto_ms):
             done = [r for r in read_journal_strict(task_dir)[0]
                     if flow.kind_of(r) == "review_round" and r.get("reviewer") == "code" and r.get("round") == rnd
                     and r.get("check") is True and (not program or norm_ms(r.get("milestone")) == ms)]
-            cycle = len(done) + 1
+            cycle = len(set(line_cycle(r) for r in done)) + 1          # a corrected line for a cycle uses up no cycle
         rest = [p for p in rest if p[0] != "cycle"] + [("cycle", ":=", str(cycle))]
     elif "cycle" in values:
         raise OrchError("review_round cycle belongs to a fix-batch check (check:=true)", 1)

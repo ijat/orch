@@ -844,7 +844,9 @@ class TestJournal(Base):
             if kind == "*":
                 continue
             self.assertIn(kind, sch.kinds, kind)
-            self.assertIn(field, sch.kinds[kind]["fields"] + ["reason", "alternatives"], (kind, field))
+            # `cycle` is an extra key of a fix-batch check line (not a table field: ordinary round lines stay free of it)
+            extras = ["reason", "alternatives"] + (["cycle"] if (kind, field) == ("review_round", "cycle") else [])
+            self.assertIn(field, sch.kinds[kind]["fields"] + extras, (kind, field))
 
 
 class TestLog(Base):

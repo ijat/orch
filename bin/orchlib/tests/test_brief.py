@@ -127,6 +127,8 @@ class TestSpawnPrompt(BriefBase):
         self.assertNotIn("orch: next work", self.last_out)
         self.brief("security", *flags)                                          # security round 1
         self.assertNotIn("orch: next work", self.last_out)
+        self.cmd_ok("journal", "review_round", "reviewer=security", "round:=1", "blockers:=0", "should_fix:=1", "nits:=0",
+                    "verdict=findings")                                         # a security round is now journaled
         self.cmd_ok("journal", "review_round", "reviewer=code", "round:=1", "blockers:=0", "should_fix:=1", "nits:=0",
                     "verdict=findings")
         self.commit(self.wt, "fix.txt", "x\n")
@@ -142,6 +144,19 @@ class TestSpawnPrompt(BriefBase):
         path, _ = self.brief("security", "--round", "2", *flags)                # security round 2 resumes
         self.assertIn("--- reused security-reviewer: SendMessage unchanged instead ---\norch: next work \u2014 brief %s\n" % path,
                       self.last_out)
+
+    def test_the_first_security_review_is_never_offered_a_resume_whatever_its_number(self):
+        # `orch brief security` numbers a late first security review from the code counter (review_round 1/3 -> r2):
+        # there is still no security reviewer to resume
+        flags = ("--tier", "opus/high", "--escalation", "none", "--tradeoff", "t")
+        self.brief("review", *flags)
+        self.cmd_ok("journal", "review_round", "reviewer=code", "round:=1", "blockers:=0", "should_fix:=0", "nits:=0",
+                    "verdict=pass")
+        self.set_field(review_round="1/3")
+        path, _ = self.brief("security", *flags)
+        self.assertEqual(os.path.basename(path), "review-security-r2.md")
+        self.assertNotIn("orch: next work", self.last_out)
+        self.assertNotIn("reused", self.last_out)
 
     def test_tradeoff_collapses_to_one_line(self):
         self.brief("implement", "1", "--tier", "sonnet/high", "--escalation", "none", "--tradeoff", "a\nb  c")
@@ -1061,9 +1076,78 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.assertEqual([r["cycle"] for r in self.journal_lines(self.d) if r.get("check")], [1, 2, 3])
         self.commit(self.wt, "fix4.txt", "x\n")
         err = self.refused(2, "review", "--check")
-        self.assertIn("cap is 3 cycles", err)
-        self.assertIn("step 9", err)
+        self.assertIn("There is no check 4", err)
+        self.assertIn("orch follow-up", err)                      # should-fix at the cap is parked, not checked again
+        self.assertIn("cycle:=3", err)                            # and the corrected line says which cycle it replaces
         self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check-4.md")))
+
+    def three_checks(self, blockers_at_3=0, should_fix_at_3=1):
+        """Round 1 (should-fix) then three fix-and-check cycles; check 3 leaves the given counts open."""
+        self.round_one()
+        for cycle in (1, 2, 3):
+            self.commit(self.wt, "fix%d.txt" % cycle, "x\n")
+            self.brief("review", "--check")
+            if cycle < 3:
+                self.journal_check(1, 0, 1)
+            else:
+                self.journal_check(1, blockers_at_3, should_fix_at_3)
+        self.commit(self.wt, "beyond.txt", "x\n")
+
+    def test_the_cycle_cap_with_a_blocker_refuses_every_brief_and_names_the_question(self):
+        self.three_checks(blockers_at_3=1, should_fix_at_3=0)
+        for args in (("review", "--check"), ("review",), ("review", "--round", "2")):
+            err = self.refused(2, *args)
+            self.assertIn("never raised", err)
+            self.assertIn("orch ask", err)
+            self.assertNotIn("brief the next check", err)             # does not point back at the refused command
+        self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r2.md")))
+
+    def test_an_unanswered_or_older_question_does_not_unlock_round_n_plus_one(self):
+        self.three_checks(blockers_at_3=1, should_fix_at_3=0)
+        self.cmd_ok("ask", "F1 is still open after three cycles: how to proceed?", "--options", "A|B")
+        self.assertIn("never raised", self.refused(2, "review"))                # asked, not answered
+        qpath = os.path.join(self.d, "questions.md")
+        with open(qpath) as fh:
+            text = fh.read()
+        # an answered question from before the check line does not count either
+        old = text.replace("at 2026-", "at 2025-").replace("- status: open", "- status: answered")
+        wr(qpath, old)
+        self.assertIn("never raised", self.refused(2, "review"))
+
+    def test_the_users_answer_after_check_three_unlocks_round_n_plus_one_over_the_round_one_sha(self):
+        self.three_checks(blockers_at_3=1, should_fix_at_3=0)
+        one = [r for r in self.journal_lines(self.d) if r["kind"] == "review_round" and not r.get("check")][0]["sha"]
+        self.set_field(review_round="1/3")
+        self.cmd_ok("ask", "F1 is still open after three cycles: how to proceed?", "--options", "A|B")
+        self.cmd_ok("answer", "Q1", "A")
+        self.refused(2, "review", "--check")                                  # the cycle cap itself stays hard
+        path, text = self.brief("review")
+        self.assertEqual(os.path.basename(path), "review-code-r2.md")
+        self.assertIn("- range: %s..%s" % (one, self.tip()), text)            # every fix is in the range
+        self.assertIn("This is the fresh round after a blocker", text)
+
+    def test_parking_a_should_fix_at_the_cap_then_journaling_zero_passes_without_a_new_cycle(self):
+        self.three_checks(blockers_at_3=0, should_fix_at_3=1)
+        self.cmd_ok("follow-up", "F1 still returns -1", "--finding", "F1", "--severity", "should-fix", "--file", "src/clamp.rs")
+        self.journal_check(1, 0, 0, "cycle:=3")                               # the corrected line replaces check 3's
+        lines = [r for r in self.journal_lines(self.d) if r.get("check")]
+        self.assertEqual([(r["cycle"], r["should_fix"]) for r in lines], [(1, 1), (2, 1), (3, 1), (3, 0)])
+        err = self.refused(2, "review", "--check")
+        self.assertIn("left nothing open", err)                               # a clean check: the commit takes round 2
+        self.set_field(review_round="1/3")
+        self.brief("review")                                                  # round 2 is open (no blocker in the chain)
+
+    def test_a_corrected_line_uses_up_no_cycle(self):
+        self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.brief("review", "--check")
+        self.journal_check(1, 0, 1)
+        self.journal_check(1, 0, 1, "cycle:=1")                               # the same cycle again
+        self.commit(self.wt, "more.txt", "x\n")
+        path, _ = self.brief("review", "--check")
+        self.assertEqual(os.path.basename(path), "review-code-r1-check-2.md")   # check 2, not check 3
+        self.journal_check(1, 0, 1)
+        self.assertEqual(self.journal_lines(self.d)[-1]["cycle"], 2)
 
     def test_the_check_line_carries_its_cycle_and_binds_its_own_brief(self):
         self.round_one()
