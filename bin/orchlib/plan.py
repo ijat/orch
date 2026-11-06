@@ -524,11 +524,6 @@ def check_plan(plan, lite=False):
                     out.append(("FAIL", "step %s depends on unknown step %s" % (st.id, d)))
                 elif order[d] >= pos:
                     out.append(("FAIL", "step %s depends on step %s, which is not earlier" % (st.id, d)))
-        dw = st.field_text("done when") or ""
-        if GATE_ASK_RE.search(dw) and st.field_text("full-gate") is None:
-            out.append(("WARN", "step %s: `done when` asks for the whole gate (%s); the orchestrator runs the gate, so "
-                        "name the step's own targeted tests, or add `full-gate: <why>` if this step must run it"
-                        % (st.id, GATE_ASK_RE.search(dw).group(0))))
         files = st.field_text("files") or ""
         bad = []
         for tok in PATH_TOKEN_RE.findall(files):
@@ -539,6 +534,14 @@ def check_plan(plan, lite=False):
                 bad.append(tok)
         if bad:
             out.append(("WARN", "step %s: non-absolute path(s) in files: %s" % (st.id, ", ".join(bad[:4]) + (" …" if len(bad) > 4 else ""))))
+    # the binding block of every step: a revision that restates a step, or adds one, replaces the original text
+    for st in plan.current_steps():
+        dw = st.field_text("done when") or ""
+        m = GATE_ASK_RE.search(dw)
+        if m and st.field_text("full-gate") is None:
+            out.append(("WARN", "step %s: `done when` asks for the whole gate (%s); the orchestrator runs the gate, so "
+                        "name the step's own targeted tests, or add `full-gate: <why>` if this step must run it"
+                        % (st.id, m.group(0))))
     if not plan.planned_against:
         out.append(("WARN", "no `planned against:` header (brief freshness checks will say unknown)"))
     if summary is not None and plan.steps:
