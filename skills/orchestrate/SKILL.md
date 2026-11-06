@@ -553,7 +553,7 @@ left to autocompaction.
 
 **Reviewers resume the same way, for a check and for security round 2 and up.** For a code-review fix-batch check, if you hold
 the code reviewer's agent ID, `orch spawn code-reviewer --reused …` at the review's tier; for security round 2 or
-later (D7), `orch spawn security-reviewer --reused …`. The conditions are the implementer's (`done` within 55
+later, `orch spawn security-reviewer --reused …`. The conditions are the implementer's (`done` within 55
 minutes, this milestone, the same tier, not `haiku/*`). Accepted → `SendMessage` the brief line unchanged, as above.
 Refused → spawn fresh without `--reused`: for a check, a fresh reviewer on the same `--check` brief at the review's
 tier. A failed send → `orch return <role> --outcome failed`, then spawn fresh. Never for a real code round (its
@@ -630,7 +630,7 @@ A fix-batch check (step 9) is journaled the same way with `check:=true`, `cycle:
    beside the check (step 8).
 3. **Security review: re-review.** Re-review only the touched files, unless the reviewer named a broader concern.
    Name the closed findings in the brief; the reviewer doesn't re-raise them. After commits, brief round N+1
-   (`orch brief security`) and resume the same reviewer for it (step 7, D7); a refused or failed resume is a fresh
+   (`orch brief security`) and resume the same reviewer for it (step 7); a refused or failed resume is a fresh
    spawn on that brief. There is no tier climb and no check chain for security.
 4. **A new round** (the fresh round after a blocker chain's passed check, any routed security finding, or a commit
    landing after a review or check passed, § Review loops): after
