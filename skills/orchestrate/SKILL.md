@@ -306,7 +306,7 @@ is written**, and the other files point here.
     result again.
   - **Should-fix only, no blocker:** one **check** reads only the fix commits (`orch brief review --check`: same
     round number, `check:=true`, its own brief). A check is not a round and does not touch `review_round`;
-    `--check` refuses (exit 2) after a review that had a blocker. A check's outcomes: nothing open: the review
+    `--check` refuses (exit 2) after a review that had a blocker or routed no should-fix (nothing to check). A check's outcomes: nothing open: the review
     passes. A new **should-fix**: `orch follow-up "<text>" --finding <id> --severity should-fix --file <path>` parks
     it in `<repo-name>/follow-ups.md` (and a `follow_up` journal line); it is not routed and not counted open. A
     routed should-fix the check reports **not fixed**: parked the same way, with the check's note as the text; it
@@ -315,7 +315,8 @@ is written**, and the other files point here.
   - **The tip moved after a review or check passed** (a gate failure fixed at the tip, a security fix commit): the
     passed line no longer covers the tip, and `orch merge` needs a code line at the tip. Brief a real round N+1
     (`orch brief review`, narrow range from the last reviewed sha), not a check. It is counted in `review_round`
-    and against the cap, so at the cap it needs the raising rule above; otherwise the cap stop stands.
+    and against the cap, so at the cap it is the raising rule above (Opus level or higher: raise and journal
+    `override`; any other orchestrator: `orch ask`), never a silent extra round (step 9's stop).
   - `verdict` is `pass` only with zero findings open. Pre-existing findings go to the digest, as before.
 - **Security stays on rounds.** Every routed security finding is fixed and re-reviewed as the next round of the
   security loop; there is no check and no follow-up lane for it.
@@ -619,7 +620,9 @@ A fix-batch check (step 9) is journaled the same way with `check:=true` and the 
 5. Increment `review_round` in `status.md` for each real round, never for a check; log it
    (`orch set review_round=<n>/3 --log "<round n>"`).
 
-After round 3 with a blocker (or a routed security finding) still open, **stop** — no fourth round at the same tier. If the open
+After round 3 with a blocker (or a routed security finding) still open, **stop** — no fourth round at the same tier. The same
+stop applies when a commit awaits review after round 3 (§ Review loops, the tip-moved case): no round 4 without the
+raising rule, so raise the cap (Opus level or higher, journal `override`) or park a question (`orch ask`). If the open
 findings share a category (concurrency, one algorithm, one bug class), escalate the implementer tier
 for one fresh pass with the accumulated findings as its brief. If they're genuinely disputed,
 summarize the disagreement and hand it to the user. A cap raised under § Review loops moves this stop to the new
