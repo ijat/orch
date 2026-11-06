@@ -66,7 +66,7 @@ reason — every time (`orch merge` reads the row, so last milestone's value mus
    over `git diff <reviewed_through>..HEAD` — every milestone since the previous review point.
    Brief the reviewers with that range (`orch brief review` — it defaults to `<reviewed_through>..<tip>`
    once `reviewed_through` is a sha; `--range A..B` overrides) and the milestone plans it spans; `review.md` goes in the review-point milestone's dir. Fix batches, checks, the
-   round caps and the round-3 stop are SKILL.md step 9 and § Review loops, per review point, under the standard rules even when a spanned
+   round and cycle caps and the stops are SKILL.md step 9 and § Review loops, per review point, under the standard rules even when a spanned
    milestone ran lite (a check's range starts at the last reviewed sha in this milestone's journal lines). Journal `review_point`; on pass set `reviewed_through` to HEAD
    (`orch set reviewed_through=<sha>`).
 5. **Re-plan check** at each review point (§3).

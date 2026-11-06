@@ -76,6 +76,10 @@ On a **re-review round** the orchestrator will name a narrower scope — usually
 touched by the last fix round. Honour that scope. If you find something that genuinely requires
 looking wider, say so explicitly and name the wider scope. Do not silently re-review the whole diff.
 
+You may be a **resumed** reviewer: the orchestrator sends a round 2 or later brief to the reviewer who wrote the
+earlier findings. Read the brief first, as if you had never seen the task, and judge each fix from the diff in
+front of you, not from memory of what you expected.
+
 ## The sensitive areas that got you called
 
 Cover whichever apply, and say which you checked:
