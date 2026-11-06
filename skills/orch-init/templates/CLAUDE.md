@@ -23,7 +23,8 @@ same commit as the work. Decisions live in `docs/DECISIONS.md`; do not re-open o
 - Test (all): `{{cmd}}`
 - Test (one): `{{cmd with a placeholder for the test name}}`
 - Format / lint: `{{cmd}}`
-- Gate (run before every commit; must be green): `{{cmd that runs format check + lint + tests}}`
+- Check (fast, per commit; must be green): `{{cmd that runs format check, lint and the tests for what changed}}`
+- Gate (the full chain, once per tip before merge or push; must be green): `{{cmd that runs format check + lint + all tests}}`
 
 ## Architecture rules
 
