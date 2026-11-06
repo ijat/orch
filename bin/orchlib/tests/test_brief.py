@@ -972,16 +972,25 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.assertEqual(merge.brief_header(path, 1, False, None), two)
         self.assertTrue(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1.md")))
         # journaling the check binds the check brief, not the round's
-        self.journal_round(1, "check=true")
+        self.journal_round(1, "check:=true")
         rec = self.journal_lines(self.d)[-1]
         self.assertEqual((rec["round"], rec["check"], rec["sha"]), (1, True, two))
         self.assertEqual(rec["kind"], "review_round")
+
+    def test_check_true_in_either_spelling_writes_a_json_boolean(self):
+        self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.brief("review", "--check")
+        rc, _, err = self.cmd(*(self.J + ("round:=1", "check=maybe")))
+        self.assertEqual(rc, 1, err)
+        self.journal_round(1, "check=true")
+        self.assertIs(self.journal_lines(self.d)[-1]["check"], True)
 
     def test_a_second_check_for_one_round_is_refused(self):
         self.round_one()
         self.commit(self.wt, "fix.txt", "x\n")
         self.brief("review", "--check")
-        self.journal_round(1, "check=true")
+        self.journal_round(1, "check:=true")
         self.commit(self.wt, "more.txt", "x\n")
         self.assertIn("already journaled", self.refused(2, "review", "--check"))
 
@@ -1002,7 +1011,7 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.commit(self.wt, "fix.txt", "x\n")
         self.brief("review", "--check")
         checked = self.tip()
-        self.journal_round(1, "check=true")
+        self.journal_round(1, "check:=true")
         self.set_field(review_round="1/3")
         self.commit(self.wt, "fix2.txt", "x\n")
         path, text = self.brief("review")
@@ -1039,7 +1048,7 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.assertIn("- range: %s..%s" % (one, self.tip()), text)
         self.assertIn("- milestone: 2", text)
         self.assertEqual(merge.brief_header(path, 1, True, 2), self.tip())
-        self.journal_round(1, "check=true")
+        self.journal_round(1, "check:=true")
         self.assertEqual(self.journal_lines(self.d)[-1]["milestone"], 2)
 
 
