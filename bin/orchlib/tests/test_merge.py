@@ -179,7 +179,7 @@ class GitBase(core.Base):
         args = ["journal", "review_round", "reviewer=%s" % reviewer, "round:=%d" % rnd, "blockers:=%d" % blockers,
                 "should_fix:=%d" % should_fix, "nits:=%d" % nits, "verdict=%s" % verdict]
         if check:
-            args.append("check=true")
+            args.append("check:=true")
         if ms:
             args.append("milestone:=%d" % ms)
         self.cmd_ok(*args)
