@@ -213,8 +213,9 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
    Journal a `checkin` line either way. Check-ins read files, never the transcript.
    **`final=<state>` in the CHECKIN line** (`CHECKIN role=<r> silent_min=5 interval=5 final=done ...`): the
    role's row is `done`, `blocked` or `failed` but its spawn has no `orch return` yet, so you never saw it
-   finish. Don't judge progress: run `orch return <role>` now (Checkpointing contract), then act on its outcome. It fires after 5
-   minutes, then on the 60/120/120-minute ladder, at most 4 times per spawn; a `waiting` row never fires it.
+   finish. Don't judge progress: run `orch return <role>` now (Checkpointing contract), then act on its outcome. It fires once per
+   spawn, 5 minutes after the row went final, whatever check-ins came before; it is not one of the 4 silence check-ins;
+   a `waiting` row never fires it.
 
 **Index rebuild pause.** Two triggers call `orch-graph`.
 
