@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run a multi-agent orchestration workflow (planner → implementer → code review → security review by rule → merge) for non-trivial, multi-step engineering work. Use when the user picks "orchestration mode", says "orchestrate this", "run this with subagents", "plan then implement then review", or accepts the orchestration offer for a feature, refactor, or multi-file bugfix. State lives in per-task Markdown files (via the `orch` CLI); usage-paced; merges automatically when clean; works in a git worktree. Also has a **lite mode** (one agent plans and implements) for small, low-risk tasks — use when the user picks "lite mode" / "orchestrate lite" — and **program mode** (a roadmap of milestones, `PROGRAM.md`) — use when the user asks to "plan this in milestones", "roadmap this", or resumes a multi-milestone program — and **interactive mode** (this session plans with the user, subagents implement and review) — use when the user picks "interactive mode", "orchestrate interactive" or "plan it with me".
+description: Run a multi-agent orchestration workflow (planner → implementer → code review → security review by rule → merge) for non-trivial, multi-step engineering work. Use when the user picks "orchestration mode", says "orchestrate this", "run this with subagents", "plan then implement then review", or accepts the orchestration offer for a feature, refactor, or multi-file bugfix. State lives in per-task Markdown files (via the `orch` CLI); usage-paced; merges automatically when clean; works in a git worktree. Also has a **lite mode** (one agent plans and implements) for small, low-risk tasks — use when the user picks "lite mode" / "orchestrate lite" — and **program mode** (a roadmap of milestones, `PROGRAM.md`) — use when the user asks to "plan this in milestones", "roadmap this", or resumes a multi-milestone program — and **interactive mode** (this session plans with the user, subagents implement and review) — use when the user picks "interactive mode", "orchestrate interactive" or "plan it with me". Also use it when `orch current` names a task to resume after a bare "resume", "continue" or "start" at the top of a session.
 ---
 
 # Orchestration mode
@@ -442,7 +442,9 @@ standard, lite or interactive, recommend one against the lite eligibility rules 
 ### 2. Resume check — always first
 
 `orch show` lists the active tasks of every repo (`ACTIVE.md` is the same list: generated, never edit).
-If a task matches this work, `orch resume <repo>/<slug>` prints a read-only packet; read it (an old
+`orch current` maps this directory, or a worktree of it, to its tasks and prints an `action:` line: `resume <task>`
+for one live task, `ask` when it is stale, uncertain, touched in the last 15 minutes or one of several, `none` otherwise. After a prompt that
+names no task, follow that line; `ask` goes to the user. If a task matches this work, `orch resume <repo>/<slug>` prints a read-only packet; read it (an old
 layout it can't read: `status.md` and `log.md`) before anything else, tell the user where things
 stand, and resume from the last incomplete step. Never restart a half-done task or make a second dir for it.
 
