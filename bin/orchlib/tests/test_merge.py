@@ -513,6 +513,16 @@ class TestReviewAndGate(GitBase):
         self.assertTrue(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check-2.md")))
         self.merge_ok("--check", "--recheck-ok")
 
+    def test_a_corrected_check_line_for_the_same_cycle_replaces_the_open_one(self):
+        self.setup_task()
+        self.review(rnd=1, should_fix=1, verdict="findings")
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.gate()
+        self.review(rnd=1, check=True, should_fix=1, verdict="findings", cycle=1)
+        self.refuse_merge("code review", "should_fix is 1")
+        self.review(rnd=1, check=True, cycle=1)                   # parked, journaled again with nothing open
+        self.merge_ok("--check", "--recheck-ok")
+
     def test_a_check_line_binds_the_brief_of_its_own_cycle(self):
         self.setup_task()
         self.gate()
