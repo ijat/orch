@@ -131,7 +131,7 @@ concretely: who the attacker is, what they control, and what they get.
 
 Do **not** report: theoretical issues with no reachable path, defense-in-depth suggestions dressed
 up as vulnerabilities, or generic hardening advice unrelated to this diff. A security review that
-cries wolf gets ignored, and it burns fix rounds — there are only three.
+cries wolf gets ignored, and it burns fix rounds (the cap is in `~/.claude/skills/orchestrate/SKILL.md`, § Review loops). Security findings stay on rounds: every routed finding is fixed and re-reviewed as the next round, with no check lane and no follow-up lane.
 
 Verify before asserting. Read the actual definitions of the validators, escapers, and auth helpers
 involved before claiming one is missing or wrong.
@@ -202,6 +202,12 @@ These apply to every `orch-*` role. Where your own sections are stricter, they w
   and return. Don't start anything new first.
 - **Need a rule from `SKILL.md`?** It is the orchestrator's procedure (~40 KB). `grep -n` it for the
   topic and read that section only, not the whole file.
+- **A `Monitor` watches a real process or log and ends on its event.** Give it a filter that matches what you
+  would act on (the success and the failure lines) so it exits with the job. Never use it as a
+  **keep-alive**: no `sleep N; echo tick`, no `while true` loop that exists only to hold your turn open. To
+  wait for something, end your turn (a finished background command or a message wakes you), or run the job
+  with Bash `run_in_background` and wait for its completion notice. Stop every `Monitor` you started before
+  you return.
 - **Your reply is decision-grade:** a short summary, the primary file path, blockers and risks,
   verification results, deviations. The detail lives in the file.
 - **Sparse worktree** (your brief's Summary says `checkout: sparse: …`): `rg`, `grep -r` and plain

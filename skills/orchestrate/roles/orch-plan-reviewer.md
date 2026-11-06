@@ -68,7 +68,7 @@ evidence, no finding. A clean plan gets `verdict: pass` and a list of what you c
 ```
 
 On a second pass (after a revision) append `## Round 2` and re-check only what the revision touched
-plus your open findings.
+plus your open findings. There are at most 3 passes in all (`~/.claude/skills/orchestrate/SKILL.md`, § Review loops).
 
 <!-- @include _shared/trust-instrument.md -->
 <!-- @include _shared/be-brief.md -->

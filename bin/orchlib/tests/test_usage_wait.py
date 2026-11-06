@@ -299,6 +299,90 @@ class TestCheckin(Base):
         self.assertEqual((code, self.clock.t), (11, BASE + 1200 + 59 + 1800 + 1))
         self.assertIn('silent_min=30 interval=30', line)
 
+    # -- a final row (done/blocked/failed) with no `orch return` after the latest spawn
+    def final_task(self, state='done', more=(), row_ts=None):
+        return self.task(rows=(('orchestrator', 'in_progress'), ('implementer', state)), row_ts=row_ts,
+                         journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer'}] + list(more))
+
+    def test_final_row_without_a_return_fires_after_5_minutes_and_says_final(self):
+        for state in usage.FINAL_STATES:
+            self.clock = Clock(BASE)
+            d = self.final_task(state)
+            code, line = self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=3600)
+            self.assertEqual((code, self.clock.t - BASE), (11, 360), state)    # row minute ends at +59 s, +300 s
+            self.assertIn('CHECKIN role=implementer silent_min=5 interval=5 final=%s ' % state, line)
+            shutil.rmtree(self.state, True)
+
+    def test_final_row_under_5_minutes_does_not_fire(self):
+        d = self.final_task('done')
+        code, _ = self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=300)
+        self.assertEqual(code, 13)
+        self.assertEqual(self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=59)[0], 13)
+
+    def test_final_row_with_a_recorded_return_never_fires(self):
+        d = self.final_task('done', more=[{'ts': ts(BASE + 60), 'kind': 'return', 'role': 'implementer'}])
+        self.assertEqual(self.run_wait(lambda: est(), task_dir=d, max_sec=4 * 3600)[0], 13)
+
+    def test_a_new_spawn_after_the_return_makes_a_final_row_due_again(self):
+        d = self.final_task('done', more=[{'ts': ts(BASE + 60), 'kind': 'return', 'role': 'implementer'},
+                                          {'ts': ts(BASE + 120), 'kind': 'spawn', 'role': 'implementer'}],
+                            row_ts=ts(BASE + 120))
+        code, line = self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=3600)
+        self.assertEqual((code, self.clock.t - BASE), (11, 120 + 360))
+        self.assertIn('final=done', line)
+
+    def test_a_waiting_row_never_fires_as_final(self):
+        d = self.final_task('waiting')
+        self.assertEqual(self.run_wait(lambda: est(), task_dir=d, max_sec=4 * 3600)[0], 13)
+
+    def test_in_progress_behaviour_is_unchanged_and_has_no_final(self):
+        d = self.spawned()
+        code, line = self.run_wait(lambda: est(), task_dir=d, interval=60)
+        self.assertEqual((code, self.clock.t - BASE), (11, 59 + 1800 + 1))
+        self.assertNotIn('final', line)
+
+    def test_a_final_row_fires_once_per_spawn_and_a_re_arm_does_not_repeat_it(self):
+        d = self.final_task('done')
+        code, line = self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=6 * 3600)
+        self.assertEqual((code, self.clock.t - BASE), (11, 360))
+        self.assertIn('final=done', line)
+        for _ in range(2):                                           # re-armed: nothing more for this spawn
+            self.assertEqual(self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=6 * 3600)[0], 13)
+
+    def test_a_new_spawn_gets_its_own_final_report(self):
+        d = self.final_task('done')
+        self.assertEqual(self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=3600)[0], 11)
+        t = self.clock.t
+        d = self.final_task('done', more=[{'ts': ts(t), 'kind': 'return', 'role': 'implementer'},
+                                          {'ts': ts(t + 60), 'kind': 'spawn', 'role': 'implementer'}],
+                            row_ts=ts(t + 60))
+        code, line = self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=3600)
+        self.assertEqual((code, 'final=done' in line), (11, True))
+
+    def final_after_checkins(self, n):
+        """n earlier in_progress CHECKINs journaled (30, 90, 210, 330 min), then the row goes done 10 min later."""
+        marks = [30, 90, 210, 330][:n]
+        done_at = (marks[-1] if marks else 0) + 10
+        self.clock = Clock(BASE + done_at * 60)
+        more = [{'ts': ts(BASE + m * 60), 'kind': 'checkin', 'role': 'implementer'} for m in marks]
+        return self.final_task('done', more=more, row_ts=ts(BASE + done_at * 60))
+
+    def test_a_final_row_fires_5_minutes_after_the_row_whatever_check_ins_came_before(self):
+        for n in (0, 1, 2, 3, 4):
+            d = self.final_after_checkins(n)
+            start = self.clock.t
+            code, line = self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=3600)
+            self.assertEqual((code, self.clock.t - start), (11, 360), 'n=%d' % n)
+            self.assertIn('silent_min=5 interval=5 final=done', line)
+            shutil.rmtree(self.state, True)
+
+    def test_a_final_report_does_not_use_up_the_in_progress_check_ins(self):
+        d = self.final_after_checkins(0)
+        self.assertEqual(self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=3600)[0], 11)
+        with open(os.path.join(self.state, 'checkin-%s.json' % KEY)) as fh:
+            stamp = json.load(fh)['implementer']
+        self.assertEqual((stamp['n'], stamp['final']), (0, True))
+
     def test_return_journaled_no_journal_garbled_files_never_due(self):
         d = self.spawned(more=[{'ts': ts(BASE + 60), 'kind': 'return', 'role': 'implementer'}])
         self.assertEqual(self.run_wait(lambda: est(), task_dir=d, max_sec=4 * 3600)[0], 13)

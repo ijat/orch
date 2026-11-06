@@ -900,6 +900,211 @@ class TestProgramReviewBrief(BriefBase):
         self.assertNotEqual(sha1, sha2)
 
 
+class TestNarrowReviewAndCheck(BriefBase):
+    """From round 2 the code review reads <last reviewed sha>..<tip>; --check briefs the fix commits of a round."""
+    # a round that routed one should-fix (so a fix batch exists for a check); CLEAN is a passed review
+    J = ("journal", "review_round", "reviewer=code", "blockers:=0", "should_fix:=1", "nits:=0", "verdict=findings")
+    CLEAN = ("journal", "review_round", "reviewer=code", "blockers:=0", "should_fix:=0", "nits:=0", "verdict=pass")
+
+    def journal_round(self, rnd, *more):
+        self.cmd_ok(*(self.J + ("round:=%d" % rnd,) + more))
+
+    def round_one(self):
+        """Brief and journal round 1 at the current tip; return that sha."""
+        self.brief("review")
+        sha = self.tip()
+        self.journal_round(1)
+        return sha
+
+    def test_round_one_reviews_the_whole_branch_and_prints_the_diff_command(self):
+        _, text = self.brief("review")
+        sha = self.tip()
+        self.assertIn("- range: main...%s" % sha, text)
+        self.assertIn("- diff: git diff main...%s" % sha, text)
+        self.assertNotIn("whole range", self.last_err)
+
+    def test_round_two_reads_only_what_changed_since_the_last_reviewed_sha(self):
+        one = self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        two = self.tip()
+        _, text = self.brief("review", "--round", "2")
+        self.assertIn("- range: %s..%s" % (one, two), text)
+        self.assertIn("- diff: git diff %s..%s" % (one, two), text)
+        stat = text.split("## Diff stat")[1].split("## Lessons")[0]
+        self.assertIn("fix.txt", stat)
+        self.assertNotIn("feature.txt", stat)
+        self.assertNotIn("whole range", self.last_err)
+        # --range still wins
+        _, text = self.brief("review", "--round", "2", "--range", "main..orch/add-login")
+        self.assertIn("- range: main..%s" % two, text)
+
+    def test_round_two_without_an_earlier_review_falls_back_and_says_so(self):
+        _, text = self.brief("review", "--round", "2")
+        self.assertIn("- range: main...%s" % self.tip(), text)
+        self.assertIn("no earlier code review is journaled", self.last_err)
+
+    def test_a_reviewed_sha_that_is_no_longer_an_ancestor_falls_back(self):
+        one = self.round_one()
+        self.git(self.wt, "reset", "-q", "--hard", "main")
+        self.commit(self.wt, "other.txt", "x\n")
+        self.assertNotEqual(self.git(self.repo, "merge-base", one, self.tip()), one)
+        _, text = self.brief("review", "--round", "2")
+        self.assertIn("- range: main...%s" % self.tip(), text)
+        self.assertIn("is not an ancestor of the tip", self.last_err)
+
+    def test_security_keeps_the_whole_branch(self):
+        self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        _, text = self.brief("security", "--round", "2")
+        self.assertIn("- range: main...%s" % self.tip(), text)
+        self.assertNotIn("whole range", self.last_err)
+
+    def test_a_check_keeps_the_round_and_has_its_own_path(self):
+        one = self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        two = self.tip()
+        path, text = self.brief("review", "--check")
+        self.assertEqual(os.path.basename(path), "review-code-r1-check.md")
+        head = text.split("\n")[:12]
+        self.assertEqual(head[0], "# Brief: code review fix-batch check, round 1 — myapp/add-login")
+        self.assertEqual(head[1:3], ["- reviewed sha: %s" % two, "- round: 1"])
+        self.assertIn("- range: %s..%s" % (one, two), head)
+        self.assertIn("- check: true", head)
+        self.assertIn("- diff: git diff %s..%s" % (one, two), head)
+        self.assertEqual(merge.brief_header(path, 1, False, None), two)
+        self.assertTrue(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1.md")))
+        # journaling the check binds the check brief, not the round's
+        self.journal_round(1, "check:=true")
+        rec = self.journal_lines(self.d)[-1]
+        self.assertEqual((rec["round"], rec["check"], rec["sha"]), (1, True, two))
+        self.assertEqual(rec["kind"], "review_round")
+
+    def test_check_true_in_either_spelling_writes_a_json_boolean(self):
+        self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.brief("review", "--check")
+        rc, _, err = self.cmd(*(self.J + ("round:=1", "check=maybe")))
+        self.assertEqual(rc, 1, err)
+        self.journal_round(1, "check=true")
+        self.assertIs(self.journal_lines(self.d)[-1]["check"], True)
+
+    def test_a_second_check_for_one_round_is_refused(self):
+        self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.brief("review", "--check")
+        self.journal_round(1, "check:=true")
+        self.commit(self.wt, "more.txt", "x\n")
+        self.assertIn("already journaled", self.refused(2, "review", "--check"))
+
+    def test_a_check_needs_a_journaled_round(self):
+        self.assertIn("none is journaled", self.refused(2, "review", "--check"))
+        self.brief("review")                                   # briefed, not journaled
+        self.assertIn("none is journaled", self.refused(2, "review", "--check"))
+        self.journal_round(1)
+        self.assertIn("round 4 of the code review is not journaled", self.refused(2, "review", "--check", "--round", "4"))
+
+    def test_a_check_is_refused_after_a_round_that_left_a_blocker(self):
+        self.brief("review")
+        one = self.tip()
+        self.cmd_ok("journal", "review_round", "reviewer=code", "round:=1", "blockers:=1", "should_fix:=2", "nits:=0",
+                    "verdict=findings")
+        self.commit(self.wt, "fix.txt", "x\n")
+        err = self.refused(2, "review", "--check")
+        self.assertIn("1 blocker(s) open", err)
+        self.assertIn("Brief round 2", err)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check.md")))
+        # the way on is a real round 2 with the narrow range
+        self.set_field(review_round="1/3")
+        path, text = self.brief("review")
+        self.assertEqual(os.path.basename(path), "review-code-r2.md")
+        self.assertIn("- range: %s..%s" % (one, self.tip()), text)
+
+    def test_a_check_is_refused_after_a_clean_round_and_the_commit_takes_round_n_plus_one(self):
+        # rounds 1-3 passed clean, review_round 3/3, then one more commit (a gate fix): a check would skip the round and the cap
+        self.brief("review")
+        for n in (1, 2, 3):
+            if n > 1:
+                self.commit(self.wt, "r%d.txt" % n, "x\n")
+                self.set_field(review_round="%d/3" % (n - 1))
+                self.brief("review")
+            self.cmd_ok(*(self.CLEAN + ("round:=%d" % n,)))
+        self.set_field(review_round="3/3")
+        self.commit(self.wt, "gatefix.txt", "x\n")
+        err = self.refused(2, "review", "--check")
+        self.assertIn("round 3 routed no should-fix", err)
+        self.assertIn("Brief round 4", err)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r3-check.md")))
+
+    def test_a_check_for_an_older_round_is_refused_after_a_later_blocker_round(self):
+        self.round_one()                                       # round 1: should-fix only, journal_round default
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.set_field(review_round="1/3")
+        self.brief("review")                                   # round 2, narrow
+        self.cmd_ok("journal", "review_round", "reviewer=code", "round:=2", "blockers:=1", "should_fix:=0", "nits:=0",
+                    "verdict=findings")
+        self.commit(self.wt, "fix2.txt", "x\n")
+        self.assertIn("1 blocker(s) open", self.refused(2, "review", "--check"))
+        err = self.refused(2, "review", "--check", "--round", "1")
+        self.assertIn("round 1 is not the latest code review round (2)", err)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check.md")))
+
+    def test_a_check_for_the_latest_round_by_number_is_accepted(self):
+        self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        path, _ = self.brief("review", "--check", "--round", "1")
+        self.assertEqual(os.path.basename(path), "review-code-r1-check.md")
+
+    def test_a_check_is_for_the_code_review_only(self):
+        self.round_one()
+        self.refused(1, "security", "--check")
+        self.refused(1, "implement", "1", "--check")
+
+    def test_the_round_after_a_check_is_numbered_n_plus_one_and_reads_from_the_check(self):
+        self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.brief("review", "--check")
+        checked = self.tip()
+        self.journal_round(1, "check:=true")
+        self.set_field(review_round="1/3")
+        self.commit(self.wt, "fix2.txt", "x\n")
+        path, text = self.brief("review")
+        self.assertEqual(os.path.basename(path), "review-code-r2.md")
+        self.assertIn("- range: %s..%s" % (checked, self.tip()), text)
+        self.assertNotIn("- check: true", text)
+        self.journal_round(2)                                   # the real round 2 line binds r2, not the check brief
+        self.assertEqual(self.journal_lines(self.d)[-1]["sha"], self.tip())
+
+    def test_a_dirty_worktree_refuses_the_brief(self):
+        self.round_one()
+        with open(os.path.join(self.wt, "feature.txt"), "a") as fh:
+            fh.write("uncommitted fix\n")
+        err = self.refused(2, "review", "--round", "2")
+        self.assertIn("uncommitted", err)
+        self.assertIn("Commit the fixes first", err)
+        self.assertIn("uncommitted", self.refused(2, "review", "--check"))
+        self.git(self.wt, "restore", "feature.txt")
+        with open(os.path.join(self.wt, "new.txt"), "w") as fh:
+            fh.write("untracked\n")
+        self.assertIn("uncommitted", self.refused(2, "review", "--round", "2"))
+        os.remove(os.path.join(self.wt, "new.txt"))
+        self.brief("review", "--round", "2")                    # clean again
+
+    def test_a_program_check_has_a_milestone_path(self):
+        self.set_field(shape="roadmap", milestone="M2 — reviewing")
+        wr(os.path.join(self.d, "m02-sessions", "plan.md"), self.fixture_plan("program_m02.md"))
+        self.brief("review")
+        one = self.tip()
+        self.journal_round(1)
+        self.commit(self.wt, "fix.txt", "x\n")
+        path, text = self.brief("review", "--check")
+        self.assertEqual(os.path.basename(path), "review-code-m02-r1-check.md")
+        self.assertIn("- range: %s..%s" % (one, self.tip()), text)
+        self.assertIn("- milestone: 2", text)
+        self.assertEqual(merge.brief_header(path, 1, True, 2), self.tip())
+        self.journal_round(1, "check:=true")
+        self.assertEqual(self.journal_lines(self.d)[-1]["milestone"], 2)
+
+
 class TestFixBrief(BriefBase):
     REVIEW = ("# Code review: add-login\n\n- round: 1\n- verdict: findings\n\n## Findings\n\n"
               "### F1 — hashing is unsalted\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/auth.py:12\n"
@@ -938,6 +1143,15 @@ class TestFixBrief(BriefBase):
         self.assertNotIn("### Step 10", steps)
         self.assertIn("role 'implementer' in_progress --note 'working on step(s) fix round 1'", sec(text, "Checkpoint commands"))
         self.assertIn("role 'implementer' done --step 'fix round 1'", sec(text, "Checkpoint commands"))
+
+    def test_notes_under_a_check_of_round_section_are_carried(self):
+        wr(os.path.join(self.d, "review.md"), self.REVIEW.replace("@R@", self.repo)
+           + "\n## Check of round 2\n\n- F3: not fixed — the loop is still there.\n- F2: resolved\n")
+        _, text = self.brief("fix", "1", "--findings", "F1,F3")
+        findings = sec(text, "Findings to fix")
+        self.assertIn("(Round 2) - F1: still open — the salt is a constant.", findings)
+        self.assertIn("(Check of round 2) - F3: not fixed — the loop is still there.", findings)
+        self.assertNotIn("F2: resolved", findings)
 
     def test_names_never_overwrite_and_extra(self):
         extra = os.path.join(self.tmp, "class.md")
