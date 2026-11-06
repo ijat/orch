@@ -675,7 +675,7 @@ worktree and task directory plus the branch name.
 - Have a planner implement steps: every plan goes to fresh implementers.
 - Spawn without the pre-flight (`orch spawn`); treat `STALE`/`UNKNOWN` as safe; let a subagent run
   past `STOP`; poll usage on a timer while a wait is armed; arm `usage-watch.sh`; leave a `Monitor` armed past
-  its subagent; claim a crash will auto-resume.
+  its subagent, or run one as a keep-alive (`sleep N; echo tick`) instead of a filter on a real process or log; claim a crash will auto-resume.
 - Let a role spawn anything but `orch-explorer`/`orch-executor` (the planner and you also `orch-graph`), or guess inside a sensitive area.
 - Assert what could have been verified; go to the user before trying rungs 1 and 2.
 - Let a subagent write to `LESSONS.md`; log non-critical findings as lessons; leave a
