@@ -4,6 +4,7 @@ TASK/briefs/. Python 3.9 compatible, standard library only."""
 import glob
 import os
 import re
+import sys
 
 from . import cli
 from . import flow
@@ -440,11 +441,32 @@ def unique_path(directory, stem):
         n += 1
 
 
-def emit(path, text, plan_size):
+def spawn_prompt(path, ns, kind):
+    """The complete spawn prompt for this brief, so the orchestrator sends it unchanged: tier, escalation, tradeoff and
+    the brief path, nothing else (no test scope, no gate, no operating instruction). A value not given is a visible
+    placeholder."""
+    given = (("tier", ns.tier), ("escalation", ns.escalation), ("tradeoff", getattr(ns, "tradeoff", None)))
+    missing = [k for k, v in given if not v]
+    if missing:
+        sys.stderr.write("orch brief: no --%s given; the spawn prompt shows %s as a placeholder\n"
+                         % (", --".join(missing), ", ".join("<%s>" % k for k in missing)))
+    lines = ["", "--- spawn prompt (send unchanged) ---"]
+    for k, v in given:
+        lines.append("%s: %s" % (k, " ".join(v.split()) if v else "<%s>" % k))
+    lines += ["", "Your whole context is this brief: %s" % path]
+    if kind in ("implement", "fix"):
+        lines += ["--- reused implementer: SendMessage unchanged instead ---", "orch: next work \u2014 brief %s" % path]
+    lines.append("--- end ---")
+    print("\n".join(lines))
+
+
+def emit(path, text, plan_size, ns=None, kind=None):
     data = (text.rstrip("\n") + "\n").encode("utf-8", "surrogateescape")
     write_atomic(path, data, 0o644)
     print(path)
     print("brief %.1f KB vs plan %.1f KB" % (len(data) / 1024.0, plan_size / 1024.0))
+    if ns is not None:
+        spawn_prompt(path, ns, kind)
 
 
 # -- implement / director -----------------------------------------------------------------------
@@ -512,7 +534,7 @@ def cmd_brief_work(ns, c, kind):
     with TaskLock(c.task_dir):
         os.makedirs(os.path.join(c.task_dir, "briefs"), exist_ok=True)
         path = unique_path(os.path.join(c.task_dir, "briefs"), stem)
-        emit(path, text, c.plan_size)
+        emit(path, text, c.plan_size, ns, kind)
     return 0
 
 
@@ -668,7 +690,7 @@ def cmd_brief_review(ns, c, reviewer):
     with TaskLock(c.task_dir):
         check_not_repinned(c, reviewer, rnd, path, sha)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        emit(path, text, c.plan_size)
+        emit(path, text, c.plan_size, ns, "review" if reviewer == "code" else "security")
     return 0
 
 
@@ -758,7 +780,7 @@ def cmd_brief_fix(ns, c):
     with TaskLock(c.task_dir):
         os.makedirs(os.path.join(c.task_dir, "briefs"), exist_ok=True)
         path = unique_path(os.path.join(c.task_dir, "briefs"), "fix-r%d" % rnd)
-        emit(path, text, c.plan_size)
+        emit(path, text, c.plan_size, ns, "fix")
     return 0
 
 
@@ -794,6 +816,7 @@ def register(add):
     sp.add_argument("--role", default=None)
     sp.add_argument("--tier", default=None)
     sp.add_argument("--escalation", default=None)
+    sp.add_argument("--tradeoff", default=None)
     sp.add_argument("--range", default=None)
     sp.add_argument("--round", type=int, default=None)
     sp.add_argument("--extra", default=None)

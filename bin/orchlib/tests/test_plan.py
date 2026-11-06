@@ -336,6 +336,80 @@ class TestCheck(unittest.TestCase):
                                                "- steps: 1. a (S); 2. b (S)\n")
         self.assertIn("Summary lists 2 step(s), Steps has 5 block(s)", self.warns(inline))
 
+    def gate_warns(self, text):
+        return [m for m in self.warns(text) if "whole gate" in m]
+
+    def test_warn_done_when_asks_for_whole_gate(self):
+        base = fixture("standard.md")
+        # last step: not exempt
+        last = base.replace("- done when: the file has an entry.", "- done when: final gate green.")
+        w = self.gate_warns(last)
+        self.assertEqual(len(w), 1)
+        self.assertIn("step 10:", w[0])
+        self.assertIn("orchestrator runs the gate", w[0])
+        # middle step
+        mid = base.replace("- done when: the views test passes.", "- done when: the gate is green.")
+        w = self.gate_warns(mid)
+        self.assertEqual(len(w), 1)
+        self.assertIn("step 3:", w[0])
+        # project-specific gate names and targeted tests are not asks
+        self.assertEqual(self.gate_warns(base.replace("- done when: the views test passes.", "- done when: dump gate 18/18.")), [])
+        self.assertEqual(self.gate_warns(base), [])
+        # explicit exception
+        ok = base.replace("- done when: the views test passes.", "- done when: the gate is green.\n- full-gate: this step changes the gate itself.")
+        self.assertEqual(self.gate_warns(ok), [])
+        self.assertEqual(self.fails(ok), self.fails(base))
+        # WARN never FAIL
+        self.assertEqual([m for m in self.fails(mid) if "gate" in m], [])
+        # other spellings of the ask
+        for phrase in ("full test suite passes", "all tests pass", "the entire gate passes", "repo suite is clean"):
+            self.assertEqual(len(self.gate_warns(base.replace("- done when: the views test passes.", "- done when: %s." % phrase))), 1, phrase)
+
+    def test_gate_warning_reads_the_binding_block_of_a_revised_step(self):
+        base = fixture("standard.md")
+        # a revision restating step 2 with a gate ask warns once, on the binding block
+        restated = base.replace("""- contract: sessions expire after one hour and are signed.
+- done when: `pytest tests/test_session.py` passes.""", """- contract: sessions expire after one hour and are signed.
+- done when: final gate green.""")
+        self.assertNotEqual(restated, base)
+        w = self.gate_warns(restated)
+        self.assertEqual(len(w), 1, w)
+        self.assertIn("step 2:", w[0])
+        # a revision-added step warns too
+        added = base.rstrip("\n") + """
+
+## Revision 3 — 2026-03-04
+
+- trigger: review
+
+### Step 99 — late step
+
+- size: S
+- files: /home/u/Projects/myapp/x.py
+- do: x.
+- contract: y.
+- done when: all tests pass.
+"""
+        w = self.gate_warns(added)
+        self.assertEqual(len(w), 1, w)
+        self.assertIn("step 99:", w[0])
+        # the original block's ask is superseded by a restatement: the warning follows the binding block only
+        orig_ask = base.replace("- contract: sessions expire after one hour.\n- done when: `pytest tests/test_session.py` passes.",
+                                "- contract: sessions expire after one hour.\n- done when: final gate green.")
+        self.assertNotEqual(orig_ask, base)
+        self.assertEqual(self.gate_warns(orig_ask), [])
+        # and a restatement that adds `full-gate:` over an original that asked for the gate does not warn
+        both = orig_ask.replace("- contract: sessions expire after one hour and are signed.\n- done when: `pytest tests/test_session.py` passes.",
+                                "- contract: sessions expire after one hour and are signed.\n- done when: final gate green.\n- full-gate: why")
+        self.assertNotEqual(both, orig_ask)
+        self.assertEqual(self.gate_warns(both), [])
+
+    def test_full_gate_is_a_known_field(self):
+        text = fixture("standard.md").replace("- done when: the views test passes.", "- done when: x.\n- full-gate: why")
+        st = [s for s in pl.parse_plan(text).steps if s.id == "3"][0]
+        self.assertEqual(st.field_text("full-gate"), "why")
+        self.assertEqual(st.field_text("done when"), "x.")
+
     def test_lite(self):
         text = fixture("lite.md")
         self.assertEqual(self.fails(text, lite=True), [])

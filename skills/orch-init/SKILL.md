@@ -147,6 +147,9 @@ a **proposed diff** per finding. It **never edits** the repo. Checks:
 - Missing: STATE.md, DECISIONS.md, a gate command, seams at boundaries (`references/architecture.md`),
   enforced boundary checks.
 - Rules that should be hooks or deny rules instead of emphasis.
+- A CLAUDE.md that requires the full gate before every commit (instead of a fast per-commit check and the
+  full gate once per tip): it makes every agent re-run the whole suite on each commit. Propose the split
+  `Check` / `Gate` lines of `templates/CLAUDE.md`.
 Scans exclude `.claude/worktrees/`. The user applies a finding by asking; you then edit in the normal
 flow, not through the agent.
 
