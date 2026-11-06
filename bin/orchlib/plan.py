@@ -21,9 +21,9 @@ SEP = r"\s*(?:[,/&–—-]|\band\b|\bor\b)\s*"
 LIST = ID + r"(?:" + SEP + r"(?:steps?\s+)?" + ID + r")*"
 STEP_REF_RE = re.compile(r"\bsteps?[\s_-]*(" + LIST + r")", re.I)
 ID_RE = re.compile(ID, re.I)
-FIELD_LINE_RE = re.compile(r"^- ([A-Za-z][A-Za-z ]*?):[ \t]*(.*)$")
+FIELD_LINE_RE = re.compile(r"^- ([A-Za-z][A-Za-z -]*?):[ \t]*(.*)$")
 KNOWN = ("size", "files", "depends", "context", "do", "contract", "sketch", "guide", "pilot", "visual", "done when",
-         "tier", "effort", "tier rationale", "effort rationale", "escalation", "tradeoff")
+         "tier", "effort", "tier rationale", "effort rationale", "escalation", "tradeoff", "full-gate")
 REQUIRED = ("size", "files", "do", "contract", "done when")
 BULLET_RE = re.compile(r"^(?:[-*+]|\d+[.)])[ \t]+")
 LITE_OMITTED_RE = re.compile(r"^\s*lite:\s*omitted\b", re.I)
@@ -485,6 +485,9 @@ STANDARD_SECTIONS = (("goal", "Goal"), ("findings", "Findings"), ("decisions", "
                      ("files", "Files and areas touched"), ("parallelization", "Parallelization"),
                      ("verification", "Verification"), ("risks", "Risks and unknowns"))
 SUMMARY_STEP_LINE_RE = re.compile(r"^\s*(?:[-*]\s+)?(\d+[a-z]?)\.\s+\S")
+# a `done when` that asks for the whole gate: the orchestrator runs the final gate beside review, not the implementer
+GATE_ASK_RE = re.compile(r"\b(?:final|full|whole|entire|project|repo)[- ](?:test[- ])?(?:gate|suite)\b"
+                         r"|\bthe gate (?:is |stays |passes|green)|\bgate (?:is |stays )?green\b|\ball tests\b", re.I)
 
 
 def check_plan(plan, lite=False):
@@ -521,6 +524,11 @@ def check_plan(plan, lite=False):
                     out.append(("FAIL", "step %s depends on unknown step %s" % (st.id, d)))
                 elif order[d] >= pos:
                     out.append(("FAIL", "step %s depends on step %s, which is not earlier" % (st.id, d)))
+        dw = st.field_text("done when") or ""
+        if GATE_ASK_RE.search(dw) and st.field_text("full-gate") is None:
+            out.append(("WARN", "step %s: `done when` asks for the whole gate (%s); the orchestrator runs the gate, so "
+                        "name the step's own targeted tests, or add `full-gate: <why>` if this step must run it"
+                        % (st.id, GATE_ASK_RE.search(dw).group(0))))
         files = st.field_text("files") or ""
         bad = []
         for tok in PATH_TOKEN_RE.findall(files):
