@@ -131,7 +131,7 @@ concretely: who the attacker is, what they control, and what they get.
 
 Do **not** report: theoretical issues with no reachable path, defense-in-depth suggestions dressed
 up as vulnerabilities, or generic hardening advice unrelated to this diff. A security review that
-cries wolf gets ignored, and it burns fix rounds — there are only three.
+cries wolf gets ignored, and it burns fix rounds (the cap is in `~/.claude/skills/orchestrate/SKILL.md`, § Review loops). Security findings stay on rounds: every routed finding is fixed and re-reviewed as the next round, with no check lane and no follow-up lane.
 
 Verify before asserting. Read the actual definitions of the validators, escapers, and auth helpers
 involved before claiming one is missing or wrong.

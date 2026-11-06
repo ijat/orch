@@ -14,8 +14,8 @@
 - base_branch: <branch>
 - task_branch: orch/<task-slug>
 - worktree: /abs/path/to/repo/.claude/worktrees/orch-<task-slug> | not yet created | none (user: no worktree)
-- planner_tier: <model>/<effort> — default opus/high; ladder opus/max → fable/max
-- implementer_tier: <model>/<effort> — default sonnet/high (haiku/medium for gated steps); ladder opus/medium → opus/high → fable/high
+- planner_tier: <model>/<effort> — default opus/high; ladder opus/max; fable/max only after a failed opus/max plan or on the user's request
+- implementer_tier: <model>/<effort> — default sonnet/high (haiku/medium for gated steps); ladder opus/medium → opus/high → opus/max → fable/high (Fable only after a failed opus/max pass or on the user's request)
 - review_round: 0/3
 - usage_override: none | <what the user allowed, and when>
 

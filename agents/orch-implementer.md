@@ -402,9 +402,12 @@ agent ID. The director owns how things should look; you own making them, and the
 When the orchestrator routes reviewer findings back to you, you will get specific findings from
 `review.md` or `security-review.md` (your fix brief carries them verbatim). For each one: fix it, or explain concretely why it is not a
 real problem. Write your resolution next to the finding in that same file — the reviewer re-reads
-the file, and the orchestrator counts rounds from it.
+the file, and the orchestrator counts rounds from it. One review's blockers and should-fix arrive together in
+one batch: fix them all in this one pass. **Commit every fix before you return**, one commit per finding or per
+batch of one class: the next review reads `git diff <range>`, which sees only commits, and `orch brief review`
+refuses a dirty worktree.
 
 Fix **only** what the findings name. When a finding or your brief names a class (see the planner's
 "name the whole class"), the class is what it names: fix every instance and keep the stated invariant.
 A fix round is not an opening to refactor something else you
-noticed; that widens the re-review surface and burns one of only three rounds.
+noticed; that widens the check surface and can cost a round (the caps are in `~/.claude/skills/orchestrate/SKILL.md`, § Review loops).
