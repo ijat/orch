@@ -1001,6 +1001,22 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.journal_round(1)
         self.assertIn("round 4 of the code review is not journaled", self.refused(2, "review", "--check", "--round", "4"))
 
+    def test_a_check_is_refused_after_a_round_that_left_a_blocker(self):
+        self.brief("review")
+        one = self.tip()
+        self.cmd_ok("journal", "review_round", "reviewer=code", "round:=1", "blockers:=1", "should_fix:=2", "nits:=0",
+                    "verdict=findings")
+        self.commit(self.wt, "fix.txt", "x\n")
+        err = self.refused(2, "review", "--check")
+        self.assertIn("1 blocker(s) open", err)
+        self.assertIn("Brief round 2", err)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check.md")))
+        # the way on is a real round 2 with the narrow range
+        self.set_field(review_round="1/3")
+        path, text = self.brief("review")
+        self.assertEqual(os.path.basename(path), "review-code-r2.md")
+        self.assertIn("- range: %s..%s" % (one, self.tip()), text)
+
     def test_a_check_is_for_the_code_review_only(self):
         self.round_one()
         self.refused(1, "security", "--check")

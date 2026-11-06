@@ -656,8 +656,13 @@ def check_round(c, ns):
         raise OrchError("--check needs a journaled code review round whose fixes it checks; none is journaled", 2)
     if rnd < 1:
         raise OrchError("--round must be at least 1", 1)
-    if not any(r["round"] == rnd for r in real):
+    line = [r for r in real if r["round"] == rnd]
+    if not line:
         raise OrchError("--check: round %d of the code review is not journaled" % rnd, 2)
+    blockers = line[-1].get("blockers")
+    if type(blockers) is int and blockers > 0:
+        raise OrchError("--check: round %d left %d blocker(s) open; a blocker is re-reviewed as a round, not checked. "
+                        "Brief round %d (`orch brief review`)." % (rnd, blockers, rnd + 1), 2)
     return rnd
 
 
