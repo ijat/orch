@@ -28,7 +28,7 @@ class FlowBase(core.Base):
     def run_orch(self, *argv, **kw):
         """Task commands default to -t T."""
         argv = list(argv)
-        if "-t" not in argv and argv and argv[0] in ("spawn", "return", "end", "ask", "answer", "checkpoint"):
+        if "-t" not in argv and argv and argv[0] in ("spawn", "return", "end", "ask", "answer", "answers", "checkpoint"):
             argv += ["-t", T]
         return core.Base.run_orch(self, *argv, **kw)
 
@@ -329,7 +329,7 @@ class TestEnd(FlowBase):
         self.ok("journal", "merge_point", "milestone:=1", "sha=def4567890123", "backmerge:=null", "tree_equal:=null", "-t", T)
         self.ok("journal", "auto_security", "areas=auth,parser", "ran:=true", "rule=step5", "-t", T)
         self.ok("journal", "auto_security", "areas=", "ran:=false", "rule=late", "-t", T)
-        self.ok("ask", "Pick a colour", "--options", "red|blue", "--recommended", "blue", "--reversible", "yes",
+        self.ok("ask", "Pick a colour", "--options", "red :: warm|blue :: cool", "--recommended", "blue", "--reversible", "yes",
                 "--assume", "blue", "-t", T)
         self.ok("ask", "Drop the old API?", "--blocks", "2", "-t", T)
         out, _ = self.ok("end", "merged", "-t", T)
@@ -349,7 +349,7 @@ class TestEnd(FlowBase):
     def test_digest_is_capped_at_25_lines(self):
         self.write_retro()
         for i in range(8):
-            self.ok("ask", "question %d" % i, "--options", "a|b", "--reversible", "yes", "--assume", "a", "-t", T)
+            self.ok("ask", "question %d" % i, "--options", "a :: first|b :: second", "--reversible", "yes", "--assume", "a", "-t", T)
             self.ok("ask", "open %d" % i, "-t", T)
             self.ok("journal", "auto_merge", "sha=s%d" % i, "base=main", "branch=b", "revert=r", "-t", T)
             self.ok("journal", "auto_security", "areas=x", "ran:=true", "rule=step5", "-t", T)
@@ -435,16 +435,16 @@ class TestQuestions(FlowBase):
         return os.path.join(self.d, "questions.md")
 
     def test_ask_creates_the_file_from_the_template_and_numbers_questions(self):
-        out, _ = self.ok("ask", "Use SQLite?", "--options", "yes|no", "--recommended", "no", "--blocks", "3,4",
+        out, _ = self.ok("ask", "Use SQLite?", "--options", "yes :: use it|no :: skip it", "--recommended", "no", "--blocks", "3,4",
                          "--reversible", "no", "--as", "implementer", "-t", T)
         self.assertIn("Q1 open (blocks 3, 4)", out)
         self.ok("ask", "Second?", "-t", T)
         text = self.read(self.qpath()).decode()
         self.assertTrue(text.startswith("# Questions: add-login\n"))
         self.assertIn("\n## Q1 — Use SQLite?\n- status: open\n- asked by: implementer at 2026-03-01T10:00Z\n"
-                      "- blocks: 3, 4\n- reversible: no\n- options: yes | no (recommended)\n\n## Q2 — Second?\n"
+                      "- blocks: 3, 4\n- reversible: no\n- topic: Use SQLite?\n- options: yes :: use it | no (recommended) :: skip it\n\n## Q2 — Second?\n"
                       "- status: open\n", text)
-        self.assertIn("- blocks: all\n- reversible: unknown\n", text.split("## Q2")[1])
+        self.assertIn("- blocks: all\n- reversible: unknown\n- topic: Second?\n", text.split("## Q2")[1])
         self.assertNotIn("options:", text.split("## Q2")[1])
         self.assertEqual(len(re.findall(r"^## Q\d+ ", text, re.M)), 2)
 
@@ -463,13 +463,13 @@ class TestQuestions(FlowBase):
 
     def test_assume_needs_reversible_yes_and_an_option(self):
         before = self.snapshot()
-        self.assertIn("--reversible yes", self.refuse(1, "ask", "Colour?", "--options", "red|blue", "--assume", "red", "-t", T))
-        self.refuse(1, "ask", "Colour?", "--options", "red|blue", "--reversible", "unknown", "--assume", "red", "-t", T)
-        self.refuse(1, "ask", "Colour?", "--options", "red|blue", "--reversible", "yes", "--assume", "pink", "-t", T)
+        self.assertIn("--reversible yes", self.refuse(1, "ask", "Colour?", "--options", "red :: warm|blue :: cool", "--assume", "red", "-t", T))
+        self.refuse(1, "ask", "Colour?", "--options", "red :: warm|blue :: cool", "--reversible", "unknown", "--assume", "red", "-t", T)
+        self.refuse(1, "ask", "Colour?", "--options", "red :: warm|blue :: cool", "--reversible", "yes", "--assume", "pink", "-t", T)
         self.assertEqual(self.snapshot(), before)
 
     def test_assume_records_status_answer_and_journal_line(self):
-        self.ok("ask", "Colour?", "--options", "red|blue", "--recommended", "blue", "--reversible", "yes", "--assume",
+        self.ok("ask", "Colour?", "--options", "red :: warm|blue :: cool", "--recommended", "blue", "--reversible", "yes", "--assume",
                 "blue", "--as", "orchestrator", "-t", T)
         text = self.read(self.qpath()).decode()
         self.assertIn("- status: assumed\n", text)
@@ -483,8 +483,8 @@ class TestQuestions(FlowBase):
     def test_ask_validation(self):
         before = self.snapshot()
         for argv in (["ask", "", "-t", T], ["ask", "x", "--recommended", "a", "-t", T],
-                     ["ask", "x", "--options", "a|b", "--recommended", "c", "-t", T],
-                     ["ask", "x", "--options", "a||b", "-t", T], ["ask", "x", "--options", "a|a", "-t", T],
+                     ["ask", "x", "--options", "a :: one|b :: two", "--recommended", "c", "-t", T],
+                     ["ask", "x", "--options", "a :: one||b :: two", "-t", T], ["ask", "x", "--options", "a :: one|a :: two", "-t", T],
                      ["ask", "x", "--blocks", "3;4", "-t", T], ["ask", "x", "--reversible", "maybe", "-t", T],
                      ["ask", "x", "--as", "bad|role", "-t", T]):
             self.refuse(1, *argv)
@@ -514,19 +514,167 @@ class TestQuestions(FlowBase):
         self.assertEqual([q.n for q in qs.open_ones(self.d)], [1])
 
     def test_answer_keeps_every_other_byte_of_the_file(self):
-        self.ok("ask", "first", "--options", "a|b", "-t", T)
+        self.ok("ask", "first", "--options", "a :: one|b :: two", "-t", T)
         self.ok("ask", "second", "-t", T)
         before = self.read(self.qpath()).decode()
         self.ok("answer", "1", "a", "-t", T)
         after = self.read(self.qpath()).decode()
         expect = before.replace("## Q1 \u2014 first\n- status: open\n", "## Q1 \u2014 first\n- status: answered\n")
-        expect = expect.replace("- options: a | b\n", "- options: a | b\n- answer: a (2026-03-01T10:00Z)\n")
+        expect = expect.replace("- options: a :: one | b :: two\n", "- options: a :: one | b :: two\n- answer: a (2026-03-01T10:00Z)\n")
         self.assertEqual(after, expect)
 
 
+class TestAskOptions(FlowBase):
+    """Step 2: `--options "Label :: explanation|Label !! reason"`, --topic, --group, no caps, the volume warning."""
+
+    def qpath(self):
+        return os.path.join(self.d, "questions.md")
+
+    def questions(self):
+        return qs.load_questions(self.d)
+
+    def refused_untouched(self, *argv):
+        before = self.snapshot()
+        err = self.refuse(1, "ask", "x", *argv)
+        self.assertEqual(self.snapshot(), before)
+        return err
+
+    def test_explanations_and_reasons_are_stored_and_recoverable(self):
+        self.ok("ask", "Pick", "--options", "A :: does a|B !! this is deliberately left to you|C (x) :: does c",
+                "--recommended", "A", "--reversible", "yes")
+        text = self.read(self.qpath()).decode()
+        self.assertIn("- options: A (recommended) :: does a | B !! this is deliberately left to you | C (x) :: does c\n", text)
+        q = self.questions()[0]
+        self.assertEqual(q.options(), [("A", True), ("B", False), ("C (x)", False)])
+        self.assertEqual([(o.label, o.kind, o.text, o.recommended) for o in q.option_details()],
+                         [("A", "explanation", "does a", True),
+                          ("B", "reason", "this is deliberately left to you", False),
+                          ("C (x)", "explanation", "does c", False)])
+
+    def test_each_option_needs_exactly_one_separator(self):
+        for opts in ("A|B :: x", "A :: x|B", "A :: x !! y words here|B :: z", "A :: x :: y|B :: z",
+                     "A !! no way to say more !! twice|B :: z", " :: x|B :: z", "A ::|B :: z", "A !!|B :: z"):
+            self.refused_untouched("--options", opts)
+
+    def test_separators_inside_text_are_refused_never_split(self):
+        self.refused_untouched("--options", "A :: runs a::b|B :: z")
+        self.refused_untouched("--options", "std::vector :: a vector|B :: z")
+        self.refused_untouched("--options", "A :: loud!! words|B :: z")
+
+    def test_reason_must_be_real(self):
+        for reason in ("", "two words", "n/a", "None", "obvious", "Self-Explanatory", "not needed", "N/A", "not needed obvious none"):
+            self.refused_untouched("--options", "A :: x|B !! %s" % reason)
+        self.ok("ask", "ok", "--options", "A :: x|B !! the user alone knows this value")
+        self.assertEqual(self.questions()[0].option_details()[1].kind, "reason")
+
+    def test_recommended_cannot_use_a_reason(self):
+        self.refused_untouched("--options", "A !! only the user can say|B :: z", "--recommended", "A")
+
+    def test_reversible_no_cannot_use_a_reason(self):
+        self.refused_untouched("--options", "A :: x|B !! only the user can say", "--reversible", "no")
+        self.ok("ask", "fine", "--options", "A :: x|B :: y", "--reversible", "no")
+        self.ok("ask", "unknown fine", "--options", "A :: x|B !! only the user can say")
+        self.ok("ask", "yes fine", "--options", "A :: x|B !! only the user can say", "--reversible", "yes")
+
+    def test_recommended_and_assume_compare_against_labels_only(self):
+        self.refused_untouched("--options", "A :: first|B :: second", "--recommended", "A :: first")
+        self.refused_untouched("--options", "A :: first|B :: second", "--recommended", "first")
+        self.refused_untouched("--options", "A :: first|B :: second", "--reversible", "yes", "--assume", "second")
+        self.ok("ask", "ok", "--options", "A :: first|B :: second", "--recommended", "B", "--reversible", "yes",
+                "--assume", "B")
+        self.assertIn("- answer: B (", self.read(self.qpath()).decode())
+
+    def test_the_skills_own_ask_example_is_accepted(self):   # F5
+        here = os.path.dirname(os.path.abspath(__file__))
+        skill = os.path.join(here, "..", "..", "..", "skills", "orchestrate", "SKILL.md")
+        with open(skill, encoding="utf-8") as fh:
+            text = re.sub(r"\s*\n\s*", " ", fh.read())
+        m = re.search(r'`orch ask "<question>" --options "([^"]+)" --recommended (\S+) --blocks <steps> --reversible (\w+)`',
+                      text)
+        self.assertIsNotNone(m)
+        self.ok("ask", "example", "--options", m.group(1), "--recommended", m.group(2), "--reversible", m.group(3))
+
+    def test_newline_in_an_option_text_never_loses_a_later_option(self):   # F6
+        self.ok("ask", "multi", "--options", "a :: line one\nline two|b :: other\n  more|c\n:: third")
+        q = self.questions()[0]
+        self.assertEqual([(o.label, o.text) for o in q.option_details()],
+                         [("a", "line one line two"), ("b", "other more"), ("c", "third")])
+        self.assertEqual(self.read(self.qpath()).decode().count("\n- options:"), 1)
+
+    def test_a_label_over_the_limit_is_refused(self):   # F7: status --json never clips a label
+        self.refused_untouched("--options", "%s :: x|B :: y" % ("L" * (qs.LABEL_MAX + 1)))
+        self.ok("ask", "fine", "--options", "%s :: x|B :: y" % ("L" * qs.LABEL_MAX))
+
+    def test_label_cannot_end_in_the_recommended_marker(self):
+        self.refused_untouched("--options", "A (recommended) :: x|B :: y")
+
+    def test_duplicate_labels_refused(self):
+        self.refused_untouched("--options", "A :: x|A :: y")
+
+    def test_old_bare_options_still_read(self):
+        os.makedirs(self.d, exist_ok=True)
+        with open(self.qpath(), "w") as fh:
+            fh.write("# Questions: t\n\n## Q1 \u2014 old\n- status: open\n- options: red | blue (recommended) | std::vector\n")
+        q = self.questions()[0]
+        self.assertEqual(q.options(), [("red", False), ("blue", True), ("std::vector", False)])
+        self.assertEqual([o.kind for o in q.option_details()], [None, None, None])
+        out, _ = self.ok("checkpoint", "--ask")
+        self.assertIn("old", out)
+        self.ok("ask", "new one", "--options", "A :: x|B :: y")   # appending to an old file works
+        self.assertEqual([q.n for q in self.questions()], [1, 2])
+
+    def test_no_options_is_allowed(self):
+        self.ok("ask", "free text?")
+        self.assertNotIn("\n- options:", self.read(self.qpath()).decode().split("## Q1")[1])
+
+    def test_topic_defaults_to_a_clip_and_group_is_optional(self):
+        long = "word " * 40
+        self.ok("ask", long.strip())
+        self.ok("ask", "second", "--topic", "Short title", "--group", "design")
+        q1, q2 = self.questions()
+        self.assertEqual(len(q1.fields["topic"]), 60)
+        self.assertTrue(q1.fields["topic"].endswith("\u2026"))
+        self.assertNotIn("group", q1.fields)
+        self.assertEqual((q2.fields["topic"], q2.fields["group"]), ("Short title", "design"))
+
+    def test_empty_topic_or_group_refused(self):
+        self.refused_untouched("--topic", " ")
+        self.refused_untouched("--group", "")
+
+    def test_no_cap_on_options_or_questions(self):
+        opts = "|".join("opt%d :: does %d" % (i, i) for i in range(9))
+        self.ok("ask", "many", "--options", opts, "--recommended", "opt4")
+        self.assertEqual(len(self.questions()[0].options()), 9)
+        for i in range(6):
+            self.ok("ask", "q%d" % i)
+        out, _ = self.ok("checkpoint", "--ask")
+        self.assertIn("checkpoint: 7 open, asking 7", out)
+
+    def test_volume_warning_at_twenty_open_and_still_parks(self):
+        for i in range(19):
+            rc, out, err = self.run_orch("ask", "q%d" % i, "-t", T)
+            self.assertEqual((rc, err), (0, ""))
+        rc, out, err = self.run_orch("ask", "q19", "-t", T)
+        self.assertEqual(rc, 0)
+        self.assertIn("warning: 20 open questions", err)
+        self.assertEqual(len(self.questions()), 20)
+        rc, out, err = self.run_orch("ask", "q20", "-t", T)
+        self.assertEqual(rc, 0)
+        self.assertIn("warning: 21 open questions", err)
+        self.assertEqual(len(self.questions()), 21)
+        self.assertIn("Q21 open", out)
+
+    def test_assumed_questions_do_not_count_toward_the_warning(self):
+        for i in range(25):
+            rc, out, err = self.run_orch("ask", "a%d" % i, "--options", "x :: ex|y :: why", "--reversible", "yes",
+                                         "--assume", "x", "-t", T)
+            self.assertEqual((rc, err), (0, ""))
+
+
 class TestCheckpoint(FlowBase):
-    def payload(self, out):
-        return json.loads([l for l in out.splitlines() if l.startswith("{")][0])["questions"]
+    def numbered(self, out):
+        """The question texts of the text output, in order."""
+        return [re.match(r"^\d+\. (.*?)  \(Q\d+", l).group(1) for l in out.splitlines() if re.match(r"^\d+\. ", l)]
 
     def test_no_open_questions(self):
         out, _ = self.ok("checkpoint", "--ask", "-t", T)
@@ -550,30 +698,197 @@ class TestCheckpoint(FlowBase):
         self.ok("ask", "named", "--blocks", "M1", "-t", T)
         self.ok("ask", "all-too", "--blocks", "all", "-t", T)
         out, _ = self.ok("checkpoint", "--ask", "-t", T)
-        got = self.payload(out)
-        self.assertEqual([q["question"].split(": ", 1)[1] for q in got], ["all-q", "all-too", "two", "ten"])
-        self.assertIn("2 more stay parked", out)
+        self.assertEqual(self.numbered(out), ["all-q", "all-too", "two", "ten", "named", "none-q"])
+        self.assertNotIn("stay parked", out)
         rec = self.journal()[-1]
         self.assertEqual((rec["questions"], rec["asked"]), (6, True))
 
-    def test_options_recommended_first_at_most_three_plus_hold_on(self):
-        self.ok("ask", "colour", "--options", "red|green|blue|pink", "--recommended", "blue", "-t", T)
+    def test_shows_ten_and_counts_the_rest(self):
+        for i in range(13):
+            self.ok("ask", "q%02d" % i, "-t", T)
+        out, _ = self.ok("checkpoint", "--ask", "-t", T)
+        self.assertEqual(self.numbered(out), ["q%02d" % i for i in range(10)])
+        self.assertIn("3 more stay parked.", out)
+        self.assertIn("asking 10", out)
+        rec = self.journal()[-1]
+        self.assertEqual((rec["kind"], rec["questions"], rec["asked"]), ("checkpoint", 13, True))
+        self.assertEqual(set(rec) - {"ts", "kind", "repo", "slug", "task"}, {"questions", "asked"})   # the line keeps its shape
+
+    def test_text_format_numbers_letters_explains_and_offers_hold_on(self):
+        self.ok("ask", "colour", "--options", "red :: warm|green !! only you know the room|blue :: cool",
+                "--recommended", "blue", "--group", "look", "-t", T)
         self.ok("ask", "free", "-t", T)
         out, _ = self.ok("checkpoint", "--ask", "-t", T)
-        q1, q2 = self.payload(out)
-        self.assertEqual([o["label"] for o in q1["options"]], ["blue (recommended)", "red", "green", "Hold on"])
-        self.assertEqual((q1["header"], q1["multiSelect"]), ("Q1", False))
-        self.assertTrue(all(o["description"] for o in q1["options"]))
-        self.assertEqual([o["label"] for o in q2["options"]], ["Answer in free text", "Hold on"])
-        self.assertNotIn("stay parked", out)
+        self.assertIn("1. colour  (Q1, blocks all, reversible unknown, group look)\n"
+                      "   a) blue (recommended) \u2014 cool\n"
+                      "   b) red \u2014 warm\n"
+                      "   c) green \u2014 not explained: only you know the room\n", out)
+        self.assertIn("2. free  (Q2, blocks all, reversible unknown)\n   Answer in your own words.\n", out)
+        self.assertIn("Hold on: stop and wait until you resume.", out)
+        self.assertIn("`1a 2b`", out)
+        self.assertIn("`ok` to take every recommended option", out)
+        self.assertIn("`hold`", out)
+        self.assertNotIn("{", out)
+        self.assertNotIn("AskUserQuestion", out)
+
+    def test_hold_on_and_hint_without_recommended_options(self):
+        self.ok("ask", "free", "-t", T)
+        out, _ = self.ok("checkpoint", "--ask", "-t", T)
+        self.assertIn("Hold on", out)
+        self.assertNotIn("`ok`", out)
+
+    def test_ok_never_takes_a_critical_question(self):   # F4
+        self.ok("ask", "risky", "--options", "Drop :: deletes the table|Keep :: keeps it", "--recommended", "Drop",
+                "--reversible", "no", "-t", T)
+        out, _ = self.ok("checkpoint", "--ask", "-t", T)
+        self.assertNotIn("`ok`", out)               # only a critical question is recommended: no hint at all
+        self.assertIn("`1a 2b`", out)
+        self.ok("ask", "safe", "--options", "Yes :: does it|No :: skips it", "--recommended", "Yes",
+                "--reversible", "yes", "-t", T)
+        self.ok("ask", "maybe", "--options", "Go :: does it|Stop :: skips it", "--recommended", "Go", "-t", T)
+        out, _ = self.ok("checkpoint", "--ask", "-t", T)
+        self.assertIn("`ok` to take every recommended option except on questions marked `reversible no`", out)
 
     def test_only_open_questions_are_asked(self):
         self.ok("ask", "a", "-t", T)
         self.ok("ask", "b", "-t", T)
-        self.ok("ask", "c", "--options", "x|y", "--reversible", "yes", "--assume", "x", "-t", T)
+        self.ok("ask", "c", "--options", "x :: ex|y :: why", "--reversible", "yes", "--assume", "x", "-t", T)
         self.ok("answer", "1", "ok", "-t", T)
         out, _ = self.ok("checkpoint", "--ask", "-t", T)
-        self.assertEqual([q["header"] for q in self.payload(out)], ["Q2"])
+        self.assertEqual(self.numbered(out), ["b"])
+
+
+class TestAnswers(FlowBase):
+    def qpath(self):
+        return os.path.join(self.d, "questions.md")
+
+    def setUp(self):
+        FlowBase.setUp(self)
+        for i in range(1, 5):
+            self.ok("ask", "question %d" % i)
+
+    def test_answers_several_at_once_like_answer_does(self):
+        n = len(self.log_lines())
+        out, _ = self.ok("answers", "Q1", "yes please", "3", "no\nthanks", "Q4", "later")
+        self.assertEqual(out.split("\n")[:3], ["Q1 answered", "Q3 answered", "Q4 answered"])
+        text = self.read(self.qpath()).decode()
+        for q, ans in (("Q1", "yes please"), ("Q3", "no thanks"), ("Q4", "later")):
+            block = text.split("## %s " % q)[1].split("\n## ")[0]
+            self.assertIn("- status: answered\n", block)
+            self.assertIn("- answer: %s (2026-03-01T10:00Z)\n" % ans, block)
+        self.assertIn("- status: open\n", text.split("## Q2 ")[1].split("\n## ")[0])
+        self.assertEqual([q.n for q in qs.open_ones(self.d)], [2])
+        new = self.log_lines()[n:]
+        self.assertEqual(len(new), 3)
+        self.assertIn("orchestrator: question Q1 answered: yes please", new[0])
+        self.assertEqual(text.split("## Q1 ")[1].count("\n- answer:"), 3)
+
+    def test_after_double_dash_every_text_is_an_answer_even_one_that_looks_like_a_flag(self):
+        """The pane passes `-t <task> -- <qid> <text> ...`: no answer text can be read as an option."""
+        self.ok("answers", "-t", T, "--", "1", "--auto", "3", "-t other")
+        text = self.read(self.qpath()).decode()
+        self.assertIn("- answer: --auto (2026-03-01T10:00Z)\n", text.split("## Q1 ")[1].split("\n## ")[0])
+        self.assertIn("- answer: -t other (2026-03-01T10:00Z)\n", text.split("## Q3 ")[1].split("\n## ")[0])
+        self.assertIn("- status: answered\n", text.split("## Q1 ")[1].split("\n## ")[0])
+
+    def test_same_file_as_single_answers(self):
+        with open(self.qpath(), "rb") as fh:
+            original = fh.read()
+        self.ok("answer", "1", "a")
+        self.ok("answer", "3", "c")
+        one_by_one = self.read(self.qpath())
+        with open(self.qpath(), "wb") as fh:
+            fh.write(original)
+        self.ok("answers", "1", "a", "3", "c")
+        self.assertEqual(self.read(self.qpath()), one_by_one)
+
+    def test_any_failure_writes_nothing(self):
+        before, log = self.read(self.qpath()), self.read(self.d, "log.md")
+        self.ok("answer", "2", "done")   # Q2 is no longer open
+        before, log = self.read(self.qpath()), self.read(self.d, "log.md")
+        for argv in (["answers", "1", "ok", "2", "again"],        # a closed question
+                     ["answers", "1", "ok", "9", "x"],            # an unknown one
+                     ["answers", "1", "ok", "1", "twice"],        # a duplicate
+                     ["answers", "1", "ok", "3", "   "],          # an empty text
+                     ["answers", "1", "ok", "three", "x"],        # a bad id
+                     ["answers", "1", "ok", "3"],                 # an odd count
+                     ["answers"]):
+            self.refuse(1, *argv)
+            self.assertEqual(self.read(self.qpath()), before, argv)
+            self.assertEqual(self.read(self.d, "log.md"), log, argv)
+
+    def test_a_blocker_in_the_last_pair_leaves_the_file_byte_identical(self):
+        before = self.read(self.qpath())
+        self.refuse(1, "answers", "1", "a", "2", "b", "3", "c", "99", "z")
+        self.assertEqual(self.read(self.qpath()), before)
+        self.assertEqual(len(qs.open_ones(self.d)), 4)
+
+
+class TestAnswersAuto(FlowBase):
+    """`orch answers --auto`: the pane's Auto-answer, only for an open `--reversible yes` question's recommended option."""
+
+    def qpath(self):
+        return os.path.join(self.d, "questions.md")
+
+    def setUp(self):
+        FlowBase.setUp(self)
+        self.ok("ask", "Colour?", "--options", "red :: warm|blue :: cool", "--recommended", "blue", "--reversible", "yes")
+        self.ok("ask", "Size?", "--options", "s :: small|m :: medium", "--recommended", "m", "--reversible", "yes")
+        self.ok("ask", "Delete?", "--options", "yes :: gone|no :: kept", "--recommended", "no", "--reversible", "no")
+        self.ok("ask", "Where?", "--options", "a :: here|b :: there", "--recommended", "a")   # reversible unknown
+        self.ok("ask", "Free text?", "--reversible", "yes")                                     # no options
+
+    def test_auto_records_assumed_status_answer_journal_and_log_like_ask_assume(self):
+        n, j = len(self.log_lines()), len(self.journal())
+        out, _ = self.ok("answers", "--auto", "1", "blue", "2", "m", "--as", "pane")
+        self.assertEqual(out.split("\n")[:2], ["Q1 assumed blue", "Q2 assumed m"])
+        text = self.read(self.qpath()).decode()
+        for q, ans in (("Q1", "blue"), ("Q2", "m")):
+            block = text.split("## %s " % q)[1].split("\n## ")[0]
+            self.assertIn("- status: assumed\n", block)
+            self.assertIn("- answer: %s (2026-03-01T10:00Z)\n" % ans, block)
+        self.assertEqual([q.n for q in qs.open_ones(self.d)], [3, 4, 5])
+        recs = self.journal()[j:]
+        self.assertEqual([(r["kind"], r["decision"], r["reversible"], r["role"], r["question"]) for r in recs],
+                         [("assumed_decision", "blue", True, "pane", "Q1: Colour?"),
+                          ("assumed_decision", "m", True, "pane", "Q2: Size?")])
+        new = self.log_lines()[n:]
+        self.assertEqual(len(new), 2)
+        self.assertIn("pane: question Q1 assumed blue", new[0])
+
+    def test_same_question_file_as_ask_assume(self):
+        self.ok("ask", "Colour?", "--options", "red :: warm|blue :: cool", "--recommended", "blue", "--reversible", "yes",
+                "--assume", "blue")
+        assumed = self.read(self.qpath()).decode().split("## Q6 ")[1]
+        self.ok("answers", "--auto", "1", "blue")
+        auto = self.read(self.qpath()).decode().split("## Q1 ")[1].split("\n## ")[0]
+        key = lambda block: [l.split(" (")[0] for l in block.splitlines() if l.startswith(("- status", "- answer"))]  # noqa: E731
+        self.assertEqual(key(auto), key(assumed.split("\n## ")[0]))
+
+    def test_anything_not_recommended_reversible_or_open_refuses_and_writes_nothing(self):
+        self.ok("answer", "5", "done")   # closed (no options, reversible yes)
+        before, log, jour = self.read(self.qpath()), self.read(self.d, "log.md"), len(self.journal())
+        for argv in (["answers", "--auto", "1", "blue", "2", "s"],         # Q2: s is not the recommended option
+                     ["answers", "--auto", "1", "blue", "3", "no"],        # Q3: --reversible no
+                     ["answers", "--auto", "1", "blue", "4", "a"],         # Q4: reversible unknown
+                     ["answers", "--auto", "1", "red"],                    # not recommended
+                     ["answers", "--auto", "1", "Blue"],                   # label must match exactly
+                     ["answers", "--auto", "1", "blue", "5", "x"],         # no options, already answered
+                     ["answers", "--auto", "1", "blue", "9", "x"],         # unknown id
+                     ["answers", "--auto", "1", "blue", "1", "blue"]):     # duplicate
+            self.refuse(1, *argv)
+            self.assertEqual(self.read(self.qpath()), before, argv)
+            self.assertEqual(self.read(self.d, "log.md"), log, argv)
+            self.assertEqual(len(self.journal()), jour, argv)
+
+    def test_a_question_without_options_is_never_auto_answered(self):
+        before = self.read(self.qpath())
+        self.refuse(1, "answers", "--auto", "5", "anything")
+        self.assertEqual(self.read(self.qpath()), before)
+
+    def test_without_auto_answers_still_closes_as_answered(self):
+        self.ok("answers", "1", "blue")
+        self.assertIn("- status: answered\n", self.read(self.qpath()).decode().split("## Q1 ")[1].split("\n## ")[0])
 
 
 class TestResume(FlowBase):

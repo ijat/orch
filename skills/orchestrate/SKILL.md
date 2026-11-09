@@ -274,7 +274,7 @@ choice, unconfirmable fact — stops, sets `blocked`, writes what it needs into 
 3. **Ask the user** only when 1 and 2 produced no real answer. A blocker that is a **reversible**
    choice, **outside every sensitive area** (step 5 list) and contradicts **no recorded user
    decision** isn't asked: take the recommended option and continue, recording it —
-   `orch ask "<question>" --options "A|B" --recommended A --reversible yes --assume A` (status `assumed`,
+   `orch ask "<question>" --options "A :: what it does|B :: what it does" --recommended A --reversible yes --assume A` (status `assumed`,
    journaled, in every later brief, listed in the digest). Any other question is parked with a
    notification (next section); only the steps that depend on it wait.
 
@@ -353,14 +353,36 @@ is written**, and the other files point here.
 
 ## Checkpoints and questions
 
-Ask the user only what they must decide. Park a question: `orch ask "<question>" --options "A|B"
---recommended A --blocks <steps> --reversible no` (`--blocks`: step ids, `all` (default) or `none`) and keep
-working on everything it doesn't block; `orch answer <qid> "<answer>"` resolves it.
+Ask the user only what they must decide. Park a question: `orch ask "<question>" --options "A :: what it does|B !! why
+it can't be explained" --recommended A --blocks <steps> --reversible yes` (`--blocks`: step ids, `all` (default) or `none`;
+`--topic` a short title, default the first 60 characters; `--group` a name that batches related questions) and keep
+working on everything it doesn't block; `orch answer <qid> "<answer>"` resolves one, `orch answers <qid> "<answer>" <qid>
+"<answer>" …` several at once (all or nothing). Every option is `Label :: explanation` or `Label !! reason` (3 or more words,
+never filler such as "n/a" or "obvious"); the recommended option and every option of a `--reversible no` question are
+explained, never given a reason. There is no cap on options or questions; `orch ask` warns at 20 open questions and still
+parks, so group related ones and merge duplicates. `orch status --json` carries each task's questions for orch-pane.
+
+**Asking the user.** In text, never a blocking dialog, so the session stays free; end the turn after asking. Numbered
+questions, lettered options with the recommended one first and marked `(recommended)`, each option explained, a reply hint
+(`1a 2b`, `ok` for every recommended one except on a critical question, `hold`), and always **Hold on** (stop and wait
+until the user resumes). Write each explanation for someone who has not read the code: say what changes for the user, explain any technical term, and add an
+example when it is still abstract. A critical change (destructive, hard to reverse, wide blast radius; `--reversible no`):
+no preselected option, and each option says what will happen, with a before and after. Only session startup (the mode choice,
+an `orch current` `ask`) is asked as the global block says; everything else, including the plan gate and every question a role
+or skill (`orch-init`) raises, follows this format.
 
 **Checkpoint** (`orch checkpoint`) after plan approval, after each milestone or review point, and before
 the merge. None open → continue, no notification. Some open → keep working on what they don't block;
-only when nothing independent is left, `orch checkpoint --ask` prints one `AskUserQuestion` batch (≤ 4
-questions, recommended option first, **Hold on**): ask it, `orch answer` each reply.
+only when nothing independent is left, `orch checkpoint --ask` prints the first 10 open questions by blocking order in the format
+above, then how many more stay parked: show that text to the user as it is, end the turn, and when they reply record it with
+`orch answers` (or `orch answer`); repeat for the rest.
+
+**Requested compaction (optional).** Only at a checkpoint, only if the orch-pane tool `mcp__orch-pane__compact_when_idle` is in
+your tool list (ToolSearch it if deferred), and only when no subagent runs and no spawn is in flight. Call it with `instructions`
+naming what the summary must keep (the task directory, the current step, open decisions), then end the turn: the pane compacts
+once, between turns, and wakes you. Afterwards re-read the state from `orch` (`orch resume`, `orch status --json`, `status.md`,
+`log.md`) and trust that, not memory. A refusal (it says why) is not retried before the next checkpoint. No tool, or a refusal,
+changes nothing: carry on as without it.
 
 **Hard stops** — the only things never parked or assumed; ask or report at once: sudo, an exclusive VM
 or device, a paid action; a destructive operation outside the task's worktree; **push**; an upstream PR;
@@ -435,16 +457,31 @@ mode, read `~/.claude/skills/orchestrate/INTERACTIVE.md` first and apply its dif
 
 ### 1. Confirm the mode
 
-If the user hasn't chosen orchestration mode, confirm it's warranted (`~/.claude/CLAUDE.md`,
-"Orchestration mode"). Trivial or read-only work: say so and just do it. If the user didn't say
-standard, lite or interactive, recommend one against the lite eligibility rules and let them pick.
+The global block (`~/.claude/CLAUDE.md`, "Orchestration mode") asks which mode and loads this skill; these are the rules
+behind that ask. **Offer it** before a new feature, a bugfix or refactor spanning several files, or anything that would
+warrant a written plan: interactive (this session plans with the user), standard, lite (small, low-risk tasks) or normal
+single-session. **Recommend interactive by default** for non-trivial work and put it first; recommend another only when the
+task clearly fits it, and say why. List only those four modes (a global rule that adds an option to every question does
+not apply to this one). Never pick for the user, even if a memory says to skip the question; ask once, then get on with it.
+**Don't offer it** for questions, read-only research, trivial edits, or when the user already dictated the approach: say so
+and just do the work. If the user didn't say standard, lite or interactive, recommend one against the lite eligibility
+rules and let them pick. Choosing a mode *is* the request to orchestrate, so the task runs in a git worktree by default
+(step 6), even if the user otherwise avoids worktrees.
 
 ### 2. Resume check — always first
 
 `orch show` lists the active tasks of every repo (`ACTIVE.md` is the same list: generated, never edit).
 `orch current` maps this directory, or a worktree of it, to its tasks and prints an `action:` line: `resume <task>`
-for one live task, `ask` when it is stale, uncertain, touched in the last 15 minutes or one of several, `none` otherwise. After a prompt that
-names no task, follow that line; `ask` goes to the user. If a task matches this work, `orch resume <repo>/<slug>` prints a read-only packet; read it (an old
+for one live task, `ask` when it is stale, uncertain, touched in the last 15 minutes or one of several, `none` otherwise. It runs when this session has nothing in
+progress and the prompt only asks to pick up pending work ("resume", "continue", "start", "carry on", "where were we", or the
+same thing in other words); a session already working on something means "continue" is carrying on with that work, and a prompt that
+names other work is that work, not a resume. The outcomes:
+- `resume <repo>/<slug>`: resume that task without asking.
+- `ask`: ask the user which of the listed tasks to resume (the startup choice, asked as the global block says).
+- `none`: say no task is active here and name the other repos' tasks it lists; if the project has its own hand-off file
+  (`docs/STATE.md`, `STATE.md`), offer its next step.
+
+If a task matches this work, `orch resume <repo>/<slug>` prints a read-only packet; read it (an old
 layout it can't read: `status.md` and `log.md`) before anything else, tell the user where things
 stand, and resume from the last incomplete step. Never restart a half-done task or make a second dir for it.
 
@@ -491,7 +528,7 @@ Journal `plan_shape`; show the shape line at the gate, and if the user overrules
 
 Read `plan.md` yourself and `orch plan-check <plan.md>` it (a FAIL goes back to the planner), then **present it to the user and get approval before any code is
 written.** Show its Summary, every decision marked `needs user`, and the implementer tier
-`TIERS.md` gives each step (one line each), and give the file path for the rest; if the Summary can't stand alone, send it back to the planner before the gate. If they want changes, send their feedback to the same planner tier to append a
+`TIERS.md` gives each step (one line each), and give the file path for the rest (ask in the text format, § Checkpoints and questions); if the Summary can't stand alone, send it back to the planner before the gate. If they want changes, send their feedback to the same planner tier to append a
 `## Revision N` section, and return to this gate — don't rewrite the plan yourself.
 
 Before asking: `orch set task_state=awaiting_approval --log "plan ready"`. Add one line to the question:
