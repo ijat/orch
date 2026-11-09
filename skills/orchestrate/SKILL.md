@@ -377,6 +377,13 @@ only when nothing independent is left, `orch checkpoint --ask` prints the first 
 above, then how many more stay parked: show that text to the user as it is, end the turn, and when they reply record it with
 `orch answers` (or `orch answer`); repeat for the rest.
 
+**Requested compaction (optional).** Only at a checkpoint, only if the orch-pane tool `mcp__orch-pane__compact_when_idle` is in
+your tool list (ToolSearch it if deferred), and only when no subagent runs and no spawn is in flight. Call it with `instructions`
+naming what the summary must keep (the task directory, the current step, open decisions), then end the turn: the pane compacts
+once, between turns, and wakes you. Afterwards re-read the state from `orch` (`orch resume`, `orch status --json`, `status.md`,
+`log.md`) and trust that, not memory. A refusal (it says why) is not retried before the next checkpoint. No tool, or a refusal,
+changes nothing: carry on as without it.
+
 **Hard stops** — the only things never parked or assumed; ask or report at once: sudo, an exclusive VM
 or device, a paid action; a destructive operation outside the task's worktree; **push**; an upstream PR;
 a merge the guard refuses (`orch merge` exit 2); a usage `STOP`; three strikes after rungs 1–2. Every other
