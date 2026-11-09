@@ -601,6 +601,10 @@ class TestAskOptions(FlowBase):
                          [("a", "line one line two"), ("b", "other more"), ("c", "third")])
         self.assertEqual(self.read(self.qpath()).decode().count("\n- options:"), 1)
 
+    def test_a_label_over_the_limit_is_refused(self):   # F7: status --json never clips a label
+        self.refused_untouched("--options", "%s :: x|B :: y" % ("L" * (qs.LABEL_MAX + 1)))
+        self.ok("ask", "fine", "--options", "%s :: x|B :: y" % ("L" * qs.LABEL_MAX))
+
     def test_label_cannot_end_in_the_recommended_marker(self):
         self.refused_untouched("--options", "A (recommended) :: x|B :: y")
 

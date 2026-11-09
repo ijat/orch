@@ -22,6 +22,7 @@ REASON_FILLER = frozenset(("n/a", "na", "none", "obvious", "self-explanatory", "
 MIN_REASON_WORDS = 3
 OPEN_WARN = 20                                   # D8: warn at this many open questions, still park
 TOPIC_MAX = 60
+LABEL_MAX = 200   # an answer is the label as written; status --json never clips one, so `orch ask` bounds it
 UNGROUPED = "(ungrouped)"                         # the name `orch status --json --question-group` gives questions with no group
 SHOW_MAX = 10                                     # `orch checkpoint --ask` writes the first 10 by sort_key, then the count left
 Option = namedtuple("Option", "label text kind recommended")   # kind: explanation | reason | None (a bare, old option)
@@ -169,6 +170,9 @@ def split_options(raw, recommended, reversible="unknown"):
         label, text = (x.strip() for x in OPTION_SEP_RE.split(part, 1))
         if not label or not text:
             raise OrchError("option %r needs a label before and text after `%s`" % (part, mark), 1)
+        if len(label) > LABEL_MAX:
+            raise OrchError("option label %r is over %d characters; a label is the short name of the option "
+                            "(put the detail after `%s`)" % (label[:40] + "...", LABEL_MAX, mark), 1)
         if RECOMMENDED_END_RE.search(label):
             raise OrchError("option label %r must not end with (recommended); use --recommended" % label, 1)
         kind = "explanation" if mark == "::" else "reason"
