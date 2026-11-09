@@ -28,7 +28,9 @@ FIX_WORD_RE = re.compile(r"(?<![A-Za-z0-9])fix(?![A-Za-z0-9])", re.I)
 SPAWN_MS_PREFIX_RE = re.compile(r"^m(\d+)-(.+)$", re.I)   # a spawn names a step `m10-11` for step 11 of milestone 10
 HISTORY_MAX = 200            # newest answered and assumed questions in the questions block
 FULL_BUDGET = 30000          # bytes of the printed (indent 1) JSON: a question list is full up to here,
+HISTORY_FULL_BUDGET = 12000  # the history keeps options only on its newest few; the rest keep answer and topic
 COMPACT_BUDGET = 45000       # compact up to here, minimal after (the open list and the history each)
+LABEL_SAFETY = 1000          # a read-side guard only: `orch ask` refuses a label over questions.LABEL_MAX
 QUESTION_STATUSES = ("open", "answered", "assumed", "withdrawn")
 ASKED_RE = re.compile(r"^(.*?)\s+at\s+(\S+)$")
 ANSWER_RE = re.compile(r"^(.*?)\s*\((\d{4}-\d\d-\d\dT[0-9:]+Z?)\)$", re.S)
@@ -354,39 +356,47 @@ def overall(program, steps, milestones):
 
 def question_entry(q, detail="full"):
     """One question for the pane. `detail` shrinks an entry once the list's byte budget is spent: `full`; `compact`
-    (no options, clipped text and answer); `minimal` (id, status, a short text, group and blocks only). Every key is
-    always present, so a consumer reads all three the same way."""
+    (no options, clipped text and answer); `minimal` (id, status, a short text, group and blocks only); and, for the
+    answered history only, `history` (no options, reversible, blocks or asker, but the answer, its time and the topic: the
+    pane shows and searches them on every page). Every key is always present, so a consumer reads all four the same way.
+    A label is never clipped (`orch ask` refuses one over LABEL_MAX, and an answer is the label as written); the text
+    limits are generous, and `fit`'s byte budget bounds the payload."""
     full = detail == "full"
     asked_by = asked = answer = answered = None
     if detail != "minimal":
-        m = ASKED_RE.match(q.fields.get("asked by", ""))
-        if m:
-            asked_by, asked = db.cell(m.group(1), 60), db.cell(m.group(2), 32)
+        if detail != "history":
+            m = ASKED_RE.match(q.fields.get("asked by", ""))
+            if m:
+                asked_by, asked = db.cell(m.group(1), 60), db.cell(m.group(2), 32)
         raw = q.fields.get("answer", "")
         if raw:
-            clip = 300 if full else 50
+            clip = {"full": 1000, "history": 160, "compact": 50}[detail]
             m = ANSWER_RE.match(raw)
             answer, answered = (db.cell(m.group(1), clip), db.cell(m.group(2), 32)) if m else (db.cell(raw, clip), None)
-    options = [{"label": db.cell(o.label, 80), "text": db.cell(o.text, 240), "kind": o.kind,
+    options = [{"label": db.cell(o.label, LABEL_SAFETY), "text": db.cell(o.text, 2000), "kind": o.kind,
                 "recommended": o.recommended} for o in q.option_details()] if full else []
-    text_max = {"full": 400, "compact": 100, "minimal": 60}[detail]
+    text_max = {"full": 2000, "history": 80, "compact": 100, "minimal": 60}[detail]
     return {"id": "Q%d" % q.n, "n": q.n, "status": q.status or None, "text": db.cell(q.text, text_max),
-            "topic": db.cell(q.fields.get("topic"), 80 if full else 40) if detail != "minimal" else None,
-            "group": db.cell(q.fields.get("group"), 60), "reversible": db.cell(q.fields.get("reversible"), 10),
-            "blocks": db.cell(q.fields.get("blocks"), 60), "asked_by": asked_by, "asked": asked,
+            "topic": db.cell(q.fields.get("topic"), {"full": 80, "history": 60, "compact": 40}[detail])
+            if detail != "minimal" else None,
+            "group": db.cell(q.fields.get("group"), 60),
+            "reversible": db.cell(q.fields.get("reversible"), 10) if detail != "history" else None,
+            "blocks": db.cell(q.fields.get("blocks"), 60) if detail != "history" else None, "asked_by": asked_by, "asked": asked,
             "options": options, "answer": answer, "answered": answered, "detail": detail}
 
 
-def fit(questions, skip=0):
+def fit(questions, skip=0, tail=None, full_budget=FULL_BUDGET):
     """Entries in order: full while the list has spent under FULL_BUDGET bytes, compact up to COMPACT_BUDGET, then
     minimal. Nothing is dropped, so at 200 questions the list is still complete and bounded. `skip` moves the window
-    of full entries: the first `skip` entries are minimal and the budgets start at the next one."""
+    of full entries: the first `skip` entries are minimal and the budgets start at the next one. With `tail` (the
+    history), every entry after the full ones takes that detail instead of compact and minimal."""
     out, used = [], 0
     for i, q in enumerate(questions):
         if i < skip:
             out.append(question_entry(q, "minimal"))
             continue
-        entry = question_entry(q, "full" if used < FULL_BUDGET else "compact" if used < COMPACT_BUDGET else "minimal")
+        detail = "full" if used < full_budget else tail or ("compact" if used < COMPACT_BUDGET else "minimal")
+        entry = question_entry(q, detail)
         text = json.dumps(entry, indent=1)
         used += len(text) + 6 * text.count("\n")   # the entry sits about six levels deep in the printed block
         out.append(entry)
@@ -427,7 +437,7 @@ def questions_block(task_dir, group=None, skip=0):
     def when(q):
         m = ANSWER_RE.match(q.fields.get("answer", "")) or ASKED_RE.match(q.fields.get("asked by", ""))
         return (m.group(2) if m else "", q.n)
-    out["history"] = fit(sorted(done, key=when, reverse=True)[:HISTORY_MAX])
+    out["history"] = fit(sorted(done, key=when, reverse=True)[:HISTORY_MAX], tail="history", full_budget=HISTORY_FULL_BUDGET)
     return out
 
 

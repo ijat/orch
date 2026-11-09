@@ -582,12 +582,45 @@ class TestQuestionsBlock(Base):
         self.assertLess(size, 256 * 1024)
         self.assertEqual(len(q["open"]), 200)                      # every open question of the group is listed
         self.assertEqual(len(q["history"]), 200)
+        self.assertTrue(all(e["answer"] and e["topic"] for e in q["history"]))   # F8: every one of the 200
         self.assertEqual(q["open"][0]["detail"], "full")
         self.assertEqual(q["open"][-1]["detail"], "minimal")       # the budget ran out: later ones shrink
         self.assertEqual(q["open"][-1]["options"], [])
         self.assertEqual({e["detail"] for e in q["open"]}, {"full", "compact", "minimal"})
         self.assertEqual([e["n"] for e in q["open"]], list(range(201, 401)))
         self.assertTrue(all(e["text"] for e in q["open"]))
+
+    def test_history_keeps_answer_and_topic_at_every_detail_level(self):   # F8
+        text = ("word " * 80).strip()
+        for i in range(120):
+            self.cli("ask", "%d %s" % (i, text), "--options", "yes :: " + "explains " * 25 + "|no :: skip",
+                     "--topic", "Topic %d" % i, "--group", "g")
+        args = []
+        for n in range(1, 121):
+            args += [str(n), "yes" if n % 2 else "Answer %d with some typed words" % n]
+        self.cli("answers", *args)
+        q, size = self.block()
+        self.assertLess(size, 256 * 1024)
+        self.assertEqual(len(q["history"]), 120)
+        details = {e["detail"] for e in q["history"]}
+        self.assertTrue({"full", "history"} <= details, details)
+        for e in q["history"]:
+            self.assertTrue(e["answer"] and e["answered"] and e["topic"].startswith("Topic"), e["id"])
+        self.assertTrue(all(e["options"] == [] for e in q["history"] if e["detail"] != "full"))
+        self.assertEqual(q["history"][-1]["answer"], "yes")
+
+    def test_a_full_entry_keeps_the_whole_label_and_explanation_and_auto_answer_takes_it(self):   # F7
+        label = "L" * 100
+        expl = "explains " * 80
+        self.cli("ask", "Q " + "word " * 120, "--options", "%s :: %s|other :: short" % (label, expl),
+                 "--recommended", label, "--reversible", "yes")
+        q, _ = self.block()
+        (e,) = q["open"]
+        self.assertEqual([o["label"] for o in e["options"]], [label, "other"])
+        self.assertEqual(e["options"][0]["text"], expl.strip())
+        self.assertTrue(e["text"].startswith("Q word") and not e["text"].endswith("\u2026"))
+        self.cli("answers", "--auto", "1", e["options"][0]["label"])
+        self.assertEqual(self.block()[0]["history"][0]["answer"], label)
 
     def test_question_skip_moves_the_window_of_full_entries_and_stays_bounded(self):
         text = ("word " * 80).strip()
