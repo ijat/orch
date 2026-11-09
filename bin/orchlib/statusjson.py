@@ -334,11 +334,15 @@ def question_entry(q, detail="full"):
             "options": options, "answer": answer, "answered": answered, "detail": detail}
 
 
-def fit(questions):
+def fit(questions, skip=0):
     """Entries in order: full while the list has spent under FULL_BUDGET bytes, compact up to COMPACT_BUDGET, then
-    minimal. Nothing is dropped, so at 200 questions the list is still complete and bounded."""
+    minimal. Nothing is dropped, so at 200 questions the list is still complete and bounded. `skip` moves the window
+    of full entries: the first `skip` entries are minimal and the budgets start at the next one."""
     out, used = [], 0
-    for q in questions:
+    for i, q in enumerate(questions):
+        if i < skip:
+            out.append(question_entry(q, "minimal"))
+            continue
         entry = question_entry(q, "full" if used < FULL_BUDGET else "compact" if used < COMPACT_BUDGET else "minimal")
         text = json.dumps(entry, indent=1)
         used += len(text) + 6 * text.count("\n")   # the entry sits about six levels deep in the printed block
@@ -351,9 +355,9 @@ def empty_questions():
             "history": [], "history_total": 0}
 
 
-def questions_block(task_dir, group=None):
+def questions_block(task_dir, group=None, skip=0):
     """Counts by status and by group, the open questions of one group in full (the group of the first open question
-    by sort_key, or `group`), and the newest HISTORY_MAX answered or assumed ones."""
+    by sort_key, or `group`; full from the `skip`-th on), and the newest HISTORY_MAX answered or assumed ones."""
     out = empty_questions()
     data = db.read_file(os.path.join(task_dir, "questions.md"))
     if data is None:
@@ -373,7 +377,7 @@ def questions_block(task_dir, group=None):
     chosen = group if group is not None else (first[0] if first else None)
     out["open_group"] = chosen
     if chosen is not None:
-        out["open"] = fit([q for q in opens if label(q) == chosen])
+        out["open"] = fit([q for q in opens if label(q) == chosen], skip)
     done = [q for q in every if q.status in ("answered", "assumed")]
     out["history_total"] = len(done)
 
@@ -412,7 +416,7 @@ KEYS = ("id", "repo", "slug", "task_dir", "repo_path", "worktree", "in_cwd", "st
         "running", "steps", "milestones", "overall", "error")
 
 
-def build(repo, slug, d, text, state, cwd, question_group=None):
+def build(repo, slug, d, text, state, cwd, question_group=None, question_skip=0):
     jtext = db.read_text(os.path.join(d, "journal.jsonl"))
     journal = db.Journal(jtext, "%s/%s" % (repo, slug))
     base, _ = db.build_task(repo, slug, d, text, state, journal)
@@ -427,7 +431,7 @@ def build(repo, slug, d, text, state, cwd, question_group=None):
     t["overall"] = {"percent": None, "estimate": False, "basis": "steps"}
     t["questions"] = empty_questions()
     try:
-        t["questions"] = questions_block(d, question_group)
+        t["questions"] = questions_block(d, question_group, question_skip)
     except Exception as exc:
         t["error"] = db.cell("%s: %s" % (type(exc).__name__, exc), 200)
     try:
@@ -458,7 +462,7 @@ def build(repo, slug, d, text, state, cwd, question_group=None):
     return t
 
 
-def compute(root, cwd=None, question_group=None):
+def compute(root, cwd=None, question_group=None, question_skip=0):
     cwd = os.path.realpath(cwd) if cwd else None
     found = []
     for repo, slug, d in db.task_dirs(root):
@@ -469,7 +473,7 @@ def compute(root, cwd=None, question_group=None):
         if state in db.FINISHED:
             continue
         mtimes = [i.st_mtime for i in (db.stat_regular(os.path.join(d, n)) for n in ("status.md", "log.md")) if i]
-        found.append((-(max(mtimes) if mtimes else 0), "%s/%s" % (repo, slug), build(repo, slug, d, text, state, cwd, question_group)))
+        found.append((-(max(mtimes) if mtimes else 0), "%s/%s" % (repo, slug), build(repo, slug, d, text, state, cwd, question_group, question_skip)))
     found.sort(key=lambda f: (f[0], f[1]))
     return {"schema": SCHEMA, "generated": now(), "cwd": cwd, "tasks": [f[2] for f in found]}
 
@@ -479,7 +483,7 @@ def cmd_status(ns, extra):
         raise OrchError("status lists every active task; -t is not supported", 1)
     if not ns.json_out:
         raise OrchError("status needs --json", 1)
-    sys.stdout.write(json.dumps(compute(orch_root(), ns.cwd, ns.question_group), indent=1) + "\n")
+    sys.stdout.write(json.dumps(compute(orch_root(), ns.cwd, ns.question_group, ns.question_skip), indent=1) + "\n")
     return 0
 
 
@@ -489,4 +493,7 @@ def register(add):
     sp.add_argument("--question-group", default=None,
                     help="return this group's open questions in full (default: the group of the first open question; "
                          "%s names the ones with no group)" % qs.UNGROUPED)
+    sp.add_argument("--question-skip", type=int, default=0, metavar="N",
+                    help="in that group, the first N open questions come as minimal entries and the full ones start at "
+                         "the next (the pane's way to read the options of a question past the first ~50)")
     sp.add_argument("--cwd", default=None, help="mark tasks whose repo or worktree holds this directory (in_cwd)")
