@@ -262,14 +262,14 @@ class TestTruthfulProgress(Base):
         # a program: M10's prefix matches in M10, not in M2
         files = {"roadmap.md": TestProgram.ROADMAP, "m02-two/plan.md": plan_text(["1", "2", "11"])}
         self.task("prog", state="implementing", shape="roadmap", milestone="M2", files=files,
-                  rows="| implementer | in_progress | 2026-03-01T12:00Z | 11 | |",
+                  rows="| implementer | in_progress | 2026-03-01T12:00Z | 2 | |",
                   journal=[self.spawn(["m2-11"], milestone=2)])
         s = self.one()["steps"]
         self.assertEqual((s["current"], s["done"]), (["11"], 2))
         shutil.rmtree(os.path.join(self.root, "app", "prog"))
         self.task("prog", state="implementing", shape="roadmap", milestone="M2", files=files,
                   rows="| implementer | in_progress | 2026-03-01T12:00Z | 11 | |",
-                  journal=[self.spawn(["m10-11"])])
+                  journal=[self.spawn(["m10-11"])])   # row names 11, spawn's `m10-11` is another milestone's
         s = self.one()["steps"]
         self.assertEqual(s["current"], ["m10-11"])   # names another milestone: no match, stays as written
         self.assertFalse(any(i["current"] for i in s["items"]))
@@ -296,6 +296,22 @@ class TestTruthfulProgress(Base):
         self.assertEqual(self.steps_of("fx", "fix round 1", ids, None)["done"], 3)
         s = self.steps_of("fx", "fix round 1", ids, [self.spawn([3])])
         self.assertEqual((s["done"], s["current"]), (2, ["3"]))
+        self.check_invariant(s)
+
+    def test_multi_step_spawn_counts_its_completed_steps(self):   # Revision 3
+        ids = [str(i) for i in range(1, 7)]
+        s = self.steps_of("ms", "5", ids, [self.spawn([4, 5, 6])])    # row names 5, in the list: 4 and 5 done, 6 held
+        self.assertEqual((s["done"], s["current"]), (5, ["6"]))
+        self.assertEqual([i["id"] for i in s["items"] if i["current"]], ["6"])
+        self.check_invariant(s)
+        s = self.steps_of("ms", "3", ids, [self.spawn([4, 5, 6])])    # row names 3, not in the list: all three held
+        self.assertEqual((s["done"], s["current"]), (3, ["4", "5", "6"]))
+        s = self.steps_of("ms", "6", ids, [self.spawn([2, 3])])       # row beyond the list (rework): both held
+        self.assertEqual((s["done"], s["current"]), (4, ["2", "3"]))
+        self.assertEqual([i["id"] for i in s["items"] if not i["done"]], ["2", "3"])
+        self.check_invariant(s)
+        s = self.steps_of("ms", "3", ids, [self.spawn([1, 2, 3])])    # the whole list is done: nothing held
+        self.assertEqual((s["done"], s["current"]), (3, []))
         self.check_invariant(s)
 
     def test_unreturned_spawn_beside_a_finished_row_holds_nothing(self):

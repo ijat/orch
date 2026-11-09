@@ -132,13 +132,10 @@ def step_order(steps):
     return [s for _, s in sorted(enumerate(steps), key=key)]
 
 
-def steps_done(rows, ids, all_done=False):
-    """Count of done steps, `ids` in step order (D4, fix round 1): every step up to the furthest one an
-    implementer row's `last completed step` cell names. A fix-round number is never a step id. When the
-    newest implementer row (by its timestamp cell, then table order) names a fix round, or `all_done`, every
-    step is done; an older fix-round row (an earlier milestone's review, beside later part rows) is not."""
-    if not ids:
-        return None
+def scan_rows(rows, ids):
+    """(best, fixing): the position in `ids` of the furthest step an implementer row's `last completed step` cell
+    names (-1 for none), and whether the newest implementer row (by its timestamp cell, then table order) names a
+    fix round. A fix-round number is never a step id."""
     pos = {sid.lower(): i for i, sid in enumerate(ids)}
     best, newest = -1, None
     for n, (role, row) in enumerate(rows):
@@ -153,6 +150,17 @@ def steps_done(rows, ids, all_done=False):
             if i is not None and i > best:
                 best = i
     fixing = newest is not None and bool(FIX_ROUND_RE.search(newest[1]) or FIX_WORD_RE.search(newest[1]))
+    return best, fixing
+
+
+def steps_done(rows, ids, all_done=False):
+    """Count of done steps, `ids` in step order (D4, fix round 1): every step up to the furthest one an
+    implementer row's `last completed step` cell names. A fix-round number is never a step id. When the
+    newest implementer row (by its timestamp cell, then table order) names a fix round, or `all_done`, every
+    step is done; an older fix-round row (an earlier milestone's review, beside later part rows) is not."""
+    if not ids:
+        return None
+    best, fixing = scan_rows(rows, ids)
     return len(ids) if all_done or fixing else best + 1
 
 
@@ -201,13 +209,24 @@ def steps_block(task_dir, program, ms_no, rows, spawn, state=None, impl=()):
     if spawn and (spawn["role"] or "").lower().startswith("implementer") and not spawn["returned"] \
             and spawn["steps"] and (not program or spawn["milestone"] is None or spawn["milestone"] == ms_no):
         current = held_steps(spawn["steps"], ids, ms_no)
-    # a step a running implementer holds is never done, whatever the rows' high-water mark says (it is being reworked).
-    # "Running" is an unreturned spawn and an implementer row still working: a spawn left unreturned beside a
-    # finished row (the plan gate, a task at rest) holds nothing.
-    cur = set(s.lower() for s in current or [])
+    # A running implementer's step is never done on the rows' high-water mark alone (Luneterm: row 15 while the
+    # spawn reworks step 11). Within the spawn's step list, steps up to the row's `last completed step` are done
+    # when that step is in the list (a multi-step spawn that is part way through); otherwise every step of the
+    # spawn is held. "Running" is an unreturned spawn and an implementer row still working: a spawn left
+    # unreturned beside a finished row (the plan gate, a task at rest) holds nothing.
     working = any(role.lower().startswith("implementer") and row.get("state") in ("in_progress", "waiting")
                   for role, row in rows)
-    held = cur if working else set()
+    held = set()
+    if working and current:
+        known = {sid.lower(): i for i, sid in enumerate(ids)}
+        listed = [c.lower() for c in current if c.lower() in known]
+        best, fixing = scan_rows(rows, ids)
+        if best >= 0 and not fixing and ids[best].lower() in listed:
+            held = set(c for c in listed if known[c] > best)
+        else:
+            held = set(listed)
+        current = [c for c in current if c.lower() not in known or c.lower() in held]
+    cur = set(s.lower() for s in current or [])
     flags = [i < done and s.id.lower() not in held for i, s in enumerate(steps)]
     done = sum(flags)
     out.update(total=len(steps), done=done, percent=int(100.0 * done / len(steps) + 0.5), current=current)
