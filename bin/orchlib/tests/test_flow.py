@@ -584,6 +584,23 @@ class TestAskOptions(FlowBase):
                 "--assume", "B")
         self.assertIn("- answer: B (", self.read(self.qpath()).decode())
 
+    def test_the_skills_own_ask_example_is_accepted(self):   # F5
+        here = os.path.dirname(os.path.abspath(__file__))
+        skill = os.path.join(here, "..", "..", "..", "skills", "orchestrate", "SKILL.md")
+        with open(skill, encoding="utf-8") as fh:
+            text = re.sub(r"\s*\n\s*", " ", fh.read())
+        m = re.search(r'`orch ask "<question>" --options "([^"]+)" --recommended (\S+) --blocks <steps> --reversible (\w+)`',
+                      text)
+        self.assertIsNotNone(m)
+        self.ok("ask", "example", "--options", m.group(1), "--recommended", m.group(2), "--reversible", m.group(3))
+
+    def test_newline_in_an_option_text_never_loses_a_later_option(self):   # F6
+        self.ok("ask", "multi", "--options", "a :: line one\nline two|b :: other\n  more|c\n:: third")
+        q = self.questions()[0]
+        self.assertEqual([(o.label, o.text) for o in q.option_details()],
+                         [("a", "line one line two"), ("b", "other more"), ("c", "third")])
+        self.assertEqual(self.read(self.qpath()).decode().count("\n- options:"), 1)
+
     def test_label_cannot_end_in_the_recommended_marker(self):
         self.refused_untouched("--options", "A (recommended) :: x|B :: y")
 
@@ -715,6 +732,18 @@ class TestCheckpoint(FlowBase):
         out, _ = self.ok("checkpoint", "--ask", "-t", T)
         self.assertIn("Hold on", out)
         self.assertNotIn("`ok`", out)
+
+    def test_ok_never_takes_a_critical_question(self):   # F4
+        self.ok("ask", "risky", "--options", "Drop :: deletes the table|Keep :: keeps it", "--recommended", "Drop",
+                "--reversible", "no", "-t", T)
+        out, _ = self.ok("checkpoint", "--ask", "-t", T)
+        self.assertNotIn("`ok`", out)               # only a critical question is recommended: no hint at all
+        self.assertIn("`1a 2b`", out)
+        self.ok("ask", "safe", "--options", "Yes :: does it|No :: skips it", "--recommended", "Yes",
+                "--reversible", "yes", "-t", T)
+        self.ok("ask", "maybe", "--options", "Go :: does it|Stop :: skips it", "--recommended", "Go", "-t", T)
+        out, _ = self.ok("checkpoint", "--ask", "-t", T)
+        self.assertIn("`ok` to take every recommended option except on questions marked `reversible no`", out)
 
     def test_only_open_questions_are_asked(self):
         self.ok("ask", "a", "-t", T)
