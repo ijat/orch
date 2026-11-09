@@ -362,14 +362,20 @@ never filler such as "n/a" or "obvious"); the recommended option and every optio
 explained, never given a reason. There is no cap on options or questions; `orch ask` warns at 20 open questions and still
 parks, so group related ones and merge duplicates. `orch status --json` carries each task's questions for orch-pane.
 
+**Panel questions are mandatory.** With this skill loaded, every question for the user (a role's, a skill's such as
+`orch-init`'s, the plan gate's or your own) is first parked with `orch ask` so orch-pane shows it; never ask only in text
+and never with `AskUserQuestion`. Add `--multi` when several options may be chosen together (at least two options; the
+answer is the chosen labels joined by `|`, e.g. `orch answer Q3 "A|C"`; `--assume` and `--auto` never apply). The text
+below mirrors the parked questions for a user who answers in the session; record whichever answer arrives with `orch
+answers`. Only session startup (the mode choice, an `orch current` `ask`) predates the task and is asked as the global block says.
+
 **Asking the user.** In text, never a blocking dialog, so the session stays free; end the turn after asking. Numbered
 questions, lettered options with the recommended one first and marked `(recommended)`, each option explained, a reply hint
-(`1a 2b`, `ok` for every recommended one except on a critical question, `hold`), and always **Hold on** (stop and wait
+(`1a 2b`, `1ac` on a multi-select one, `ok` for every recommended one except on a critical question, `hold`), and always **Hold on** (stop and wait
 until the user resumes). Write each explanation for someone who has not read the code: say what changes for the user, explain any technical term, and add an
 example when it is still abstract. A critical change (destructive, hard to reverse, wide blast radius; `--reversible no`):
-no preselected option, and each option says what will happen, with a before and after. Only session startup (the mode choice,
-an `orch current` `ask`) is asked as the global block says; everything else, including the plan gate and every question a role
-or skill (`orch-init`) raises, follows this format.
+no preselected option, and each option says what will happen, with a before and after. Everything except session startup, including the plan gate and every
+question a role or skill (`orch-init`) raises, follows this format and is parked first.
 
 **Checkpoint** (`orch checkpoint`) after plan approval, after each milestone or review point, and before
 the merge. None open → continue, no notification. Some open → keep working on what they don't block;

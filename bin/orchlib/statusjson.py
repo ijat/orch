@@ -406,6 +406,7 @@ def question_entry(q, detail="full", tight=False, shrink=None):
                               db.cell(q.fields.get("group"), 60))
     return {"id": "Q%d" % q.n, "n": q.n, "status": q.status or None, "text": text, "topic": topic, "group": group,
             "reversible": db.cell(q.fields.get("reversible"), 10) if detail != "history" else None,
+            "multi": q.multi,
             "blocks": (json_cell if detail == "minimal" else db.cell)(q.fields.get("blocks"), 60) if detail != "history" else None,
             "asked_by": asked_by, "asked": asked,
             "options": options, "answer": answer, "answered": answered, "detail": detail}

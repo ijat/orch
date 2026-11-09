@@ -48,8 +48,8 @@ flowchart LR
   `merge: ask`, a push, a usage stop, sudo or a paid action all come to you.
 - **Questions queue.** When a role needs a decision, a reversible one outside the sensitive areas is
   taken (the recommended option, recorded and listed in the digest). Anything else is parked in the task's `questions.md` and
-  everything it doesn't block keeps going. Agents ask in plain text (no `AskUserQuestion` dialog) or park
-  questions for orch-pane, each option with a plain explanation; `orch answers` takes your answers and
+  everything it doesn't block keeps going. Agents park every question for orch-pane (`orch ask`, `--multi` when several options may be picked) and mirror it in plain
+  text (no `AskUserQuestion` dialog), each option with a plain explanation; `orch answers` takes your answers and
   `orch status --json` carries a `questions` block. You get one batched question when nothing independent is left.
   A notification goes out only for a parked question, an automatic merge, a hard stop or the end of a task.
 - **Work survives crashes and usage limits.** All state lives in Markdown files: plan, status, log,

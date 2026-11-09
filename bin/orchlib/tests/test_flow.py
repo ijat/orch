@@ -783,6 +783,19 @@ class TestAnswers(FlowBase):
         self.assertIn("orchestrator: question Q1 answered: yes please", new[0])
         self.assertEqual(text.split("## Q1 ")[1].count("\n- answer:"), 3)
 
+    def test_multi_select_question_takes_labels_joined_by_a_bar(self):
+        self.ok("ask", "pick any", "--options", "A :: x|B :: y|C :: z", "--multi")
+        self.assertIn("- multi: yes\n", self.read(self.qpath()).decode())
+        self.refuse(1, "answer", "Q5", "A|D")
+        self.refuse(1, "answer", "Q5", "A|A")
+        self.refuse(1, "answers", "Q5", "free text")
+        self.ok("answers", "Q5", "A | C")
+        self.assertIn("- answer: A|C (2026-03-01T10:00Z)\n", self.read(self.qpath()).decode())
+
+    def test_multi_needs_two_options_and_no_assume(self):
+        self.refuse(1, "ask", "x", "--multi")
+        self.refuse(1, "ask", "x", "--options", "A :: x|B :: y", "--multi", "--reversible", "yes", "--assume", "A")
+
     def test_after_double_dash_every_text_is_an_answer_even_one_that_looks_like_a_flag(self):
         """The pane passes `-t <task> -- <qid> <text> ...`: no answer text can be read as an option."""
         self.ok("answers", "-t", T, "--", "1", "--auto", "3", "-t other")
