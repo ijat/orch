@@ -47,8 +47,8 @@ instead. Never overwrite an existing `CLAUDE.md`.
 1. **Detect** (above). Read `~/.claude/CLAUDE.md` yourself or pass its path to the agent: generated
    files never copy its rules (global-rule dedup, below).
 2. **Restate and offer.** First say in 3–5 lines what you understand the project to be, and invite
-   corrections. Then offer, in text in the format of `~/.claude/skills/orchestrate/SKILL.md` § Checkpoints and questions
-   (lettered options, recommended first, each explained, a reply hint, **Hold on**), this text verbatim in the question:
+   corrections. Then offer, as a parked question (`orch ask`, answered in orch-pane; `~/.claude/skills/orchestrate/SKILL.md` § Checkpoints and questions;
+   outside orchestration, in text), this text verbatim in the question:
 
    > This looks like a new project. I can set it up before planning: a short CLAUDE.md, an AGENTS.md
    > pointer, docs/STATE.md and docs/DECISIONS.md, plus optional extras (gate command and CI, Claude
@@ -60,10 +60,8 @@ instead. Never overwrite an existing `CLAUDE.md`.
    written) / **Hold on**. Skip is allowed: record
    `init: skipped` in the task's `log.md` (outside orchestration: say it in your reply) and return to
    orchestrate step 4 (or stop).
-3. **Question batch** (one text message, the 4 questions below numbered, each with lettered options, the
-   recommended one first and every option explained in plain words for someone who has not read the code; one
-   **Hold on** line and a reply hint such as `1a 2bd 3a 4: <text>` at the end; the extras question takes several
-   letters):
+3. **Question batch** (the 4 questions below parked with `orch ask`, one `--group init`; outside orchestration, one text
+   message, numbered, lettered options with a reply hint such as `1a 2bd 3a 4: <text>`; every option explained in plain words for someone who has not read the code; the extras question is `--multi`):
    1. *Ecosystem*: the stack, or non-code (docs, design, data). If it has no
       `references/<ecosystem>.md`, say the agent will run at `opus/medium` and research it from
       primary docs.
@@ -91,7 +89,7 @@ instead. Never overwrite an existing `CLAUDE.md`.
    results, the planned architecture (interfaces and adapters named for this project; marked "to be
    created by the first plan"), what it dropped as a global duplicate, and open questions.
 5. **Proposal gate.** Show the user the proposal (summary plus the path; the filled CLAUDE.md inline).
-   Ask in text, options explained: **Approve (recommended)** / **Change** (user says what; re-run phase 1) /
+   Park it (`orch ask`; outside orchestration, ask in text), options explained: **Approve (recommended)** / **Change** (user says what; re-run phase 1) /
    **Skip** / **Hold on**. Nothing is written to the repo before Approve.
 6. **Phase 2 — write.** Resume the agent (`SendMessage`) or spawn it again with the approved proposal:
    it writes the files in the repo's main checkout on the base branch (no worktree, no review: an
@@ -124,7 +122,7 @@ instead. Never overwrite an existing `CLAUDE.md`.
 Runs once, automatically, when `init.md` says `refresh: pending` and the first task (or, in program
 mode, the first milestone) has merged. Same two phases: the agent diffs CLAUDE.md, docs/STATE.md and
 the architecture notes against the repo as built (real commands re-run, real layout), writes a
-proposal of diffs only; the user is asked in text, options explained: **Approve (recommended)** / **Skip** /
+proposal of diffs only; the user is asked through a parked question (`orch ask`; outside orchestration, in text), options explained: **Approve (recommended)** / **Skip** /
 **Hold on**. On Approve: one commit `chore: refresh project docs (orch-init)`, and `init.md` becomes
 `refresh: done`. On Skip: you set `refresh: skipped` in `init.md` yourself (the agent is not running)
 and log it, so the refresh is not offered again. Orchestrate fires the refresh only on `pending`.
