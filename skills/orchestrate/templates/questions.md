@@ -10,6 +10,7 @@
      - reversible: yes | no | unknown
      - topic: <short title; default: the first 60 characters of the text>
      - group: <optional name that batches related questions>
+     - multi: yes   (optional: several options may be picked; the answer is the labels joined by `|`)
      - options: A (recommended) :: what it does | B :: what it does | C !! why it cannot be explained
      - answer: <text> (<UTC>)
 

@@ -648,7 +648,7 @@ class TestAskOptions(FlowBase):
         for i in range(6):
             self.ok("ask", "q%d" % i)
         out, _ = self.ok("checkpoint", "--ask")
-        self.assertIn("checkpoint: 7 open, asking 7", out)
+        self.assertIn("checkpoint: 7 open, 7 shown", out)
 
     def test_volume_warning_at_twenty_open_and_still_parks(self):
         for i in range(19):
@@ -673,8 +673,8 @@ class TestAskOptions(FlowBase):
 
 class TestCheckpoint(FlowBase):
     def numbered(self, out):
-        """The question texts of the text output, in order."""
-        return [re.match(r"^\d+\. (.*?)  \(Q\d+", l).group(1) for l in out.splitlines() if re.match(r"^\d+\. ", l)]
+        """The topics of the listed questions, in order."""
+        return [re.match(r"^  Q\d+ \([^)]*\): (.*)$", l).group(1) for l in out.splitlines() if re.match(r"^  Q\d+ \(", l)]
 
     def test_no_open_questions(self):
         out, _ = self.ok("checkpoint", "--ask", "-t", T)
@@ -709,45 +709,20 @@ class TestCheckpoint(FlowBase):
         out, _ = self.ok("checkpoint", "--ask", "-t", T)
         self.assertEqual(self.numbered(out), ["q%02d" % i for i in range(10)])
         self.assertIn("3 more stay parked.", out)
-        self.assertIn("asking 10", out)
+        self.assertIn("10 shown", out)
         rec = self.journal()[-1]
         self.assertEqual((rec["kind"], rec["questions"], rec["asked"]), ("checkpoint", 13, True))
         self.assertEqual(set(rec) - {"ts", "kind", "repo", "slug", "task"}, {"questions", "asked"})   # the line keeps its shape
 
-    def test_text_format_numbers_letters_explains_and_offers_hold_on(self):
-        self.ok("ask", "colour", "--options", "red :: warm|green !! only you know the room|blue :: cool",
-                "--recommended", "blue", "--group", "look", "-t", T)
-        self.ok("ask", "free", "-t", T)
+    def test_ask_points_to_the_panel_and_prints_no_options(self):
+        self.ok("ask", "colour", "--options", "red :: warm|blue :: cool", "--recommended", "blue", "--topic", "Colour", "-t", T)
+        self.ok("ask", "pick", "--options", "a :: x|b :: y", "--multi", "-t", T)
         out, _ = self.ok("checkpoint", "--ask", "-t", T)
-        self.assertIn("1. colour  (Q1, blocks all, reversible unknown, group look)\n"
-                      "   a) blue (recommended) \u2014 cool\n"
-                      "   b) red \u2014 warm\n"
-                      "   c) green \u2014 not explained: only you know the room\n", out)
-        self.assertIn("2. free  (Q2, blocks all, reversible unknown)\n   Answer in your own words.\n", out)
-        self.assertIn("Hold on: stop and wait until you resume.", out)
-        self.assertIn("`1a 2b`", out)
-        self.assertIn("`ok` to take every recommended option", out)
-        self.assertIn("`hold`", out)
-        self.assertNotIn("{", out)
-        self.assertNotIn("AskUserQuestion", out)
-
-    def test_hold_on_and_hint_without_recommended_options(self):
-        self.ok("ask", "free", "-t", T)
-        out, _ = self.ok("checkpoint", "--ask", "-t", T)
-        self.assertIn("Hold on", out)
-        self.assertNotIn("`ok`", out)
-
-    def test_ok_never_takes_a_critical_question(self):   # F4
-        self.ok("ask", "risky", "--options", "Drop :: deletes the table|Keep :: keeps it", "--recommended", "Drop",
-                "--reversible", "no", "-t", T)
-        out, _ = self.ok("checkpoint", "--ask", "-t", T)
-        self.assertNotIn("`ok`", out)               # only a critical question is recommended: no hint at all
-        self.assertIn("`1a 2b`", out)
-        self.ok("ask", "safe", "--options", "Yes :: does it|No :: skips it", "--recommended", "Yes",
-                "--reversible", "yes", "-t", T)
-        self.ok("ask", "maybe", "--options", "Go :: does it|Stop :: skips it", "--recommended", "Go", "-t", T)
-        out, _ = self.ok("checkpoint", "--ask", "-t", T)
-        self.assertIn("`ok` to take every recommended option except on questions marked `reversible no`", out)
+        self.assertIn("Q1 (blocks all): Colour", out)
+        self.assertIn("Q2 (blocks all, multi): pick", out)
+        self.assertIn("orch-pane", out)
+        for gone in ("warm", "cool", "recommended", "Hold on", "`1a", "`ok`", "AskUserQuestion"):
+            self.assertNotIn(gone, out.replace("do not open a dialog", ""))
 
     def test_only_open_questions_are_asked(self):
         self.ok("ask", "a", "-t", T)
@@ -782,6 +757,19 @@ class TestAnswers(FlowBase):
         self.assertEqual(len(new), 3)
         self.assertIn("orchestrator: question Q1 answered: yes please", new[0])
         self.assertEqual(text.split("## Q1 ")[1].count("\n- answer:"), 3)
+
+    def test_multi_select_question_takes_labels_joined_by_a_bar(self):
+        self.ok("ask", "pick any", "--options", "A :: x|B :: y|C :: z", "--multi")
+        self.assertIn("- multi: yes\n", self.read(self.qpath()).decode())
+        self.refuse(1, "answer", "Q5", "A|D")
+        self.refuse(1, "answer", "Q5", "A|A")
+        self.refuse(1, "answers", "Q5", "free text")
+        self.ok("answers", "Q5", "A | C")
+        self.assertIn("- answer: A|C (2026-03-01T10:00Z)\n", self.read(self.qpath()).decode())
+
+    def test_multi_needs_two_options_and_no_assume(self):
+        self.refuse(1, "ask", "x", "--multi")
+        self.refuse(1, "ask", "x", "--options", "A :: x|B :: y", "--multi", "--reversible", "yes", "--assume", "A")
 
     def test_after_double_dash_every_text_is_an_answer_even_one_that_looks_like_a_flag(self):
         """The pane passes `-t <task> -- <qid> <text> ...`: no answer text can be read as an option."""

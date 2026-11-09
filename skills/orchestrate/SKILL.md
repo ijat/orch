@@ -362,20 +362,22 @@ never filler such as "n/a" or "obvious"); the recommended option and every optio
 explained, never given a reason. There is no cap on options or questions; `orch ask` warns at 20 open questions and still
 parks, so group related ones and merge duplicates. `orch status --json` carries each task's questions for orch-pane.
 
-**Asking the user.** In text, never a blocking dialog, so the session stays free; end the turn after asking. Numbered
-questions, lettered options with the recommended one first and marked `(recommended)`, each option explained, a reply hint
-(`1a 2b`, `ok` for every recommended one except on a critical question, `hold`), and always **Hold on** (stop and wait
-until the user resumes). Write each explanation for someone who has not read the code: say what changes for the user, explain any technical term, and add an
-example when it is still abstract. A critical change (destructive, hard to reverse, wide blast radius; `--reversible no`):
-no preselected option, and each option says what will happen, with a before and after. Only session startup (the mode choice,
-an `orch current` `ask`) is asked as the global block says; everything else, including the plan gate and every question a role
-or skill (`orch-init`) raises, follows this format.
+**Panel questions are mandatory, and only there.** With this skill loaded, every question for the user (a role's, a skill's
+such as `orch-init`'s, the plan gate's or your own) is parked with `orch ask` and answered in orch-pane. Never ask it in
+text, never with `AskUserQuestion`, and never repeat a parked question's options in your reply. Write each option for
+someone who has not read the code: say what changes for the user, explain any technical term, and add an example when it
+is still abstract. A critical change (destructive, hard to reverse, wide blast radius; `--reversible no`) has no
+`--recommended`, and each option says what will happen, with a before and after. Add `--multi` when several options may be
+chosen together (at least two options; the answer is the chosen labels joined by `|`, e.g. `orch answer Q3 "A|C"`;
+`--assume` and `--auto` never apply). The panel records answers with `orch answers`; end your turn after parking and carry
+on when they arrive. Only session startup (the mode choice, an `orch current` `ask`), which predates the task, is asked as
+the global block says.
 
 **Checkpoint** (`orch checkpoint`) after plan approval, after each milestone or review point, and before
 the merge. None open → continue, no notification. Some open → keep working on what they don't block;
-only when nothing independent is left, `orch checkpoint --ask` prints the first 10 open questions by blocking order in the format
-above, then how many more stay parked: show that text to the user as it is, end the turn, and when they reply record it with
-`orch answers` (or `orch answer`); repeat for the rest.
+only when nothing independent is left, `orch checkpoint --ask` lists the first 10 open question ids and topics by blocking order, then how many more stay
+parked: tell the user, in a line, that they are waiting in orch-pane, end the turn, and when the answers arrive (the panel
+runs `orch answers`) repeat for the rest.
 
 **Requested compaction (optional).** Only at a checkpoint, only if the orch-pane tool `mcp__orch-pane__compact_when_idle` is in
 your tool list (ToolSearch it if deferred), and only when no subagent runs and no spawn is in flight. Call it with `instructions`
