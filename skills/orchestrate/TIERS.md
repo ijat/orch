@@ -276,11 +276,11 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 | Effort ceiling, e.g. ≤ medium | `haiku/medium` gated, `sonnet/medium` otherwise, `opus/medium` for signals; escalate by model only | [observed] |
 | 5h WARN, STALE or UNKNOWN | no proactive `opus/high`, except a `boundary` step whose due security review the user declined (it keeps `opus/high`; if that can't run, pause); signal steps keep `opus/medium` (the plan earned it); Fable only with the user's OK; batch fix findings; never send a step that fails the gate to Haiku for budget — pause instead | [judgment] |
 | 5h STOP | pause (SKILL.md) | [current rule] |
-| 7d ≥ 90% | ask with `AskUserQuestion` (recommended option first, plus **Hold on**; recommend continue-as-routed when the remaining work is flagged or sensitive, otherwise saver routing): continue as routed; **saver routing** — unflagged, non-`sensitive` steps that fail the gate → `sonnet/medium`, the gate admits any M step, `algorithm`/`state` flags → `sonnet/high` with the sketch and escalation on the first failure, Opus kept for concurrency, `unknown_cause`, `refusal`, `boundary` stays `sonnet/high`; or hold until the reset | [measured for `sonnet/medium`; judgment for the rest] |
+| 7d ≥ 90% | ask in text (SKILL.md § Checkpoints and questions: recommended option first, plus **Hold on**; recommend continue-as-routed when the remaining work is flagged or sensitive, otherwise saver routing): continue as routed; **saver routing** — unflagged, non-`sensitive` steps that fail the gate → `sonnet/medium`, the gate admits any M step, `algorithm`/`state` flags → `sonnet/high` with the sketch and escalation on the first failure, Opus kept for concurrency, `unknown_cause`, `refusal`, `boundary` stays `sonnet/high`; or hold until the reset | [measured for `sonnet/medium`; judgment for the rest] |
 | User waiting / urgent | no Haiku; gate-passing steps → `sonnet/high`; Opus signal steps keep Opus, and say it is slower; no `opus/high` or Fable unless earned | [measured wall time; judgment] |
 
 When a cap blocks a needed escalation, tell the user what it is costing; don't quietly break it.
-Never lower a `boundary` or `sensitive` step's tier for budget or usage pressure; pause instead. When a cap removes a tier a rule requires (lite mode with no Opus, the end of an effort-ceiling ladder), ask the user with `AskUserQuestion` instead of picking a substitute.
+Never lower a `boundary` or `sensitive` step's tier for budget or usage pressure; pause instead. When a cap removes a tier a rule requires (lite mode with no Opus, the end of an effort-ceiling ladder), ask the user (in text) instead of picking a substitute.
 
 ### Cost and latency
 
