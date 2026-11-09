@@ -1,5 +1,4 @@
 """questions.md: ask, answer, checkpoint. One `## Q<n> — <text>` block per question, edited through the CLI."""
-import json
 import os
 import re
 import sys
@@ -23,6 +22,8 @@ REASON_FILLER = frozenset(("n/a", "na", "none", "obvious", "self-explanatory", "
 MIN_REASON_WORDS = 3
 OPEN_WARN = 20                                   # D8: warn at this many open questions, still park
 TOPIC_MAX = 60
+UNGROUPED = "(ungrouped)"                         # the name `orch status --json --question-group` gives questions with no group
+SHOW_MAX = 10                                     # `orch checkpoint --ask` writes the first 10 by sort_key, then the count left
 Option = namedtuple("Option", "label text kind recommended")   # kind: explanation | reason | None (a bare, old option)
 
 
@@ -224,6 +225,8 @@ def cmd_ask(ns, extra):
         group = cli.one_line(ns.group)
         if not group:
             raise OrchError("--group is empty", 1)
+        if group == UNGROUPED:
+            raise OrchError("--group %s is reserved" % UNGROUPED, 1)
     assume = None
     if ns.assume is not None:
         assume = cli.one_line(ns.assume)
@@ -321,19 +324,85 @@ def cmd_answer(ns, extra):
     return 0
 
 
-def ask_payload(q):
-    """One AskUserQuestion entry: recommended option first, then the rest, plus `Hold on`."""
-    opts = q.options()
-    opts.sort(key=lambda o: 0 if o[1] else 1)  # stable: the recommended one first
-    meta = "Blocks: %s. Reversible: %s." % (q.fields.get("blocks", "all") or "all", q.fields.get("reversible", "unknown") or "unknown")
-    entries = []
-    for label, rec in opts:
-        entries.append({"label": (label + RECOMMENDED) if rec else label,
-                        "description": ("Recommended. " if rec else "") + meta})
-    if not entries:
-        entries.append({"label": "Answer in free text", "description": "Pick Other and type the answer. " + meta})
-    entries.append({"label": "Hold on", "description": "Stop and wait until I resume."})
-    return {"question": "Q%d: %s" % (q.n, q.text), "header": "Q%d" % q.n, "multiSelect": False, "options": entries}
+def cmd_answers(ns, extra):
+    """Several answers, all or nothing: every id and text is checked before the file is touched (D9)."""
+    cli.require_write_allowed()
+    task_dir = cli.get_task(ns)
+    args = ns.pairs
+    if len(args) % 2:
+        raise OrchError("answers takes <qid> <text> pairs; got an odd number of arguments", 1)
+    pairs, seen = [], set()
+    for qid, raw in zip(args[::2], args[1::2]):
+        n = parse_qid(qid)
+        if n in seen:
+            raise OrchError("Q%d is answered twice in this call; nothing written" % n, 1)
+        seen.add(n)
+        text = cli.one_line(raw)
+        if not text:
+            raise OrchError("the answer to Q%d is empty; nothing written" % n, 1)
+        pairs.append((n, text))
+    ts = now()
+    cli.log_line(ts, "orchestrator", "x")
+    with TaskLock(task_dir):
+        lines = read_lines(task_dir)
+        by_n = dict((q.n, q) for q in parse(lines))
+        for n, _ in pairs:
+            if n not in by_n:
+                raise OrchError("no question Q%d in %s; nothing written" % (n, questions_path(task_dir)), 1)
+            if by_n[n].status != "open":
+                raise OrchError("Q%d is %s, not open; nothing written" % (n, by_n[n].status or "unknown"), 1)
+        log = ""
+        for n, text in pairs:
+            q = [x for x in parse(lines) if x.n == n][0]
+            set_field(lines, q, "status", "answered")
+            q = [x for x in parse(lines) if x.n == n][0]
+            set_field(lines, q, "answer", "%s (%s)" % (text, ts))
+            log += cli.log_line(ts, "orchestrator", "question Q%d answered: %s" % (n, cli.clip(text, 100)))
+        write_atomic(questions_path(task_dir), render_file(task_dir, lines), 0o644)
+        cli.append_log(task_dir, log)
+    for n, _ in pairs:
+        print("Q%d answered" % n)
+    return 0
+
+
+def letter(i):
+    """a, b, … z, aa, ab, …"""
+    out = ""
+    i += 1
+    while i:
+        i, r = divmod(i - 1, 26)
+        out = chr(97 + r) + out
+    return out
+
+
+def ask_text(shown, remaining):
+    """The questions as text for the user (D7): numbered, lettered options with the recommended one first and every
+    option explained, a reply hint, and always Hold on."""
+    out = []
+    for i, q in enumerate(shown, 1):
+        group = q.fields.get("group")
+        out.append("%d. %s  (Q%d, blocks %s, reversible %s%s)" % (
+            i, q.text, q.n, q.fields.get("blocks", "all") or "all", q.fields.get("reversible", "unknown") or "unknown",
+            ", group %s" % group if group else ""))
+        opts = sorted(q.option_details(), key=lambda o: 0 if o.recommended else 1)   # stable
+        for j, o in enumerate(opts):
+            line = "   %s) %s%s" % (letter(j), o.label, RECOMMENDED if o.recommended else "")
+            if o.kind == "explanation":
+                line += " \u2014 " + o.text
+            elif o.kind == "reason":
+                line += " \u2014 not explained: " + o.text
+            out.append(line)
+        if not opts:
+            out.append("   Answer in your own words.")
+    hints = ["`1a 2b` (question 1 option a, question 2 option b)"]
+    if any(o.recommended for q in shown for o in q.option_details()):
+        hints.append("`ok` to take every recommended option")
+    hints.append("`hold`")
+    out.append("Hold on: stop and wait until you resume.")
+    out.append("Reply with %s." % ", ".join(hints))
+    if remaining:
+        out.append("%d more stay parked." % remaining)
+    return out
 
 
 def cmd_checkpoint(ns, extra):
@@ -344,7 +413,7 @@ def cmd_checkpoint(ns, extra):
     ts = now()
     with TaskLock(task_dir):
         opens = sorted(open_ones(task_dir), key=sort_key)
-        shown = opens if ns.ask else []
+        shown = opens[:SHOW_MAX] if ns.ask else []
         spath = cli.status_path(task_dir)
         status = st.Status.load(spath) if os.path.exists(spath) else None
         program, auto_ms = cli.program_info(status) if status else (False, None)
@@ -360,10 +429,9 @@ def cmd_checkpoint(ns, extra):
         for q in opens[:8]:
             print("  Q%d (blocks %s): %s" % (q.n, q.fields.get("blocks", "all"), cli.clip(q.text, 100)))
         return 0
-    print("checkpoint: %d open, asking %d (AskUserQuestion input below)" % (len(opens), len(shown)))
-    print(json.dumps({"questions": [ask_payload(q) for q in shown]}, ensure_ascii=False))
-    if len(opens) > len(shown):
-        print("%d more stay parked" % (len(opens) - len(shown)))
+    print("checkpoint: %d open, asking %d. Ask these in text and end the turn; do not open a dialog." % (len(opens), len(shown)))
+    for line in ask_text(shown, len(opens) - len(shown)):
+        print(line)
     return 0
 
 
@@ -386,5 +454,8 @@ def register(add):
     sp.add_argument("text", nargs="?", default=None)
     sp.add_argument("--withdraw", action="store_true")
 
-    sp = add("checkpoint", cmd_checkpoint, "journal a checkpoint; --ask prints the AskUserQuestion batch")
+    sp = add("answers", cmd_answers, "resolve several questions at once (all or nothing): <qid> <text> [<qid> <text> ...]")
+    sp.add_argument("pairs", nargs="+", metavar="qid_or_text")
+
+    sp = add("checkpoint", cmd_checkpoint, "journal a checkpoint; --ask prints the first 10 open questions as text to ask the user")
     sp.add_argument("--ask", action="store_true")
