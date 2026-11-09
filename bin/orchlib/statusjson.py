@@ -24,6 +24,7 @@ STEP_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])(\d+[a-z]?)(?![A-Za-z0-9])", re.I)
 # a review fix round in a `last completed step` cell: `fix round 3`, `round 2`, `fix-r1`, `fix-m3-r1`, `r2`
 FIX_ROUND_RE = re.compile(r"(?<![A-Za-z0-9])(?:fix[\s_-]*)?(?:m\d+[\s_-]*)?(?:round|r)[\s_-]*\d+(?![A-Za-z0-9])", re.I)
 FIX_WORD_RE = re.compile(r"(?<![A-Za-z0-9])fix(?![A-Za-z0-9])", re.I)
+SPAWN_MS_PREFIX_RE = re.compile(r"^m(\d+)-(.+)$", re.I)   # a spawn names a step `m10-11` for step 11 of milestone 10
 ALL_DONE_STATES = ("reviewing", "awaiting_merge")   # a review or the merge gate comes after the last step
 STEP_ID_RE = re.compile(r"^(\d+)(.*)$")
 MS_ROW_RE = re.compile(r"^M?(\d+)$")
@@ -166,6 +167,21 @@ def implemented_to_end(impl, ids, program, ms_no):
     return False
 
 
+def held_steps(spawn_steps, ids, ms_no):
+    """The spawn's step ids as the plan names them: `m10-11` is plan step `11` when the prefix names this milestone
+    (any milestone, outside a program). An id the plan does not have stays as the spawn wrote it."""
+    known = {sid.lower(): sid for sid in ids}
+    out = []
+    for s in spawn_steps:
+        hit = known.get(s.lower())
+        if hit is None:
+            m = SPAWN_MS_PREFIX_RE.match(s)
+            if m and (ms_no is None or int(m.group(1)) == ms_no):
+                hit = known.get(m.group(2).lower())
+        out.append(hit if hit is not None else s)
+    return out
+
+
 def steps_block(task_dir, program, ms_no, rows, spawn, state=None, impl=()):
     path = plan_path(task_dir, program, ms_no)
     out = {"plan": None, "total": None, "done": None, "percent": None, "current": None, "items": []}
@@ -184,10 +200,18 @@ def steps_block(task_dir, program, ms_no, rows, spawn, state=None, impl=()):
     current = None
     if spawn and (spawn["role"] or "").lower().startswith("implementer") and not spawn["returned"] \
             and spawn["steps"] and (not program or spawn["milestone"] is None or spawn["milestone"] == ms_no):
-        current = spawn["steps"]
+        current = held_steps(spawn["steps"], ids, ms_no)
+    # a step a running implementer holds is never done, whatever the rows' high-water mark says (it is being reworked).
+    # "Running" is an unreturned spawn and an implementer row still working: a spawn left unreturned beside a
+    # finished row (the plan gate, a task at rest) holds nothing.
     cur = set(s.lower() for s in current or [])
+    working = any(role.lower().startswith("implementer") and row.get("state") in ("in_progress", "waiting")
+                  for role, row in rows)
+    held = cur if working else set()
+    flags = [i < done and s.id.lower() not in held for i, s in enumerate(steps)]
+    done = sum(flags)
     out.update(total=len(steps), done=done, percent=int(100.0 * done / len(steps) + 0.5), current=current)
-    out["items"] = [{"id": s.id, "title": db.cell(s.title, 200), "done": i < done, "current": s.id.lower() in cur,
+    out["items"] = [{"id": s.id, "title": db.cell(s.title, 200), "done": flags[i], "current": s.id.lower() in cur,
                      "summary": trim(s.field_text("do"), ITEM_MAX)} for i, s in enumerate(steps)]
     return out
 

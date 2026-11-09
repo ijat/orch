@@ -225,6 +225,109 @@ class TestProgressRealShapes(Base):
         self.assertFalse(next(i for i in s["items"] if i["id"] == "7")["done"])
 
 
+class TestTruthfulProgress(Base):
+    """A running implementer's step is never done; a spawn's `m10-11` is plan step 11; a merge_point is a done milestone."""
+
+    def spawn(self, steps, **kw):
+        return dict({"kind": "spawn", "role": "implementer", "steps": steps}, **kw)
+
+    def steps_of(self, slug, cell, ids, journal, **kw):
+        self.task(slug, rows="| implementer | in_progress | 2026-03-01T12:00Z | %s | |" % cell,
+                  files={"plan.md": plan_text(ids)}, journal=journal, **kw)
+        s = self.one()["steps"]
+        shutil.rmtree(os.path.join(self.root, "app", slug))
+        return s
+
+    def check_invariant(self, s):
+        self.assertEqual(s["done"], sum(1 for i in s["items"] if i["done"]))
+        for i in s["items"]:
+            if i["current"]:
+                self.assertFalse(i["done"])
+
+    def test_high_water_with_step_running(self):
+        ids = [str(i) for i in range(1, 16)]
+        s = self.steps_of("hw", "15", ids, [self.spawn([11])])
+        self.assertEqual((s["done"], s["total"], s["percent"]), (14, 15, 93))
+        self.assertEqual([i["id"] for i in s["items"] if i["current"]], ["11"])
+        self.assertEqual([i["id"] for i in s["items"] if not i["done"]], ["11"])
+        self.assertEqual(s["current"], ["11"])
+        self.check_invariant(s)
+
+    def test_milestone_prefixed_spawn_step(self):
+        ids = [str(i) for i in range(1, 16)]
+        s = self.steps_of("pfx", "15", ids, [self.spawn(["m10-11"])])
+        self.assertEqual((s["done"], s["current"]), (14, ["11"]))
+        self.assertEqual([i["id"] for i in s["items"] if i["current"]], ["11"])
+        self.check_invariant(s)
+        # a program: M10's prefix matches in M10, not in M2
+        files = {"roadmap.md": TestProgram.ROADMAP, "m02-two/plan.md": plan_text(["1", "2", "11"])}
+        self.task("prog", state="implementing", shape="roadmap", milestone="M2", files=files,
+                  rows="| implementer | in_progress | 2026-03-01T12:00Z | 11 | |",
+                  journal=[self.spawn(["m2-11"], milestone=2)])
+        s = self.one()["steps"]
+        self.assertEqual((s["current"], s["done"]), (["11"], 2))
+        shutil.rmtree(os.path.join(self.root, "app", "prog"))
+        self.task("prog", state="implementing", shape="roadmap", milestone="M2", files=files,
+                  rows="| implementer | in_progress | 2026-03-01T12:00Z | 11 | |",
+                  journal=[self.spawn(["m10-11"])])
+        s = self.one()["steps"]
+        self.assertEqual(s["current"], ["m10-11"])   # names another milestone: no match, stays as written
+        self.assertFalse(any(i["current"] for i in s["items"]))
+        self.assertEqual(s["done"], 3)
+
+    def test_no_running_spawn_keeps_todays_result(self):
+        ids = [str(i) for i in range(1, 16)]
+        returned = [self.spawn([11]), {"kind": "return", "role": "implementer"}]
+        for journal in (None, [], returned):
+            s = self.steps_of("none", "15", ids, journal)
+            self.assertEqual((s["done"], s["current"]), (15, None))
+            self.assertFalse(any(i["current"] for i in s["items"]))
+
+    def test_all_done_state_unchanged_unless_a_spawn_runs(self):
+        ids = ["1", "2", "3", "4"]
+        s = self.steps_of("rev", "3", ids, None, state="reviewing")
+        self.assertEqual(s["done"], 4)
+        s = self.steps_of("rev", "3", ids, [self.spawn([2])], state="reviewing")
+        self.assertEqual((s["done"], s["current"]), (3, ["2"]))
+        self.check_invariant(s)
+
+    def test_fix_round_row_unless_a_step_is_running(self):
+        ids = ["1", "2", "3"]
+        self.assertEqual(self.steps_of("fx", "fix round 1", ids, None)["done"], 3)
+        s = self.steps_of("fx", "fix round 1", ids, [self.spawn([3])])
+        self.assertEqual((s["done"], s["current"]), (2, ["3"]))
+        self.check_invariant(s)
+
+    def test_unreturned_spawn_beside_a_finished_row_holds_nothing(self):
+        self.task("rest", rows="| implementer | done | 2026-03-01T12:00Z | 15 | |",
+                  files={"plan.md": plan_text([str(i) for i in range(1, 16)])}, journal=[self.spawn([11])])
+        s = self.one()["steps"]
+        self.assertEqual(s["done"], 15)
+
+    def test_lite_plan_spawn_is_unchanged(self):
+        s = self.steps_of("lite", "plan", ["1", "2"], [self.spawn(["plan"])])
+        self.assertEqual((s["done"], s["current"]), (0, ["plan"]))
+
+    def test_merge_point_milestone_is_done(self):
+        files = {"roadmap.md": TestProgram.ROADMAP, "m02-two/plan.md": plan_text(["1", "2"])}
+        self.task("mp", mode="standard", shape="roadmap", milestone="M2 (two)", files=files,
+                  rows="| implementer | in_progress | 2026-03-01T12:00Z | 1 | |",
+                  journal=[{"kind": "merge_point", "milestone": 1, "sha": "a" * 40}])
+        t = self.one()
+        self.assertEqual([i["state"] for i in t["milestones"]["items"]], ["done", "current", "pending"])
+        self.assertEqual(t["milestones"]["done"], 1)
+
+    def test_milestone_end_and_merge_point_count_once(self):
+        files = {"roadmap.md": TestProgram.ROADMAP, "m02-two/plan.md": plan_text(["1", "2"])}
+        self.task("mp2", mode="standard", shape="roadmap", milestone="M3", files=files,
+                  rows="| implementer | in_progress | 2026-03-01T12:00Z | 1 | |",
+                  journal=[{"kind": "merge_point", "milestone": 1}, {"kind": "milestone_end", "milestone": 1,
+                                                                      "outcome": "done"},
+                           {"kind": "milestone_end", "milestone": 2, "outcome": "done"}])
+        ms = self.one()["milestones"]
+        self.assertEqual((ms["done"], [i["state"] for i in ms["items"]]), (2, ["done", "done", "current"]))
+
+
 class TestProgram(Base):
     ROADMAP = ("# Roadmap: p\n\n## Summary\n\n- goal: a program\n<!-- hidden -->\n\n## Milestones\n\n"
                "<!-- | M | not | the table | -->\n\n"

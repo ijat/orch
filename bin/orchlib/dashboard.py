@@ -261,7 +261,9 @@ class Journal(object):
                     if self.usage_first is None:
                         self.usage_first = pair
                     self.usage_last = pair
-            if kind == "milestone_end" and rec.get("outcome") in ("done", "merged"):   # old programs wrote `merged`
+            # a merge_point (a mid-program merge of the milestone) means it is done, with or without a milestone_end
+            if (kind == "milestone_end" and rec.get("outcome") in ("done", "merged")   # old programs wrote `merged`
+                    or kind == "merge_point" and rec.get("milestone") is not None):
                 m = rec.get("milestone")
                 self.milestones_done.add(m if is_int(m) else str(m))
             if kind == "task_end":
