@@ -197,7 +197,50 @@ def held_steps(spawn_steps, ids, ms_no):
     return out
 
 
-def steps_block(task_dir, program, ms_no, rows, spawn, state=None, impl=()):
+def hold(rows, ids, program, ms_no, spawn, by_role):
+    """(held, current) for a plan's step `ids` (D4, fix round 1). A running implementer's step is never done on the
+    rows' high-water mark alone (Luneterm: row 15 while the spawn reworks step 11). Every unreturned implementer
+    spawn in `by_role` (the newest spawn of each role, so parallel implementers and a later spawn of another role
+    all count) that has a working row (`in_progress`/`waiting`) of the same role holds its steps. Within the spawn's
+    step list, steps up to the role's `last completed step` are done when that step is in the list (a multi-step
+    spawn part way through); otherwise every step of the spawn is held. A spawn whose role names no implementer row
+    matches any working one. `held` is the set of lowercase plan ids; `current` the spawns' step ids as the plan
+    names them (None when no spawn is held or resting as the newest one). The newest spawn left unreturned beside
+    a finished row (the plan gate, a task at rest) holds nothing, but still lists its steps."""
+    known = {sid.lower(): i for i, sid in enumerate(ids)}
+    impl_rows = [(r, row) for r, row in rows if r.lower().startswith("implementer")]
+    spawns = list((by_role or {}).values())
+    if spawn is not None and all(spawn is not s for s in spawns):
+        spawns.append(spawn)
+    held, current, seen, touched = set(), [], set(), False
+
+    def add(names):
+        for c in names:
+            if c.lower() not in seen:
+                seen.add(c.lower())
+                current.append(c)
+
+    for sp in spawns:
+        if not ((sp["role"] or "").lower().startswith("implementer") and not sp["returned"] and sp["steps"]
+                and (not program or sp["milestone"] is None or sp["milestone"] == ms_no)):
+            continue
+        names = held_steps(sp["steps"], ids, ms_no)
+        mine = [(r, row) for r, row in impl_rows if r.lower() == sp["role"].lower()] or impl_rows
+        if any(row.get("state") in ("in_progress", "waiting") for _, row in mine):
+            listed = [c.lower() for c in names if c.lower() in known]
+            best, fixing = scan_rows(mine, ids)
+            mine_held = set(c for c in listed if known[c] > best) \
+                if best >= 0 and not fixing and ids[best].lower() in listed else set(listed)
+            held |= mine_held
+            add(c for c in names if c.lower() not in known or c.lower() in mine_held)
+            touched = True
+        elif sp is spawn:
+            add(names)
+            touched = True
+    return held, (current if touched else None)
+
+
+def steps_block(task_dir, program, ms_no, rows, spawn, state=None, impl=(), by_role=None):
     path = plan_path(task_dir, program, ms_no)
     out = {"plan": None, "total": None, "done": None, "percent": None, "current": None, "items": []}
     if path is None:
@@ -212,34 +255,34 @@ def steps_block(task_dir, program, ms_no, rows, spawn, state=None, impl=()):
     ids = [s.id for s in steps]
     all_done = state in ALL_DONE_STATES or (state == "awaiting_approval" and implemented_to_end(impl, ids, program, ms_no))
     done = steps_done(rows, ids, all_done)
-    current = None
-    if spawn and (spawn["role"] or "").lower().startswith("implementer") and not spawn["returned"] \
-            and spawn["steps"] and (not program or spawn["milestone"] is None or spawn["milestone"] == ms_no):
-        current = held_steps(spawn["steps"], ids, ms_no)
-    # A running implementer's step is never done on the rows' high-water mark alone (Luneterm: row 15 while the
-    # spawn reworks step 11). Within the spawn's step list, steps up to the row's `last completed step` are done
-    # when that step is in the list (a multi-step spawn that is part way through); otherwise every step of the
-    # spawn is held. "Running" is an unreturned spawn and an implementer row still working: a spawn left
-    # unreturned beside a finished row (the plan gate, a task at rest) holds nothing.
-    working = any(role.lower().startswith("implementer") and row.get("state") in ("in_progress", "waiting")
-                  for role, row in rows)
-    held = set()
-    if working and current:
-        known = {sid.lower(): i for i, sid in enumerate(ids)}
-        listed = [c.lower() for c in current if c.lower() in known]
-        best, fixing = scan_rows(rows, ids)
-        if best >= 0 and not fixing and ids[best].lower() in listed:
-            held = set(c for c in listed if known[c] > best)
-        else:
-            held = set(listed)
-        current = [c for c in current if c.lower() not in known or c.lower() in held]
-    cur = set(s.lower() for s in current or [])
+    held, current = hold(rows, ids, program, ms_no, spawn, by_role)
+    known = {sid.lower(): i for i, sid in enumerate(ids)}
     flags = [i < done and s.id.lower() not in held for i, s in enumerate(steps)]
+    if current is not None:   # a step that is done is not also current
+        current = [c for c in current if c.lower() not in known or not flags[known[c.lower()]]]
+    cur = set(s.lower() for s in current or [])
     done = sum(flags)
     out.update(total=len(steps), done=done, percent=int(100.0 * done / len(steps) + 0.5), current=current)
     out["items"] = [{"id": s.id, "title": db.cell(s.title, 200), "done": flags[i], "current": s.id.lower() in cur,
                      "summary": trim(s.field_text("do"), ITEM_MAX)} for i, s in enumerate(steps)]
     return out
+
+
+def dashboard_done(task_dir, program, ms_no, rows, jtext, done):
+    """The dashboard's `steps_done` (a high-water integer) less the steps a running implementer holds, so the dashboard
+    and `orch status --json` agree on a task (F3). Unchanged when nothing runs or the plan cannot be read."""
+    try:
+        path = plan_path(task_dir, program, ms_no)
+        plan = parse(db.read_text(path, db.MAX_PLAN)) if path else None
+        steps = step_order(plan.current_steps()) if plan is not None else []
+        if not steps or not done:
+            return done
+        ids = [s.id for s in steps]
+        _, spawn, _, by_role = journal_facts(jtext)
+        held, _ = hold(rows, ids, program, ms_no, spawn, by_role)
+        return done - sum(1 for i, sid in enumerate(ids) if sid.lower() in held and i < done)
+    except Exception:
+        return done
 
 
 # -- roadmap -----------------------------------------------------------------------------------------
@@ -454,7 +497,7 @@ def build(repo, slug, d, text, state, cwd, question_group=None, question_skip=0)
         t["running"] = {"roles": running, "last_spawn": spawn,
                         "spawns": [by_role[r["role"]] for r in running if r["role"] in by_role]}
         ms_rows = db.rows_of_milestone(rows, journal, ms_no) if program else rows
-        t["steps"] = steps_block(d, program, ms_no, ms_rows, spawn, state, impl)
+        t["steps"] = steps_block(d, program, ms_no, ms_rows, spawn, state, impl, by_role)
         t["milestones"] = milestones_block(d, ms_no, journal) if program else None
         t["overall"] = overall(program, t["steps"], t["milestones"])
     except Exception as exc:   # one odd task never takes the list down
