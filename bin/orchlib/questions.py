@@ -325,9 +325,13 @@ def cmd_answer(ns, extra):
 
 
 def cmd_answers(ns, extra):
-    """Several answers, all or nothing: every id and text is checked before the file is touched (D9)."""
+    """Several answers, all or nothing: every id and text is checked before the file is touched (D9). With `--auto`
+    each one is an auto-answer (the pane's Auto-answer option): the question must be open, `--reversible yes`, and the
+    text must be its recommended option; it becomes `assumed` and is journaled as `orch ask --assume` journals."""
     cli.require_write_allowed()
     task_dir = cli.get_task(ns)
+    auto = bool(ns.auto)
+    role = cli.one_line(ns.as_role or "orchestrator")
     args = ns.pairs
     if len(args) % 2:
         raise OrchError("answers takes <qid> <text> pairs; got an odd number of arguments", 1)
@@ -342,26 +346,48 @@ def cmd_answers(ns, extra):
             raise OrchError("the answer to Q%d is empty; nothing written" % n, 1)
         pairs.append((n, text))
     ts = now()
-    cli.log_line(ts, "orchestrator", "x")
+    cli.log_line(ts, role, "x")
+    repo, slug = task_names(task_dir)
+    schema = jr.load_schema() if auto else None
     with TaskLock(task_dir):
         lines = read_lines(task_dir)
         by_n = dict((q.n, q) for q in parse(lines))
-        for n, _ in pairs:
+        for n, text in pairs:
             if n not in by_n:
                 raise OrchError("no question Q%d in %s; nothing written" % (n, questions_path(task_dir)), 1)
             if by_n[n].status != "open":
                 raise OrchError("Q%d is %s, not open; nothing written" % (n, by_n[n].status or "unknown"), 1)
-        log = ""
+            if auto:
+                if by_n[n].fields.get("reversible", "unknown") != "yes":
+                    raise OrchError("Q%d is not --reversible yes; it is never auto-answered; nothing written" % n, 1)
+                if not any(o.recommended and o.label == text for o in by_n[n].option_details()):
+                    raise OrchError("%r is not Q%d's recommended option; nothing written" % (text, n), 1)
+        status = None
+        spath = cli.status_path(task_dir)
+        if auto and os.path.exists(spath):
+            status = st.Status.load(spath)
+        program, auto_ms = cli.program_info(status) if status else (False, None)
+        log, journal = "", []
         for n, text in pairs:
             q = [x for x in parse(lines) if x.n == n][0]
-            set_field(lines, q, "status", "answered")
+            set_field(lines, q, "status", "assumed" if auto else "answered")
             q = [x for x in parse(lines) if x.n == n][0]
             set_field(lines, q, "answer", "%s (%s)" % (text, ts))
-            log += cli.log_line(ts, "orchestrator", "question Q%d answered: %s" % (n, cli.clip(text, 100)))
+            if auto:
+                log += cli.log_line(ts, role, "question Q%d assumed %s: %s" % (n, text, cli.clip(q.text, 100)))
+                rec, _ = jr.build_record(
+                    schema, "assumed_decision",
+                    [("decision", "=", text), ("reversible", ":=", "true"), ("role", "=", role),
+                     ("question", "=", "Q%d: %s" % (n, q.text))], ts, repo, slug, program, auto_ms)
+                journal.append(jr.encode(rec))
+            else:
+                log += cli.log_line(ts, "orchestrator", "question Q%d answered: %s" % (n, cli.clip(text, 100)))
         write_atomic(questions_path(task_dir), render_file(task_dir, lines), 0o644)
+        for data in journal:
+            jr.append(os.path.join(task_dir, "journal.jsonl"), data)
         cli.append_log(task_dir, log)
-    for n, _ in pairs:
-        print("Q%d answered" % n)
+    for n, text in pairs:
+        print("Q%d %s" % (n, "assumed " + text if auto else "answered"))
     return 0
 
 
@@ -456,6 +482,10 @@ def register(add):
 
     sp = add("answers", cmd_answers, "resolve several questions at once (all or nothing): <qid> <text> [<qid> <text> ...]")
     sp.add_argument("pairs", nargs="+", metavar="qid_or_text")
+    sp.add_argument("--auto", action="store_true",
+                    help="auto-answer: each question must be open and --reversible yes, the text its recommended option; "
+                         "recorded as assumed")
+    sp.add_argument("--as", dest="as_role", default=None, help="role named in the log line (default orchestrator)")
 
     sp = add("checkpoint", cmd_checkpoint, "journal a checkpoint; --ask prints the first 10 open questions as text to ask the user")
     sp.add_argument("--ask", action="store_true")

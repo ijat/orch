@@ -783,6 +783,73 @@ class TestAnswers(FlowBase):
         self.assertEqual(len(qs.open_ones(self.d)), 4)
 
 
+class TestAnswersAuto(FlowBase):
+    """`orch answers --auto`: the pane's Auto-answer, only for an open `--reversible yes` question's recommended option."""
+
+    def qpath(self):
+        return os.path.join(self.d, "questions.md")
+
+    def setUp(self):
+        FlowBase.setUp(self)
+        self.ok("ask", "Colour?", "--options", "red :: warm|blue :: cool", "--recommended", "blue", "--reversible", "yes")
+        self.ok("ask", "Size?", "--options", "s :: small|m :: medium", "--recommended", "m", "--reversible", "yes")
+        self.ok("ask", "Delete?", "--options", "yes :: gone|no :: kept", "--recommended", "no", "--reversible", "no")
+        self.ok("ask", "Where?", "--options", "a :: here|b :: there", "--recommended", "a")   # reversible unknown
+        self.ok("ask", "Free text?", "--reversible", "yes")                                     # no options
+
+    def test_auto_records_assumed_status_answer_journal_and_log_like_ask_assume(self):
+        n, j = len(self.log_lines()), len(self.journal())
+        out, _ = self.ok("answers", "--auto", "1", "blue", "2", "m", "--as", "pane")
+        self.assertEqual(out.split("\n")[:2], ["Q1 assumed blue", "Q2 assumed m"])
+        text = self.read(self.qpath()).decode()
+        for q, ans in (("Q1", "blue"), ("Q2", "m")):
+            block = text.split("## %s " % q)[1].split("\n## ")[0]
+            self.assertIn("- status: assumed\n", block)
+            self.assertIn("- answer: %s (2026-03-01T10:00Z)\n" % ans, block)
+        self.assertEqual([q.n for q in qs.open_ones(self.d)], [3, 4, 5])
+        recs = self.journal()[j:]
+        self.assertEqual([(r["kind"], r["decision"], r["reversible"], r["role"], r["question"]) for r in recs],
+                         [("assumed_decision", "blue", True, "pane", "Q1: Colour?"),
+                          ("assumed_decision", "m", True, "pane", "Q2: Size?")])
+        new = self.log_lines()[n:]
+        self.assertEqual(len(new), 2)
+        self.assertIn("pane: question Q1 assumed blue", new[0])
+
+    def test_same_question_file_as_ask_assume(self):
+        self.ok("ask", "Colour?", "--options", "red :: warm|blue :: cool", "--recommended", "blue", "--reversible", "yes",
+                "--assume", "blue")
+        assumed = self.read(self.qpath()).decode().split("## Q6 ")[1]
+        self.ok("answers", "--auto", "1", "blue")
+        auto = self.read(self.qpath()).decode().split("## Q1 ")[1].split("\n## ")[0]
+        key = lambda block: [l.split(" (")[0] for l in block.splitlines() if l.startswith(("- status", "- answer"))]  # noqa: E731
+        self.assertEqual(key(auto), key(assumed.split("\n## ")[0]))
+
+    def test_anything_not_recommended_reversible_or_open_refuses_and_writes_nothing(self):
+        self.ok("answer", "5", "done")   # closed (no options, reversible yes)
+        before, log, jour = self.read(self.qpath()), self.read(self.d, "log.md"), len(self.journal())
+        for argv in (["answers", "--auto", "1", "blue", "2", "s"],         # Q2: s is not the recommended option
+                     ["answers", "--auto", "1", "blue", "3", "no"],        # Q3: --reversible no
+                     ["answers", "--auto", "1", "blue", "4", "a"],         # Q4: reversible unknown
+                     ["answers", "--auto", "1", "red"],                    # not recommended
+                     ["answers", "--auto", "1", "Blue"],                   # label must match exactly
+                     ["answers", "--auto", "1", "blue", "5", "x"],         # no options, already answered
+                     ["answers", "--auto", "1", "blue", "9", "x"],         # unknown id
+                     ["answers", "--auto", "1", "blue", "1", "blue"]):     # duplicate
+            self.refuse(1, *argv)
+            self.assertEqual(self.read(self.qpath()), before, argv)
+            self.assertEqual(self.read(self.d, "log.md"), log, argv)
+            self.assertEqual(len(self.journal()), jour, argv)
+
+    def test_a_question_without_options_is_never_auto_answered(self):
+        before = self.read(self.qpath())
+        self.refuse(1, "answers", "--auto", "5", "anything")
+        self.assertEqual(self.read(self.qpath()), before)
+
+    def test_without_auto_answers_still_closes_as_answered(self):
+        self.ok("answers", "1", "blue")
+        self.assertIn("- status: answered\n", self.read(self.qpath()).decode().split("## Q1 ")[1].split("\n## ")[0])
+
+
 class TestResume(FlowBase):
     def put(self, name, text):
         with open(os.path.join(self.d, name), "w") as fh:
