@@ -215,6 +215,8 @@ MULTI_SEP = "|"   # a multi-select answer is the chosen labels joined by `|` (a 
 
 def check_multi_answer(q, text):
     """A multi-select answer must be 1+ distinct option labels of the question, joined by `|`."""
+    if text.strip().lower() == "hold on":   # the pane's Hold on row pauses any question; it is not an option label
+        return "Hold on"
     labels = [o.label for o in q.option_details()]
     chosen = [x.strip() for x in text.split(MULTI_SEP)]
     if any(not x for x in chosen) or any(x not in labels for x in chosen) or len(set(chosen)) != len(chosen):
