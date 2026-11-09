@@ -24,13 +24,17 @@ OPEN_WARN = 20                                   # D8: warn at this many open qu
 TOPIC_MAX = 60
 LABEL_MAX = 200   # an answer is the label as written; status --json never clips one, so `orch ask` bounds it
 UNGROUPED = "(ungrouped)"                         # the name `orch status --json --question-group` gives questions with no group
-SHOW_MAX = 10                                     # `orch checkpoint --ask` writes the first 10 by sort_key, then the count left
+SHOW_MAX = 10                                     # `orch checkpoint --ask` lists the first 10 by sort_key, then the count left
 Option = namedtuple("Option", "label text kind recommended")   # kind: explanation | reason | None (a bare, old option)
 
 
 class Question(object):
     def __init__(self, n, text, start, end, fields):
         self.n, self.text, self.start, self.end, self.fields = n, text, start, end, fields
+
+    @property
+    def multi(self):
+        return self.fields.get("multi", "").strip().lower() == "yes"
 
     @property
     def status(self):
@@ -206,6 +210,19 @@ def clean_blocks(raw):
     return ", ".join(items)
 
 
+MULTI_SEP = "|"   # a multi-select answer is the chosen labels joined by `|` (a label can never contain one)
+
+
+def check_multi_answer(q, text):
+    """A multi-select answer must be 1+ distinct option labels of the question, joined by `|`."""
+    labels = [o.label for o in q.option_details()]
+    chosen = [x.strip() for x in text.split(MULTI_SEP)]
+    if any(not x for x in chosen) or any(x not in labels for x in chosen) or len(set(chosen)) != len(chosen):
+        raise OrchError("Q%d takes several options: answer with distinct option labels joined by `%s` (%s)"
+                        % (q.n, MULTI_SEP, " | ".join(labels)), 1)
+    return MULTI_SEP.join(chosen)
+
+
 def cmd_ask(ns, extra):
     cli.require_write_allowed()
     task_dir = cli.get_task(ns)
@@ -219,6 +236,11 @@ def cmd_ask(ns, extra):
     opts, rec = split_options(ns.options, ns.recommended, reversible)
     labels = [o.label for o in opts]
     blocks = clean_blocks(ns.blocks)
+    multi = bool(ns.multi)
+    if multi and len(opts) < 2:
+        raise OrchError("--multi needs at least two --options", 1)
+    if multi and ns.assume is not None:
+        raise OrchError("--multi cannot be combined with --assume", 1)
     topic = cli.clip(text, TOPIC_MAX)
     if ns.topic is not None:
         topic = cli.one_line(ns.topic)
@@ -263,6 +285,8 @@ def cmd_ask(ns, extra):
                  "- topic: %s\n" % topic]
         if group is not None:
             block.append("- group: %s\n" % group)
+        if multi:
+            block.append("- multi: yes\n")
         if shown:
             block.append("- options: %s\n" % " | ".join(shown))
         if assume is not None:
@@ -314,6 +338,8 @@ def cmd_answer(ns, extra):
         q = match[0]
         if q.status != "open":
             raise OrchError("Q%d is %s, not open; nothing written" % (n, q.status or "unknown"), 1)
+        if text is not None and q.multi:
+            text = check_multi_answer(q, text)
         if text is None:
             set_field(lines, q, "status", "withdrawn")
             log = cli.log_line(ts, "orchestrator", "question Q%d withdrawn" % n)
@@ -361,6 +387,8 @@ def cmd_answers(ns, extra):
                 raise OrchError("no question Q%d in %s; nothing written" % (n, questions_path(task_dir)), 1)
             if by_n[n].status != "open":
                 raise OrchError("Q%d is %s, not open; nothing written" % (n, by_n[n].status or "unknown"), 1)
+            if by_n[n].multi and not auto:
+                pairs[pairs.index((n, text))] = (n, check_multi_answer(by_n[n], text))
             if auto:
                 if by_n[n].fields.get("reversible", "unknown") != "yes":
                     raise OrchError("Q%d is not --reversible yes; it is never auto-answered; nothing written" % n, 1)
@@ -395,47 +423,6 @@ def cmd_answers(ns, extra):
     return 0
 
 
-def letter(i):
-    """a, b, … z, aa, ab, …"""
-    out = ""
-    i += 1
-    while i:
-        i, r = divmod(i - 1, 26)
-        out = chr(97 + r) + out
-    return out
-
-
-def ask_text(shown, remaining):
-    """The questions as text for the user (D7): numbered, lettered options with the recommended one first and every
-    option explained, a reply hint, and always Hold on."""
-    out = []
-    for i, q in enumerate(shown, 1):
-        group = q.fields.get("group")
-        out.append("%d. %s  (Q%d, blocks %s, reversible %s%s)" % (
-            i, q.text, q.n, q.fields.get("blocks", "all") or "all", q.fields.get("reversible", "unknown") or "unknown",
-            ", group %s" % group if group else ""))
-        opts = sorted(q.option_details(), key=lambda o: 0 if o.recommended else 1)   # stable
-        for j, o in enumerate(opts):
-            line = "   %s) %s%s" % (letter(j), o.label, RECOMMENDED if o.recommended else "")
-            if o.kind == "explanation":
-                line += " \u2014 " + o.text
-            elif o.kind == "reason":
-                line += " \u2014 not explained: " + o.text
-            out.append(line)
-        if not opts:
-            out.append("   Answer in your own words.")
-    hints = ["`1a 2b` (question 1 option a, question 2 option b)"]
-    if any(o.recommended for q in shown if q.fields.get("reversible") != "no" for o in q.option_details()):
-        hints.append("`ok` to take every recommended option except on questions marked `reversible no`, "
-                     "which you answer yourself")
-    hints.append("`hold`")
-    out.append("Hold on: stop and wait until you resume.")
-    out.append("Reply with %s." % ", ".join(hints))
-    if remaining:
-        out.append("%d more stay parked." % remaining)
-    return out
-
-
 def cmd_checkpoint(ns, extra):
     cli.require_write_allowed()
     task_dir = cli.get_task(ns)
@@ -460,9 +447,13 @@ def cmd_checkpoint(ns, extra):
         for q in opens[:8]:
             print("  Q%d (blocks %s): %s" % (q.n, q.fields.get("blocks", "all"), cli.clip(q.text, 100)))
         return 0
-    print("checkpoint: %d open, asking %d. Ask these in text and end the turn; do not open a dialog." % (len(opens), len(shown)))
-    for line in ask_text(shown, len(opens) - len(shown)):
-        print(line)
+    print("checkpoint: %d open, %d shown in orch-pane. The panel is where the user answers: do not repeat the questions "
+          "or their options in text, and do not open a dialog; end the turn." % (len(opens), len(shown)))
+    for q in shown:
+        print("  Q%d (blocks %s%s): %s" % (q.n, q.fields.get("blocks", "all") or "all", ", multi" if q.multi else "",
+                                          q.fields.get("topic") or cli.clip(q.text, TOPIC_MAX)))
+    if len(opens) > len(shown):
+        print("%d more stay parked." % (len(opens) - len(shown)))
     return 0
 
 
@@ -478,6 +469,7 @@ def register(add):
     sp.add_argument("--blocks", default=None, help="step ids, all (default) or none")
     sp.add_argument("--reversible", default=None, help="yes | no | unknown (default)")
     sp.add_argument("--assume", default=None, help="take this option now (needs --reversible yes)")
+    sp.add_argument("--multi", action="store_true", help="the user may pick several options; the answer is the labels joined by `|`")
     sp.add_argument("--as", dest="as_role", default=None)
 
     sp = add("answer", cmd_answer, "resolve a question")
@@ -492,5 +484,5 @@ def register(add):
                          "recorded as assumed")
     sp.add_argument("--as", dest="as_role", default=None, help="role named in the log line (default orchestrator)")
 
-    sp = add("checkpoint", cmd_checkpoint, "journal a checkpoint; --ask prints the first 10 open questions as text to ask the user")
+    sp = add("checkpoint", cmd_checkpoint, "journal a checkpoint; --ask lists the first 10 open question ids and topics; the user answers in orch-pane")
     sp.add_argument("--ask", action="store_true")
