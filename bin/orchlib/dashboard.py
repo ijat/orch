@@ -234,6 +234,7 @@ class Journal(object):
         self.milestones_done = set()
         self.milestone_starts = {}   # milestone -> ts of its first milestone_start
         self.end = None           # (ts, outcome) of the newest task_end
+        self.text = text
         if text is None:
             return
         for i, line in enumerate(text.split("\n")):
@@ -410,7 +411,11 @@ def build_task(repo, slug, d, status_text, state, journal):
               "note": cell(row.get("notes"), 160), "pct": pct_of(row.get("pct"))}
              for r, row in rows[:MAX_ROLES]]
     total = step_total(d, program, ms_no)
-    done = steps_done_from(rows_of_milestone(rows, journal, ms_no) if program else rows, total)
+    ms_rows = rows_of_milestone(rows, journal, ms_no) if program else rows
+    done = steps_done_from(ms_rows, total)
+    if done:
+        from . import statusjson   # here, not at the top: it imports this module
+        done = statusjson.dashboard_done(d, program, ms_no, ms_rows, journal.text, done)
     n_open, open_qs = questions_of(d)
     current = None   # what is going on now: the first working role that is not the orchestrator
     for want in ("in_progress", "waiting", "blocked"):

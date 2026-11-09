@@ -318,7 +318,58 @@ class TestTruthfulProgress(Base):
         self.task("rest", rows="| implementer | done | 2026-03-01T12:00Z | 15 | |",
                   files={"plan.md": plan_text([str(i) for i in range(1, 16)])}, journal=[self.spawn([11])])
         s = self.one()["steps"]
-        self.assertEqual(s["done"], 15)
+        self.assertEqual((s["done"], s["current"]), (15, []))   # held nothing, and a done step is never also current
+        self.assertFalse(any(i["current"] for i in s["items"]))
+        self.check_invariant(s)
+
+    def rows(self, *rows):
+        return "\n".join("| %s | %s | 2026-03-01T12:00Z | %s | |" % r for r in rows)
+
+    def test_parallel_implementer_is_held_whichever_spawn_is_newest(self):   # F1 probe (a)
+        spawn = lambda role, steps: self.spawn(steps, role=role)               # noqa: E731
+        self.task("par", rows=self.rows(("implementer-a", "in_progress", "1"), ("implementer-b", "done", "3")),
+                  files={"plan.md": plan_text(["1", "2", "3", "4"])},
+                  journal=[spawn("implementer-a", [2]), spawn("implementer-b", [3]),
+                           {"kind": "return", "role": "implementer-b"}])
+        s = self.one()["steps"]
+        self.assertEqual((s["done"], s["current"]), (2, ["2"]))
+        self.assertEqual([i["id"] for i in s["items"] if i["done"]], ["1", "3"])
+        self.check_invariant(s)
+
+    def test_two_running_implementers_both_hold(self):
+        spawn = lambda role, steps: self.spawn(steps, role=role)               # noqa: E731
+        self.task("par2", rows=self.rows(("implementer-a", "in_progress", "1"), ("implementer-b", "in_progress", "3")),
+                  files={"plan.md": plan_text(["1", "2", "3", "4"])},
+                  journal=[spawn("implementer-a", [2]), spawn("implementer-b", [4])])
+        s = self.one()["steps"]
+        self.assertEqual((s["done"], s["current"]), (2, ["2", "4"]))
+        self.assertEqual([i["id"] for i in s["items"] if i["done"]], ["1", "3"])
+        self.check_invariant(s)
+
+    def test_a_later_spawn_of_another_role_does_not_release_the_step(self):   # F1 probe (b)
+        ids = [str(i) for i in range(1, 6)]
+        s = self.steps_of("graph", "5", ids, [self.spawn([3]), {"kind": "spawn", "role": "orch-graph"}])
+        self.assertEqual((s["done"], s["total"], s["current"]), (4, 5, ["3"]))
+        self.assertEqual([i["id"] for i in s["items"] if not i["done"]], ["3"])
+        self.check_invariant(s)
+
+    def test_dashboard_steps_done_agrees(self):                                # F3
+        ids = [str(i) for i in range(1, 16)]
+        self.task("dash", rows=self.rows(("implementer", "in_progress", "15")),
+                  files={"plan.md": plan_text(ids)}, journal=[self.spawn([11])])
+        self.task("dash-rest", rows=self.rows(("implementer", "done", "15")),
+                  files={"plan.md": plan_text(ids)}, journal=[self.spawn([11])])
+        self.task("dash-pf", rows=self.rows(("implementer-a", "in_progress", "15")),
+                  files={"plan.md": plan_text(ids)},
+                  journal=[self.spawn([11], role="implementer-a"), {"kind": "spawn", "role": "orch-graph"}])
+        tasks = {t["slug"]: t for t in db.compute(self.root)["tasks"]}
+        self.assertEqual((tasks["dash"]["steps_done"], tasks["dash"]["steps_total"]), (14, 15))
+        self.assertEqual(tasks["dash"]["steps_done"], self.sj_done("dash"))
+        self.assertEqual(tasks["dash-rest"]["steps_done"], 15)
+        self.assertEqual(tasks["dash-pf"]["steps_done"], 14)
+
+    def sj_done(self, slug):
+        return next(t for t in self.data()["tasks"] if t["slug"] == slug)["steps"]["done"]
 
     def test_lite_plan_spawn_is_unchanged(self):
         s = self.steps_of("lite", "plan", ["1", "2"], [self.spawn(["plan"])])
