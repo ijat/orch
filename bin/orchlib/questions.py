@@ -33,6 +33,10 @@ class Question(object):
         self.n, self.text, self.start, self.end, self.fields = n, text, start, end, fields
 
     @property
+    def multi(self):
+        return self.fields.get("multi", "").strip().lower() == "yes"
+
+    @property
     def status(self):
         return self.fields.get("status", "")
 
@@ -206,6 +210,19 @@ def clean_blocks(raw):
     return ", ".join(items)
 
 
+MULTI_SEP = "|"   # a multi-select answer is the chosen labels joined by `|` (a label can never contain one)
+
+
+def check_multi_answer(q, text):
+    """A multi-select answer must be 1+ distinct option labels of the question, joined by `|`."""
+    labels = [o.label for o in q.option_details()]
+    chosen = [x.strip() for x in text.split(MULTI_SEP)]
+    if any(not x for x in chosen) or any(x not in labels for x in chosen) or len(set(chosen)) != len(chosen):
+        raise OrchError("Q%d takes several options: answer with distinct option labels joined by `%s` (%s)"
+                        % (q.n, MULTI_SEP, " | ".join(labels)), 1)
+    return MULTI_SEP.join(chosen)
+
+
 def cmd_ask(ns, extra):
     cli.require_write_allowed()
     task_dir = cli.get_task(ns)
@@ -219,6 +236,11 @@ def cmd_ask(ns, extra):
     opts, rec = split_options(ns.options, ns.recommended, reversible)
     labels = [o.label for o in opts]
     blocks = clean_blocks(ns.blocks)
+    multi = bool(ns.multi)
+    if multi and len(opts) < 2:
+        raise OrchError("--multi needs at least two --options", 1)
+    if multi and ns.assume is not None:
+        raise OrchError("--multi cannot be combined with --assume", 1)
     topic = cli.clip(text, TOPIC_MAX)
     if ns.topic is not None:
         topic = cli.one_line(ns.topic)
@@ -263,6 +285,8 @@ def cmd_ask(ns, extra):
                  "- topic: %s\n" % topic]
         if group is not None:
             block.append("- group: %s\n" % group)
+        if multi:
+            block.append("- multi: yes\n")
         if shown:
             block.append("- options: %s\n" % " | ".join(shown))
         if assume is not None:
@@ -314,6 +338,8 @@ def cmd_answer(ns, extra):
         q = match[0]
         if q.status != "open":
             raise OrchError("Q%d is %s, not open; nothing written" % (n, q.status or "unknown"), 1)
+        if text is not None and q.multi:
+            text = check_multi_answer(q, text)
         if text is None:
             set_field(lines, q, "status", "withdrawn")
             log = cli.log_line(ts, "orchestrator", "question Q%d withdrawn" % n)
@@ -361,6 +387,8 @@ def cmd_answers(ns, extra):
                 raise OrchError("no question Q%d in %s; nothing written" % (n, questions_path(task_dir)), 1)
             if by_n[n].status != "open":
                 raise OrchError("Q%d is %s, not open; nothing written" % (n, by_n[n].status or "unknown"), 1)
+            if by_n[n].multi and not auto:
+                pairs[pairs.index((n, text))] = (n, check_multi_answer(by_n[n], text))
             if auto:
                 if by_n[n].fields.get("reversible", "unknown") != "yes":
                     raise OrchError("Q%d is not --reversible yes; it is never auto-answered; nothing written" % n, 1)
@@ -422,9 +450,13 @@ def ask_text(shown, remaining):
             elif o.kind == "reason":
                 line += " \u2014 not explained: " + o.text
             out.append(line)
+        if q.multi:
+            out.append("   Pick one or more (for example %s%s)." % (i, "".join(letter(j) for j in range(min(2, len(opts))))))
         if not opts:
             out.append("   Answer in your own words.")
     hints = ["`1a 2b` (question 1 option a, question 2 option b)"]
+    if any(q.multi for q in shown):
+        hints.append("`1ac` for a multi-select question (options a and c)")
     if any(o.recommended for q in shown if q.fields.get("reversible") != "no" for o in q.option_details()):
         hints.append("`ok` to take every recommended option except on questions marked `reversible no`, "
                      "which you answer yourself")
@@ -478,6 +510,7 @@ def register(add):
     sp.add_argument("--blocks", default=None, help="step ids, all (default) or none")
     sp.add_argument("--reversible", default=None, help="yes | no | unknown (default)")
     sp.add_argument("--assume", default=None, help="take this option now (needs --reversible yes)")
+    sp.add_argument("--multi", action="store_true", help="the user may pick several options; the answer is the labels joined by `|`")
     sp.add_argument("--as", dest="as_role", default=None)
 
     sp = add("answer", cmd_answer, "resolve a question")
