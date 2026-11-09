@@ -765,6 +765,9 @@ class TestAnswers(FlowBase):
         self.refuse(1, "answer", "Q5", "A|A")
         self.refuse(1, "answers", "Q5", "free text")
         self.ok("answers", "Q5", "A | C")
+        self.ok("ask", "pause me", "--options", "A :: x|B :: y", "--multi")
+        self.ok("answers", "Q6", "Hold on")
+        self.assertIn("- answer: Hold on (", self.read(self.qpath()).decode().split("## Q6 ")[1])
         self.assertIn("- answer: A|C (2026-03-01T10:00Z)\n", self.read(self.qpath()).decode())
 
     def test_multi_needs_two_options_and_no_assume(self):
