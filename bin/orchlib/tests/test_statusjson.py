@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -225,6 +226,176 @@ class TestProgressRealShapes(Base):
         self.assertFalse(next(i for i in s["items"] if i["id"] == "7")["done"])
 
 
+class TestTruthfulProgress(Base):
+    """A running implementer's step is never done; a spawn's `m10-11` is plan step 11; a merge_point is a done milestone."""
+
+    def spawn(self, steps, **kw):
+        return dict({"kind": "spawn", "role": "implementer", "steps": steps}, **kw)
+
+    def steps_of(self, slug, cell, ids, journal, **kw):
+        self.task(slug, rows="| implementer | in_progress | 2026-03-01T12:00Z | %s | |" % cell,
+                  files={"plan.md": plan_text(ids)}, journal=journal, **kw)
+        s = self.one()["steps"]
+        shutil.rmtree(os.path.join(self.root, "app", slug))
+        return s
+
+    def check_invariant(self, s):
+        self.assertEqual(s["done"], sum(1 for i in s["items"] if i["done"]))
+        for i in s["items"]:
+            if i["current"]:
+                self.assertFalse(i["done"])
+
+    def test_high_water_with_step_running(self):
+        ids = [str(i) for i in range(1, 16)]
+        s = self.steps_of("hw", "15", ids, [self.spawn([11])])
+        self.assertEqual((s["done"], s["total"], s["percent"]), (14, 15, 93))
+        self.assertEqual([i["id"] for i in s["items"] if i["current"]], ["11"])
+        self.assertEqual([i["id"] for i in s["items"] if not i["done"]], ["11"])
+        self.assertEqual(s["current"], ["11"])
+        self.check_invariant(s)
+
+    def test_milestone_prefixed_spawn_step(self):
+        ids = [str(i) for i in range(1, 16)]
+        s = self.steps_of("pfx", "15", ids, [self.spawn(["m10-11"])])
+        self.assertEqual((s["done"], s["current"]), (14, ["11"]))
+        self.assertEqual([i["id"] for i in s["items"] if i["current"]], ["11"])
+        self.check_invariant(s)
+        # a program: M10's prefix matches in M10, not in M2
+        files = {"roadmap.md": TestProgram.ROADMAP, "m02-two/plan.md": plan_text(["1", "2", "11"])}
+        self.task("prog", state="implementing", shape="roadmap", milestone="M2", files=files,
+                  rows="| implementer | in_progress | 2026-03-01T12:00Z | 2 | |",
+                  journal=[self.spawn(["m2-11"], milestone=2)])
+        s = self.one()["steps"]
+        self.assertEqual((s["current"], s["done"]), (["11"], 2))
+        shutil.rmtree(os.path.join(self.root, "app", "prog"))
+        self.task("prog", state="implementing", shape="roadmap", milestone="M2", files=files,
+                  rows="| implementer | in_progress | 2026-03-01T12:00Z | 11 | |",
+                  journal=[self.spawn(["m10-11"])])   # row names 11, spawn's `m10-11` is another milestone's
+        s = self.one()["steps"]
+        self.assertEqual(s["current"], ["m10-11"])   # names another milestone: no match, stays as written
+        self.assertFalse(any(i["current"] for i in s["items"]))
+        self.assertEqual(s["done"], 3)
+
+    def test_no_running_spawn_keeps_todays_result(self):
+        ids = [str(i) for i in range(1, 16)]
+        returned = [self.spawn([11]), {"kind": "return", "role": "implementer"}]
+        for journal in (None, [], returned):
+            s = self.steps_of("none", "15", ids, journal)
+            self.assertEqual((s["done"], s["current"]), (15, None))
+            self.assertFalse(any(i["current"] for i in s["items"]))
+
+    def test_all_done_state_unchanged_unless_a_spawn_runs(self):
+        ids = ["1", "2", "3", "4"]
+        s = self.steps_of("rev", "3", ids, None, state="reviewing")
+        self.assertEqual(s["done"], 4)
+        s = self.steps_of("rev", "3", ids, [self.spawn([2])], state="reviewing")
+        self.assertEqual((s["done"], s["current"]), (3, ["2"]))
+        self.check_invariant(s)
+
+    def test_fix_round_row_unless_a_step_is_running(self):
+        ids = ["1", "2", "3"]
+        self.assertEqual(self.steps_of("fx", "fix round 1", ids, None)["done"], 3)
+        s = self.steps_of("fx", "fix round 1", ids, [self.spawn([3])])
+        self.assertEqual((s["done"], s["current"]), (2, ["3"]))
+        self.check_invariant(s)
+
+    def test_multi_step_spawn_counts_its_completed_steps(self):   # Revision 3
+        ids = [str(i) for i in range(1, 7)]
+        s = self.steps_of("ms", "5", ids, [self.spawn([4, 5, 6])])    # row names 5, in the list: 4 and 5 done, 6 held
+        self.assertEqual((s["done"], s["current"]), (5, ["6"]))
+        self.assertEqual([i["id"] for i in s["items"] if i["current"]], ["6"])
+        self.check_invariant(s)
+        s = self.steps_of("ms", "3", ids, [self.spawn([4, 5, 6])])    # row names 3, not in the list: all three held
+        self.assertEqual((s["done"], s["current"]), (3, ["4", "5", "6"]))
+        s = self.steps_of("ms", "6", ids, [self.spawn([2, 3])])       # row beyond the list (rework): both held
+        self.assertEqual((s["done"], s["current"]), (4, ["2", "3"]))
+        self.assertEqual([i["id"] for i in s["items"] if not i["done"]], ["2", "3"])
+        self.check_invariant(s)
+        s = self.steps_of("ms", "3", ids, [self.spawn([1, 2, 3])])    # the whole list is done: nothing held
+        self.assertEqual((s["done"], s["current"]), (3, []))
+        self.check_invariant(s)
+
+    def test_unreturned_spawn_beside_a_finished_row_holds_nothing(self):
+        self.task("rest", rows="| implementer | done | 2026-03-01T12:00Z | 15 | |",
+                  files={"plan.md": plan_text([str(i) for i in range(1, 16)])}, journal=[self.spawn([11])])
+        s = self.one()["steps"]
+        self.assertEqual((s["done"], s["current"]), (15, []))   # held nothing, and a done step is never also current
+        self.assertFalse(any(i["current"] for i in s["items"]))
+        self.check_invariant(s)
+
+    def rows(self, *rows):
+        return "\n".join("| %s | %s | 2026-03-01T12:00Z | %s | |" % r for r in rows)
+
+    def test_parallel_implementer_is_held_whichever_spawn_is_newest(self):   # F1 probe (a)
+        spawn = lambda role, steps: self.spawn(steps, role=role)               # noqa: E731
+        self.task("par", rows=self.rows(("implementer-a", "in_progress", "1"), ("implementer-b", "done", "3")),
+                  files={"plan.md": plan_text(["1", "2", "3", "4"])},
+                  journal=[spawn("implementer-a", [2]), spawn("implementer-b", [3]),
+                           {"kind": "return", "role": "implementer-b"}])
+        s = self.one()["steps"]
+        self.assertEqual((s["done"], s["current"]), (2, ["2"]))
+        self.assertEqual([i["id"] for i in s["items"] if i["done"]], ["1", "3"])
+        self.check_invariant(s)
+
+    def test_two_running_implementers_both_hold(self):
+        spawn = lambda role, steps: self.spawn(steps, role=role)               # noqa: E731
+        self.task("par2", rows=self.rows(("implementer-a", "in_progress", "1"), ("implementer-b", "in_progress", "3")),
+                  files={"plan.md": plan_text(["1", "2", "3", "4"])},
+                  journal=[spawn("implementer-a", [2]), spawn("implementer-b", [4])])
+        s = self.one()["steps"]
+        self.assertEqual((s["done"], s["current"]), (2, ["2", "4"]))
+        self.assertEqual([i["id"] for i in s["items"] if i["done"]], ["1", "3"])
+        self.check_invariant(s)
+
+    def test_a_later_spawn_of_another_role_does_not_release_the_step(self):   # F1 probe (b)
+        ids = [str(i) for i in range(1, 6)]
+        s = self.steps_of("graph", "5", ids, [self.spawn([3]), {"kind": "spawn", "role": "orch-graph"}])
+        self.assertEqual((s["done"], s["total"], s["current"]), (4, 5, ["3"]))
+        self.assertEqual([i["id"] for i in s["items"] if not i["done"]], ["3"])
+        self.check_invariant(s)
+
+    def test_dashboard_steps_done_agrees(self):                                # F3
+        ids = [str(i) for i in range(1, 16)]
+        self.task("dash", rows=self.rows(("implementer", "in_progress", "15")),
+                  files={"plan.md": plan_text(ids)}, journal=[self.spawn([11])])
+        self.task("dash-rest", rows=self.rows(("implementer", "done", "15")),
+                  files={"plan.md": plan_text(ids)}, journal=[self.spawn([11])])
+        self.task("dash-pf", rows=self.rows(("implementer-a", "in_progress", "15")),
+                  files={"plan.md": plan_text(ids)},
+                  journal=[self.spawn([11], role="implementer-a"), {"kind": "spawn", "role": "orch-graph"}])
+        tasks = {t["slug"]: t for t in db.compute(self.root)["tasks"]}
+        self.assertEqual((tasks["dash"]["steps_done"], tasks["dash"]["steps_total"]), (14, 15))
+        self.assertEqual(tasks["dash"]["steps_done"], self.sj_done("dash"))
+        self.assertEqual(tasks["dash-rest"]["steps_done"], 15)
+        self.assertEqual(tasks["dash-pf"]["steps_done"], 14)
+
+    def sj_done(self, slug):
+        return next(t for t in self.data()["tasks"] if t["slug"] == slug)["steps"]["done"]
+
+    def test_lite_plan_spawn_is_unchanged(self):
+        s = self.steps_of("lite", "plan", ["1", "2"], [self.spawn(["plan"])])
+        self.assertEqual((s["done"], s["current"]), (0, ["plan"]))
+
+    def test_merge_point_milestone_is_done(self):
+        files = {"roadmap.md": TestProgram.ROADMAP, "m02-two/plan.md": plan_text(["1", "2"])}
+        self.task("mp", mode="standard", shape="roadmap", milestone="M2 (two)", files=files,
+                  rows="| implementer | in_progress | 2026-03-01T12:00Z | 1 | |",
+                  journal=[{"kind": "merge_point", "milestone": 1, "sha": "a" * 40}])
+        t = self.one()
+        self.assertEqual([i["state"] for i in t["milestones"]["items"]], ["done", "current", "pending"])
+        self.assertEqual(t["milestones"]["done"], 1)
+
+    def test_milestone_end_and_merge_point_count_once(self):
+        files = {"roadmap.md": TestProgram.ROADMAP, "m02-two/plan.md": plan_text(["1", "2"])}
+        self.task("mp2", mode="standard", shape="roadmap", milestone="M3", files=files,
+                  rows="| implementer | in_progress | 2026-03-01T12:00Z | 1 | |",
+                  journal=[{"kind": "merge_point", "milestone": 1}, {"kind": "milestone_end", "milestone": 1,
+                                                                      "outcome": "done"},
+                           {"kind": "milestone_end", "milestone": 2, "outcome": "done"}])
+        ms = self.one()["milestones"]
+        self.assertEqual((ms["done"], [i["state"] for i in ms["items"]]), (2, ["done", "done", "current"]))
+
+
 class TestProgram(Base):
     ROADMAP = ("# Roadmap: p\n\n## Summary\n\n- goal: a program\n<!-- hidden -->\n\n## Milestones\n\n"
                "<!-- | M | not | the table | -->\n\n"
@@ -300,6 +471,250 @@ class TestProgram(Base):
         self.assertEqual(t["milestones"], {"done": 0, "total": None, "items": []})
         self.assertEqual(t["overall"]["percent"], None)
         self.assertTrue(t["overall"]["estimate"])
+
+
+class TestQuestionsBlock(Base):
+    """Step 3: the `questions` block, built from files `orch ask` and `orch answers` wrote."""
+
+    SLUG = "app/qs"
+
+    def setUp(self):
+        Base.setUp(self)
+        self.d = self.task("qs")
+
+    def cli(self, *argv):
+        rc, out, err = run_cli(self.root, *(list(argv) + ["-t", self.SLUG]))
+        self.assertEqual(rc, 0, (argv, err))
+        return out
+
+    def block(self, group=None, skip=None):
+        argv = ["status", "--json"] + (["--question-group", group] if group is not None else []) + \
+               (["--question-skip", str(skip)] if skip is not None else [])
+        rc, out, err = run_cli(self.root, *argv)
+        self.assertEqual((rc, err), (0, ""))
+        t = json.loads(out)["tasks"][0]
+        self.assertIsNone(t["error"])
+        return t["questions"], len(out.encode())
+
+    def test_no_questions_file(self):
+        q, _ = self.block()
+        self.assertEqual(q, {"counts": {"open": 0, "answered": 0, "assumed": 0, "withdrawn": 0}, "groups": [],
+                             "open_group": None, "open": [], "history": [], "history_total": 0})
+
+    def seed(self):
+        self.cli("ask", "Pick a colour", "--options", "red :: warm|blue :: cool", "--recommended", "blue",
+                 "--reversible", "no", "--blocks", "2", "--group", "look", "--topic", "Colour")
+        self.cli("ask", "Font?", "--group", "look", "--blocks", "all")
+        self.cli("ask", "Which db?", "--options", "pg :: solid|sqlite !! only the owner can say", "--group", "data")
+        self.cli("ask", "Loose one")
+        self.cli("ask", "Take b", "--options", "a :: x|b :: y", "--reversible", "yes", "--assume", "b")
+        self.cli("ask", "Dropped", "--group", "data")
+        self.cli("answer", "6", "--withdraw")
+        self.cli("answers", "2", "Inter")
+
+    def test_counts_groups_open_group_and_history(self):
+        self.seed()
+        q, _ = self.block()
+        self.assertEqual(q["counts"], {"open": 3, "answered": 1, "assumed": 1, "withdrawn": 1})
+        self.assertEqual([(g["group"], g["label"], g["counts"]["open"]) for g in q["groups"]],
+                         [("data", "data", 1), (None, "(ungrouped)", 1), ("look", "look", 1)])
+        self.assertEqual(q["groups"][0]["counts"], {"open": 1, "answered": 0, "assumed": 0, "withdrawn": 1})
+        self.assertEqual(q["groups"][2]["counts"], {"open": 1, "answered": 1, "assumed": 0, "withdrawn": 0})
+        # Q1 blocks 2; Q2 is answered; Q3 and Q4 block all and Q3 comes first, so its group is the one listed in full
+        self.assertEqual(q["open_group"], "data")
+        self.assertEqual([e["id"] for e in q["open"]], ["Q3"])
+
+    def test_open_group_is_that_of_the_first_open_question_by_sort_key(self):
+        self.seed()
+        q, _ = self.block()
+        first = qs_sort_first(self.d)
+        self.assertEqual(q["open_group"], first)
+
+    def test_question_entry_fields_in_full(self):
+        self.seed()
+        q, _ = self.block("look")
+        self.assertEqual(q["open_group"], "look")
+        (e,) = q["open"]
+        self.assertEqual((e["id"], e["n"], e["status"], e["text"], e["topic"], e["group"], e["reversible"], e["blocks"]),
+                         ("Q1", 1, "open", "Pick a colour", "Colour", "look", "no", "2"))
+        self.assertEqual((e["asked_by"], e["asked"], e["answer"], e["answered"], e["detail"]),
+                         ("orchestrator", "2026-03-01T13:00Z", None, None, "full"))
+        self.assertEqual(e["options"], [{"label": "red", "text": "warm", "kind": "explanation", "recommended": False},
+                                        {"label": "blue", "text": "cool", "kind": "explanation", "recommended": True}])
+        q, _ = self.block("data")
+        self.assertEqual(q["open"][0]["options"][1],
+                         {"label": "sqlite", "text": "only the owner can say", "kind": "reason", "recommended": False})
+        q, _ = self.block("(ungrouped)")
+        self.assertEqual([e["text"] for e in q["open"]], ["Loose one"])
+        self.assertIsNone(q["open"][0]["group"])
+        q, _ = self.block("nope")
+        self.assertEqual((q["open_group"], q["open"]), ("nope", []))
+
+    def test_history_is_answered_and_assumed_newest_first(self):
+        self.seed()
+        q, _ = self.block()
+        self.assertEqual(q["history_total"], 2)
+        self.assertEqual([(e["id"], e["status"], e["answer"], e["answered"]) for e in q["history"]],
+                         [("Q5", "assumed", "b", "2026-03-01T13:00Z"), ("Q2", "answered", "Inter", "2026-03-01T13:00Z")])
+        self.assertEqual(q["history"][0]["options"][1]["label"], "b")
+
+    def test_history_keeps_the_newest_200(self):
+        for i in range(210):
+            self.cli("ask", "q%d" % i)
+        for lo in range(1, 211, 70):
+            args = []
+            for n in range(lo, lo + 70):
+                args += [str(n), "a%d" % n]
+            self.cli("answers", *args)
+        q, _ = self.block()
+        self.assertEqual((q["counts"]["answered"], q["history_total"], len(q["history"])), (210, 210, 200))
+        self.assertEqual(q["open"], [])
+
+    def test_200_open_and_200_answered_stay_under_256_KiB(self):
+        text = ("word " * 80).strip()
+        opts = "|".join("opt%d :: %s" % (i, "explains " * 25) for i in range(5))
+        for i in range(400):
+            self.cli("ask", "%d %s" % (i, text), "--options", opts, "--topic", "t" * 70, "--group", "g")
+        args = []
+        for n in range(1, 201):
+            args += [str(n), "answer " + "x" * 280]
+        self.cli("answers", *args)
+        q, size = self.block()
+        self.assertLess(size, 256 * 1024)
+        self.assertEqual(len(q["open"]), 200)                      # every open question of the group is listed
+        self.assertEqual(len(q["history"]), 200)
+        self.assertTrue(all(e["answer"] and e["topic"] for e in q["history"]))   # F8: every one of the 200
+        self.assertEqual(q["open"][0]["detail"], "full")
+        self.assertEqual(q["open"][-1]["detail"], "minimal")       # the budget ran out: later ones shrink
+        self.assertEqual(q["open"][-1]["options"], [])
+        self.assertEqual({e["detail"] for e in q["open"]}, {"full", "compact", "minimal"})
+        self.assertEqual([e["n"] for e in q["open"]], list(range(201, 401)))
+        self.assertTrue(all(e["text"] for e in q["open"]))
+
+    def worst_case(self, ch):
+        """200 open and 200 answered questions, every field past its limit, in characters of width `ch`. `orch ask` and
+        `orch answers` write one of each; the file repeats those blocks under new numbers (400 runs take minutes)."""
+        long = lambda n: ch * n   # noqa: E731
+        opts = "|".join("%d%s :: %s" % (i, long(190), long(2500)) for i in range(6))
+        for _ in range(2):
+            self.cli("ask", long(2500), "--options", opts, "--topic", long(300), "--blocks", "x" * 90, "--group", long(200))
+        self.cli("answers", "1", long(1500))
+        path = os.path.join(self.d, "questions.md")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        head = re.compile(r"^## Q(\d+)\b", re.M)
+        marks = [m.start() for m in head.finditer(text)]
+        lead, answered, open_ = text[:marks[0]], text[marks[0]:marks[1]], text[marks[1]:]
+        blocks = [head.sub("## Q%d" % n, (answered if n <= 200 else open_), count=1) for n in range(1, 401)]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(lead + "".join(b if b.endswith("\n") else b + "\n" for b in blocks))
+        q, size = self.block()
+        self.assertLess(size, 256 * 1024)
+        self.assertEqual((len(q["open"]), len(q["history"])), (200, 200))
+        for e in q["history"]:
+            self.assertTrue(e["answer"] and e["topic"] and e["answered"], e["id"])   # shortened, never lost
+        return size
+
+    def test_worst_case_every_field_at_its_limit_stays_under_256_KiB(self):   # F15
+        self.worst_case("x")
+
+    def test_worst_case_in_characters_that_print_as_12_bytes_stays_under_256_KiB(self):   # F15
+        self.worst_case("\U0001F600")
+
+    def test_history_at_ordinary_sizes_keeps_the_usual_clips(self):   # F15
+        for i in range(30):
+            self.cli("ask", "q%d" % i, "--topic", "Topic %d" % i)
+        args = []
+        for n in range(1, 31):
+            args += [str(n), "a" * 150]
+        self.cli("answers", *args)
+        q, _ = self.block()
+        self.assertTrue(all(e["answer"] == "a" * 150 for e in q["history"]))
+
+    def test_a_question_with_huge_options_does_not_overrun_the_full_budget(self):   # F15
+        opts = "|".join("%d :: %s" % (i, "e" * 2000) for i in range(40))
+        for i in range(3):
+            self.cli("ask", "q%d" % i, "--options", opts, "--group", "g")
+        q, _ = self.block()
+        self.assertEqual(q["open"][0]["detail"], "full")          # the first of the window is always whole
+        self.assertTrue(all(e["detail"] != "full" and e["options"] == [] for e in q["open"][1:]))
+
+    def test_history_keeps_answer_and_topic_at_every_detail_level(self):   # F8
+        text = ("word " * 80).strip()
+        for i in range(120):
+            self.cli("ask", "%d %s" % (i, text), "--options", "yes :: " + "explains " * 25 + "|no :: skip",
+                     "--topic", "Topic %d" % i, "--group", "g")
+        args = []
+        for n in range(1, 121):
+            args += [str(n), "yes" if n % 2 else "Answer %d with some typed words" % n]
+        self.cli("answers", *args)
+        q, size = self.block()
+        self.assertLess(size, 256 * 1024)
+        self.assertEqual(len(q["history"]), 120)
+        details = {e["detail"] for e in q["history"]}
+        self.assertTrue({"full", "history"} <= details, details)
+        for e in q["history"]:
+            self.assertTrue(e["answer"] and e["answered"] and e["topic"].startswith("Topic"), e["id"])
+        self.assertTrue(all(e["options"] == [] for e in q["history"] if e["detail"] != "full"))
+        self.assertEqual(q["history"][-1]["answer"], "yes")
+
+    def test_a_full_entry_keeps_the_whole_label_and_explanation_and_auto_answer_takes_it(self):   # F7
+        label = "L" * 100
+        expl = "explains " * 80
+        self.cli("ask", "Q " + "word " * 120, "--options", "%s :: %s|other :: short" % (label, expl),
+                 "--recommended", label, "--reversible", "yes")
+        q, _ = self.block()
+        (e,) = q["open"]
+        self.assertEqual([o["label"] for o in e["options"]], [label, "other"])
+        self.assertEqual(e["options"][0]["text"], expl.strip())
+        self.assertTrue(e["text"].startswith("Q word") and not e["text"].endswith("\u2026"))
+        self.cli("answers", "--auto", "1", e["options"][0]["label"])
+        self.assertEqual(self.block()[0]["history"][0]["answer"], label)
+
+    def test_question_skip_moves_the_window_of_full_entries_and_stays_bounded(self):
+        text = ("word " * 80).strip()
+        opts = "|".join("opt%d :: %s" % (i, "explains " * 25) for i in range(5))
+        for i in range(200):
+            self.cli("ask", "%d %s" % (i, text), "--options", opts, "--topic", "t" * 70, "--group", "g")
+        base, _ = self.block()
+        self.assertEqual(base["open"][150]["detail"], "minimal")
+        self.assertEqual(base["open"][150]["options"], [])
+        for skip in (0, 100, 150, 199):
+            q, size = self.block("g", skip)
+            self.assertLess(size, 256 * 1024, skip)
+            self.assertEqual([e["n"] for e in q["open"]], list(range(1, 201)))     # every question, same order
+            self.assertTrue(all(e["detail"] == "minimal" and e["options"] == [] for e in q["open"][:skip]), skip)
+            self.assertEqual(q["open"][skip]["detail"], "full", skip)
+            self.assertEqual(len(q["open"][skip]["options"]), 5, skip)
+        q, _ = self.block("g", 150)
+        self.assertEqual(q["open"][150]["detail"], "full")                         # the one the base list drew without options
+        self.assertEqual(q["open"][-1]["detail"], "minimal")
+        q, _ = self.block("g", 0)
+        self.assertEqual(q["open"], base["open"])                                  # 0 is today's list
+
+    def test_question_skip_beyond_the_list_and_bad_values(self):
+        self.cli("ask", "one", "--options", "a :: x|b :: y")
+        q, _ = self.block(None, 5)
+        self.assertEqual([e["detail"] for e in q["open"]], ["minimal"])
+        rc, out, err = run_cli(self.root, "status", "--json", "--question-skip", "x")
+        self.assertNotEqual(rc, 0)
+
+    def test_200_open_in_a_normal_size_stay_full_and_small(self):
+        for i in range(200):
+            self.cli("ask", "Question number %d, short and plain" % i, "--options", "yes :: do it|no :: skip it")
+        q, size = self.block()
+        self.assertLess(size, 256 * 1024)
+        self.assertEqual(len(q["open"]), 200)
+
+    def test_a_group_name_cannot_be_the_reserved_one(self):
+        rc, out, err = run_cli(self.root, "ask", "x", "--group", "(ungrouped)", "-t", self.SLUG)
+        self.assertEqual(rc, 1)
+
+
+def qs_sort_first(d):
+    from orchlib import questions as qs_mod
+    first = sorted(qs_mod.open_ones(d), key=qs_mod.sort_key)[0]
+    return first.fields.get("group") or qs_mod.UNGROUPED
 
 
 class TestRunning(Base):

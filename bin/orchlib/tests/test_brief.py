@@ -387,8 +387,8 @@ class TestImplementBrief(BriefBase):
         self.assertIn("- Step 10: `grep -c entry CHANGELOG.md`", v)
 
     def test_assumed_decisions_are_included(self):
-        self.cmd_ok("ask", "Use a cookie or a header?", "--options", "cookie|header", "--assume", "cookie", "--reversible", "yes")
-        self.cmd_ok("ask", "Open question?", "--options", "a|b")
+        self.cmd_ok("ask", "Use a cookie or a header?", "--options", "cookie :: in a cookie|header :: in a header", "--assume", "cookie", "--reversible", "yes")
+        self.cmd_ok("ask", "Open question?", "--options", "a :: first|b :: second")
         _, text = self.brief("implement", "1")
         a = sec(text, "Assumed decisions")
         self.assertIn("## Q1 — Use a cookie or a header?", a)
@@ -1104,7 +1104,7 @@ class TestNarrowReviewAndCheck(BriefBase):
 
     def test_an_unanswered_or_older_question_does_not_unlock_round_n_plus_one(self):
         self.three_checks(blockers_at_3=1, should_fix_at_3=0)
-        self.cmd_ok("ask", "F1 is still open after three cycles: how to proceed?", "--options", "A|B")
+        self.cmd_ok("ask", "F1 is still open after three cycles: how to proceed?", "--options", "A :: first|B :: second")
         self.assertIn("never raised", self.refused(2, "review"))                # asked, not answered
         qpath = os.path.join(self.d, "questions.md")
         with open(qpath) as fh:
@@ -1118,7 +1118,7 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.three_checks(blockers_at_3=1, should_fix_at_3=0)
         one = [r for r in self.journal_lines(self.d) if r["kind"] == "review_round" and not r.get("check")][0]["sha"]
         self.set_field(review_round="1/3")
-        self.cmd_ok("ask", "F1 is still open after three cycles: how to proceed?", "--options", "A|B")
+        self.cmd_ok("ask", "F1 is still open after three cycles: how to proceed?", "--options", "A :: first|B :: second")
         self.cmd_ok("answer", "Q1", "A")
         self.refused(2, "review", "--check")                                  # the cycle cap itself stays hard
         path, text = self.brief("review")
