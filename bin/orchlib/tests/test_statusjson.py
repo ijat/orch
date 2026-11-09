@@ -435,8 +435,9 @@ class TestQuestionsBlock(Base):
         self.assertEqual(rc, 0, (argv, err))
         return out
 
-    def block(self, group=None):
-        argv = ["status", "--json"] + (["--question-group", group] if group is not None else [])
+    def block(self, group=None, skip=None):
+        argv = ["status", "--json"] + (["--question-group", group] if group is not None else []) + \
+               (["--question-skip", str(skip)] if skip is not None else [])
         rc, out, err = run_cli(self.root, *argv)
         self.assertEqual((rc, err), (0, ""))
         t = json.loads(out)["tasks"][0]
@@ -536,6 +537,34 @@ class TestQuestionsBlock(Base):
         self.assertEqual({e["detail"] for e in q["open"]}, {"full", "compact", "minimal"})
         self.assertEqual([e["n"] for e in q["open"]], list(range(201, 401)))
         self.assertTrue(all(e["text"] for e in q["open"]))
+
+    def test_question_skip_moves_the_window_of_full_entries_and_stays_bounded(self):
+        text = ("word " * 80).strip()
+        opts = "|".join("opt%d :: %s" % (i, "explains " * 25) for i in range(5))
+        for i in range(200):
+            self.cli("ask", "%d %s" % (i, text), "--options", opts, "--topic", "t" * 70, "--group", "g")
+        base, _ = self.block()
+        self.assertEqual(base["open"][150]["detail"], "minimal")
+        self.assertEqual(base["open"][150]["options"], [])
+        for skip in (0, 100, 150, 199):
+            q, size = self.block("g", skip)
+            self.assertLess(size, 256 * 1024, skip)
+            self.assertEqual([e["n"] for e in q["open"]], list(range(1, 201)))     # every question, same order
+            self.assertTrue(all(e["detail"] == "minimal" and e["options"] == [] for e in q["open"][:skip]), skip)
+            self.assertEqual(q["open"][skip]["detail"], "full", skip)
+            self.assertEqual(len(q["open"][skip]["options"]), 5, skip)
+        q, _ = self.block("g", 150)
+        self.assertEqual(q["open"][150]["detail"], "full")                         # the one the base list drew without options
+        self.assertEqual(q["open"][-1]["detail"], "minimal")
+        q, _ = self.block("g", 0)
+        self.assertEqual(q["open"], base["open"])                                  # 0 is today's list
+
+    def test_question_skip_beyond_the_list_and_bad_values(self):
+        self.cli("ask", "one", "--options", "a :: x|b :: y")
+        q, _ = self.block(None, 5)
+        self.assertEqual([e["detail"] for e in q["open"]], ["minimal"])
+        rc, out, err = run_cli(self.root, "status", "--json", "--question-skip", "x")
+        self.assertNotEqual(rc, 0)
 
     def test_200_open_in_a_normal_size_stay_full_and_small(self):
         for i in range(200):
