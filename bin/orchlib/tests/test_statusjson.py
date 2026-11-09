@@ -421,6 +421,140 @@ class TestProgram(Base):
         self.assertTrue(t["overall"]["estimate"])
 
 
+class TestQuestionsBlock(Base):
+    """Step 3: the `questions` block, built from files `orch ask` and `orch answers` wrote."""
+
+    SLUG = "app/qs"
+
+    def setUp(self):
+        Base.setUp(self)
+        self.d = self.task("qs")
+
+    def cli(self, *argv):
+        rc, out, err = run_cli(self.root, *(list(argv) + ["-t", self.SLUG]))
+        self.assertEqual(rc, 0, (argv, err))
+        return out
+
+    def block(self, group=None):
+        argv = ["status", "--json"] + (["--question-group", group] if group is not None else [])
+        rc, out, err = run_cli(self.root, *argv)
+        self.assertEqual((rc, err), (0, ""))
+        t = json.loads(out)["tasks"][0]
+        self.assertIsNone(t["error"])
+        return t["questions"], len(out.encode())
+
+    def test_no_questions_file(self):
+        q, _ = self.block()
+        self.assertEqual(q, {"counts": {"open": 0, "answered": 0, "assumed": 0, "withdrawn": 0}, "groups": [],
+                             "open_group": None, "open": [], "history": [], "history_total": 0})
+
+    def seed(self):
+        self.cli("ask", "Pick a colour", "--options", "red :: warm|blue :: cool", "--recommended", "blue",
+                 "--reversible", "no", "--blocks", "2", "--group", "look", "--topic", "Colour")
+        self.cli("ask", "Font?", "--group", "look", "--blocks", "all")
+        self.cli("ask", "Which db?", "--options", "pg :: solid|sqlite !! only the owner can say", "--group", "data")
+        self.cli("ask", "Loose one")
+        self.cli("ask", "Take b", "--options", "a :: x|b :: y", "--reversible", "yes", "--assume", "b")
+        self.cli("ask", "Dropped", "--group", "data")
+        self.cli("answer", "6", "--withdraw")
+        self.cli("answers", "2", "Inter")
+
+    def test_counts_groups_open_group_and_history(self):
+        self.seed()
+        q, _ = self.block()
+        self.assertEqual(q["counts"], {"open": 3, "answered": 1, "assumed": 1, "withdrawn": 1})
+        self.assertEqual([(g["group"], g["label"], g["counts"]["open"]) for g in q["groups"]],
+                         [("data", "data", 1), (None, "(ungrouped)", 1), ("look", "look", 1)])
+        self.assertEqual(q["groups"][0]["counts"], {"open": 1, "answered": 0, "assumed": 0, "withdrawn": 1})
+        self.assertEqual(q["groups"][2]["counts"], {"open": 1, "answered": 1, "assumed": 0, "withdrawn": 0})
+        # Q1 blocks 2; Q2 is answered; Q3 and Q4 block all and Q3 comes first, so its group is the one listed in full
+        self.assertEqual(q["open_group"], "data")
+        self.assertEqual([e["id"] for e in q["open"]], ["Q3"])
+
+    def test_open_group_is_that_of_the_first_open_question_by_sort_key(self):
+        self.seed()
+        q, _ = self.block()
+        first = qs_sort_first(self.d)
+        self.assertEqual(q["open_group"], first)
+
+    def test_question_entry_fields_in_full(self):
+        self.seed()
+        q, _ = self.block("look")
+        self.assertEqual(q["open_group"], "look")
+        (e,) = q["open"]
+        self.assertEqual((e["id"], e["n"], e["status"], e["text"], e["topic"], e["group"], e["reversible"], e["blocks"]),
+                         ("Q1", 1, "open", "Pick a colour", "Colour", "look", "no", "2"))
+        self.assertEqual((e["asked_by"], e["asked"], e["answer"], e["answered"], e["detail"]),
+                         ("orchestrator", "2026-03-01T13:00Z", None, None, "full"))
+        self.assertEqual(e["options"], [{"label": "red", "text": "warm", "kind": "explanation", "recommended": False},
+                                        {"label": "blue", "text": "cool", "kind": "explanation", "recommended": True}])
+        q, _ = self.block("data")
+        self.assertEqual(q["open"][0]["options"][1],
+                         {"label": "sqlite", "text": "only the owner can say", "kind": "reason", "recommended": False})
+        q, _ = self.block("(ungrouped)")
+        self.assertEqual([e["text"] for e in q["open"]], ["Loose one"])
+        self.assertIsNone(q["open"][0]["group"])
+        q, _ = self.block("nope")
+        self.assertEqual((q["open_group"], q["open"]), ("nope", []))
+
+    def test_history_is_answered_and_assumed_newest_first(self):
+        self.seed()
+        q, _ = self.block()
+        self.assertEqual(q["history_total"], 2)
+        self.assertEqual([(e["id"], e["status"], e["answer"], e["answered"]) for e in q["history"]],
+                         [("Q5", "assumed", "b", "2026-03-01T13:00Z"), ("Q2", "answered", "Inter", "2026-03-01T13:00Z")])
+        self.assertEqual(q["history"][0]["options"][1]["label"], "b")
+
+    def test_history_keeps_the_newest_200(self):
+        for i in range(210):
+            self.cli("ask", "q%d" % i)
+        for lo in range(1, 211, 70):
+            args = []
+            for n in range(lo, lo + 70):
+                args += [str(n), "a%d" % n]
+            self.cli("answers", *args)
+        q, _ = self.block()
+        self.assertEqual((q["counts"]["answered"], q["history_total"], len(q["history"])), (210, 210, 200))
+        self.assertEqual(q["open"], [])
+
+    def test_200_open_and_200_answered_stay_under_256_KiB(self):
+        text = ("word " * 80).strip()
+        opts = "|".join("opt%d :: %s" % (i, "explains " * 25) for i in range(5))
+        for i in range(400):
+            self.cli("ask", "%d %s" % (i, text), "--options", opts, "--topic", "t" * 70, "--group", "g")
+        args = []
+        for n in range(1, 201):
+            args += [str(n), "answer " + "x" * 280]
+        self.cli("answers", *args)
+        q, size = self.block()
+        self.assertLess(size, 256 * 1024)
+        self.assertEqual(len(q["open"]), 200)                      # every open question of the group is listed
+        self.assertEqual(len(q["history"]), 200)
+        self.assertEqual(q["open"][0]["detail"], "full")
+        self.assertEqual(q["open"][-1]["detail"], "minimal")       # the budget ran out: later ones shrink
+        self.assertEqual(q["open"][-1]["options"], [])
+        self.assertEqual({e["detail"] for e in q["open"]}, {"full", "compact", "minimal"})
+        self.assertEqual([e["n"] for e in q["open"]], list(range(201, 401)))
+        self.assertTrue(all(e["text"] for e in q["open"]))
+
+    def test_200_open_in_a_normal_size_stay_full_and_small(self):
+        for i in range(200):
+            self.cli("ask", "Question number %d, short and plain" % i, "--options", "yes :: do it|no :: skip it")
+        q, size = self.block()
+        self.assertLess(size, 256 * 1024)
+        self.assertEqual(len(q["open"]), 200)
+
+    def test_a_group_name_cannot_be_the_reserved_one(self):
+        rc, out, err = run_cli(self.root, "ask", "x", "--group", "(ungrouped)", "-t", self.SLUG)
+        self.assertEqual(rc, 1)
+
+
+def qs_sort_first(d):
+    from orchlib import questions as qs_mod
+    first = sorted(qs_mod.open_ones(d), key=qs_mod.sort_key)[0]
+    return first.fields.get("group") or qs_mod.UNGROUPED
+
+
 class TestRunning(Base):
     ROWS = ("| orchestrator | in_progress | 2026-03-01T12:00Z | | |\n"
             "| implementer | in_progress | 2026-03-01T12:00Z | 1 | step 2 |\n"

@@ -28,7 +28,7 @@ class FlowBase(core.Base):
     def run_orch(self, *argv, **kw):
         """Task commands default to -t T."""
         argv = list(argv)
-        if "-t" not in argv and argv and argv[0] in ("spawn", "return", "end", "ask", "answer", "checkpoint"):
+        if "-t" not in argv and argv and argv[0] in ("spawn", "return", "end", "ask", "answer", "answers", "checkpoint"):
             argv += ["-t", T]
         return core.Base.run_orch(self, *argv, **kw)
 
@@ -651,8 +651,9 @@ class TestAskOptions(FlowBase):
 
 
 class TestCheckpoint(FlowBase):
-    def payload(self, out):
-        return json.loads([l for l in out.splitlines() if l.startswith("{")][0])["questions"]
+    def numbered(self, out):
+        """The question texts of the text output, in order."""
+        return [re.match(r"^\d+\. (.*?)  \(Q\d+", l).group(1) for l in out.splitlines() if re.match(r"^\d+\. ", l)]
 
     def test_no_open_questions(self):
         out, _ = self.ok("checkpoint", "--ask", "-t", T)
@@ -676,22 +677,44 @@ class TestCheckpoint(FlowBase):
         self.ok("ask", "named", "--blocks", "M1", "-t", T)
         self.ok("ask", "all-too", "--blocks", "all", "-t", T)
         out, _ = self.ok("checkpoint", "--ask", "-t", T)
-        got = self.payload(out)
-        self.assertEqual([q["question"].split(": ", 1)[1] for q in got], ["all-q", "all-too", "two", "ten", "named", "none-q"])
-        self.assertNotIn("stay parked", out)   # the old cap of 4 asked is gone
+        self.assertEqual(self.numbered(out), ["all-q", "all-too", "two", "ten", "named", "none-q"])
+        self.assertNotIn("stay parked", out)
         rec = self.journal()[-1]
         self.assertEqual((rec["questions"], rec["asked"]), (6, True))
 
-    def test_options_recommended_first_all_of_them_plus_hold_on(self):
-        self.ok("ask", "colour", "--options", "red :: r|green :: g|blue :: b|pink :: p", "--recommended", "blue", "-t", T)
+    def test_shows_ten_and_counts_the_rest(self):
+        for i in range(13):
+            self.ok("ask", "q%02d" % i, "-t", T)
+        out, _ = self.ok("checkpoint", "--ask", "-t", T)
+        self.assertEqual(self.numbered(out), ["q%02d" % i for i in range(10)])
+        self.assertIn("3 more stay parked.", out)
+        self.assertIn("asking 10", out)
+        rec = self.journal()[-1]
+        self.assertEqual((rec["kind"], rec["questions"], rec["asked"]), ("checkpoint", 13, True))
+        self.assertEqual(set(rec) - {"ts", "kind", "repo", "slug", "task"}, {"questions", "asked"})   # the line keeps its shape
+
+    def test_text_format_numbers_letters_explains_and_offers_hold_on(self):
+        self.ok("ask", "colour", "--options", "red :: warm|green !! only you know the room|blue :: cool",
+                "--recommended", "blue", "--group", "look", "-t", T)
         self.ok("ask", "free", "-t", T)
         out, _ = self.ok("checkpoint", "--ask", "-t", T)
-        q1, q2 = self.payload(out)
-        self.assertEqual([o["label"] for o in q1["options"]], ["blue (recommended)", "red", "green", "pink", "Hold on"])
-        self.assertEqual((q1["header"], q1["multiSelect"]), ("Q1", False))
-        self.assertTrue(all(o["description"] for o in q1["options"]))
-        self.assertEqual([o["label"] for o in q2["options"]], ["Answer in free text", "Hold on"])
-        self.assertNotIn("stay parked", out)
+        self.assertIn("1. colour  (Q1, blocks all, reversible unknown, group look)\n"
+                      "   a) blue (recommended) \u2014 cool\n"
+                      "   b) red \u2014 warm\n"
+                      "   c) green \u2014 not explained: only you know the room\n", out)
+        self.assertIn("2. free  (Q2, blocks all, reversible unknown)\n   Answer in your own words.\n", out)
+        self.assertIn("Hold on: stop and wait until you resume.", out)
+        self.assertIn("`1a 2b`", out)
+        self.assertIn("`ok` to take every recommended option", out)
+        self.assertIn("`hold`", out)
+        self.assertNotIn("{", out)
+        self.assertNotIn("AskUserQuestion", out)
+
+    def test_hold_on_and_hint_without_recommended_options(self):
+        self.ok("ask", "free", "-t", T)
+        out, _ = self.ok("checkpoint", "--ask", "-t", T)
+        self.assertIn("Hold on", out)
+        self.assertNotIn("`ok`", out)
 
     def test_only_open_questions_are_asked(self):
         self.ok("ask", "a", "-t", T)
@@ -699,7 +722,65 @@ class TestCheckpoint(FlowBase):
         self.ok("ask", "c", "--options", "x :: ex|y :: why", "--reversible", "yes", "--assume", "x", "-t", T)
         self.ok("answer", "1", "ok", "-t", T)
         out, _ = self.ok("checkpoint", "--ask", "-t", T)
-        self.assertEqual([q["header"] for q in self.payload(out)], ["Q2"])
+        self.assertEqual(self.numbered(out), ["b"])
+
+
+class TestAnswers(FlowBase):
+    def qpath(self):
+        return os.path.join(self.d, "questions.md")
+
+    def setUp(self):
+        FlowBase.setUp(self)
+        for i in range(1, 5):
+            self.ok("ask", "question %d" % i)
+
+    def test_answers_several_at_once_like_answer_does(self):
+        n = len(self.log_lines())
+        out, _ = self.ok("answers", "Q1", "yes please", "3", "no\nthanks", "Q4", "later")
+        self.assertEqual(out.split("\n")[:3], ["Q1 answered", "Q3 answered", "Q4 answered"])
+        text = self.read(self.qpath()).decode()
+        for q, ans in (("Q1", "yes please"), ("Q3", "no thanks"), ("Q4", "later")):
+            block = text.split("## %s " % q)[1].split("\n## ")[0]
+            self.assertIn("- status: answered\n", block)
+            self.assertIn("- answer: %s (2026-03-01T10:00Z)\n" % ans, block)
+        self.assertIn("- status: open\n", text.split("## Q2 ")[1].split("\n## ")[0])
+        self.assertEqual([q.n for q in qs.open_ones(self.d)], [2])
+        new = self.log_lines()[n:]
+        self.assertEqual(len(new), 3)
+        self.assertIn("orchestrator: question Q1 answered: yes please", new[0])
+        self.assertEqual(text.split("## Q1 ")[1].count("\n- answer:"), 3)
+
+    def test_same_file_as_single_answers(self):
+        with open(self.qpath(), "rb") as fh:
+            original = fh.read()
+        self.ok("answer", "1", "a")
+        self.ok("answer", "3", "c")
+        one_by_one = self.read(self.qpath())
+        with open(self.qpath(), "wb") as fh:
+            fh.write(original)
+        self.ok("answers", "1", "a", "3", "c")
+        self.assertEqual(self.read(self.qpath()), one_by_one)
+
+    def test_any_failure_writes_nothing(self):
+        before, log = self.read(self.qpath()), self.read(self.d, "log.md")
+        self.ok("answer", "2", "done")   # Q2 is no longer open
+        before, log = self.read(self.qpath()), self.read(self.d, "log.md")
+        for argv in (["answers", "1", "ok", "2", "again"],        # a closed question
+                     ["answers", "1", "ok", "9", "x"],            # an unknown one
+                     ["answers", "1", "ok", "1", "twice"],        # a duplicate
+                     ["answers", "1", "ok", "3", "   "],          # an empty text
+                     ["answers", "1", "ok", "three", "x"],        # a bad id
+                     ["answers", "1", "ok", "3"],                 # an odd count
+                     ["answers"]):
+            self.refuse(1, *argv)
+            self.assertEqual(self.read(self.qpath()), before, argv)
+            self.assertEqual(self.read(self.d, "log.md"), log, argv)
+
+    def test_a_blocker_in_the_last_pair_leaves_the_file_byte_identical(self):
+        before = self.read(self.qpath())
+        self.refuse(1, "answers", "1", "a", "2", "b", "3", "c", "99", "z")
+        self.assertEqual(self.read(self.qpath()), before)
+        self.assertEqual(len(qs.open_ones(self.d)), 4)
 
 
 class TestResume(FlowBase):

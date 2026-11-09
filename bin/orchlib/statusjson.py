@@ -10,6 +10,7 @@ import sys
 
 from . import dashboard as db
 from . import plan as pl
+from . import questions as qs
 from . import status as st
 from .paths import OrchError, now, orch_root, tilde
 
@@ -25,6 +26,12 @@ STEP_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])(\d+[a-z]?)(?![A-Za-z0-9])", re.I)
 FIX_ROUND_RE = re.compile(r"(?<![A-Za-z0-9])(?:fix[\s_-]*)?(?:m\d+[\s_-]*)?(?:round|r)[\s_-]*\d+(?![A-Za-z0-9])", re.I)
 FIX_WORD_RE = re.compile(r"(?<![A-Za-z0-9])fix(?![A-Za-z0-9])", re.I)
 SPAWN_MS_PREFIX_RE = re.compile(r"^m(\d+)-(.+)$", re.I)   # a spawn names a step `m10-11` for step 11 of milestone 10
+HISTORY_MAX = 200            # newest answered and assumed questions in the questions block
+FULL_BUDGET = 30000          # bytes of the printed (indent 1) JSON: a question list is full up to here,
+COMPACT_BUDGET = 45000       # compact up to here, minimal after (the open list and the history each)
+QUESTION_STATUSES = ("open", "answered", "assumed", "withdrawn")
+ASKED_RE = re.compile(r"^(.*?)\s+at\s+(\S+)$")
+ANSWER_RE = re.compile(r"^(.*?)\s*\((\d{4}-\d\d-\d\dT[0-9:]+Z?)\)$", re.S)
 ALL_DONE_STATES = ("reviewing", "awaiting_merge")   # a review or the merge gate comes after the last step
 STEP_ID_RE = re.compile(r"^(\d+)(.*)$")
 MS_ROW_RE = re.compile(r"^M?(\d+)$")
@@ -300,6 +307,83 @@ def overall(program, steps, milestones):
     return out
 
 
+# -- questions ---------------------------------------------------------------------------------------
+
+def question_entry(q, detail="full"):
+    """One question for the pane. `detail` shrinks an entry once the list's byte budget is spent: `full`; `compact`
+    (no options, clipped text and answer); `minimal` (id, status, a short text, group and blocks only). Every key is
+    always present, so a consumer reads all three the same way."""
+    full = detail == "full"
+    asked_by = asked = answer = answered = None
+    if detail != "minimal":
+        m = ASKED_RE.match(q.fields.get("asked by", ""))
+        if m:
+            asked_by, asked = db.cell(m.group(1), 60), db.cell(m.group(2), 32)
+        raw = q.fields.get("answer", "")
+        if raw:
+            clip = 300 if full else 50
+            m = ANSWER_RE.match(raw)
+            answer, answered = (db.cell(m.group(1), clip), db.cell(m.group(2), 32)) if m else (db.cell(raw, clip), None)
+    options = [{"label": db.cell(o.label, 80), "text": db.cell(o.text, 240), "kind": o.kind,
+                "recommended": o.recommended} for o in q.option_details()] if full else []
+    text_max = {"full": 400, "compact": 100, "minimal": 60}[detail]
+    return {"id": "Q%d" % q.n, "n": q.n, "status": q.status or None, "text": db.cell(q.text, text_max),
+            "topic": db.cell(q.fields.get("topic"), 80 if full else 40) if detail != "minimal" else None,
+            "group": db.cell(q.fields.get("group"), 60), "reversible": db.cell(q.fields.get("reversible"), 10),
+            "blocks": db.cell(q.fields.get("blocks"), 60), "asked_by": asked_by, "asked": asked,
+            "options": options, "answer": answer, "answered": answered, "detail": detail}
+
+
+def fit(questions):
+    """Entries in order: full while the list has spent under FULL_BUDGET bytes, compact up to COMPACT_BUDGET, then
+    minimal. Nothing is dropped, so at 200 questions the list is still complete and bounded."""
+    out, used = [], 0
+    for q in questions:
+        entry = question_entry(q, "full" if used < FULL_BUDGET else "compact" if used < COMPACT_BUDGET else "minimal")
+        text = json.dumps(entry, indent=1)
+        used += len(text) + 6 * text.count("\n")   # the entry sits about six levels deep in the printed block
+        out.append(entry)
+    return out
+
+
+def empty_questions():
+    return {"counts": dict.fromkeys(QUESTION_STATUSES, 0), "groups": [], "open_group": None, "open": [],
+            "history": [], "history_total": 0}
+
+
+def questions_block(task_dir, group=None):
+    """Counts by status and by group, the open questions of one group in full (the group of the first open question
+    by sort_key, or `group`), and the newest HISTORY_MAX answered or assumed ones."""
+    out = empty_questions()
+    data = db.read_file(os.path.join(task_dir, "questions.md"))
+    if data is None:
+        return out
+    every = qs.parse(st.split_lines(data.decode("utf-8", "surrogateescape")))
+    label = lambda q: q.fields.get("group") or qs.UNGROUPED   # noqa: E731
+    opens = sorted((q for q in every if q.status == "open"), key=qs.sort_key)
+    by_group = {}
+    for q in every:
+        status = q.status or "unknown"
+        out["counts"][status] = out["counts"].get(status, 0) + 1
+        by_group.setdefault(label(q), dict.fromkeys(QUESTION_STATUSES, 0))
+        by_group[label(q)][status] = by_group[label(q)].get(status, 0) + 1
+    first = [label(q) for q in opens]
+    names = sorted(by_group, key=lambda g: (first.index(g) if g in first else len(first), g))
+    out["groups"] = [{"group": None if g == qs.UNGROUPED else g, "label": g, "counts": by_group[g]} for g in names]
+    chosen = group if group is not None else (first[0] if first else None)
+    out["open_group"] = chosen
+    if chosen is not None:
+        out["open"] = fit([q for q in opens if label(q) == chosen])
+    done = [q for q in every if q.status in ("answered", "assumed")]
+    out["history_total"] = len(done)
+
+    def when(q):
+        m = ANSWER_RE.match(q.fields.get("answer", "")) or ASKED_RE.match(q.fields.get("asked by", ""))
+        return (m.group(2) if m else "", q.n)
+    out["history"] = fit(sorted(done, key=when, reverse=True)[:HISTORY_MAX])
+    return out
+
+
 # -- scope -------------------------------------------------------------------------------------------
 
 def inside(path, root):
@@ -324,11 +408,11 @@ def in_cwd(cwd, status):
 # -- the data ----------------------------------------------------------------------------------------
 
 KEYS = ("id", "repo", "slug", "task_dir", "repo_path", "worktree", "in_cwd", "state", "state_words", "mode",
-        "shape", "program", "milestone", "milestone_no", "summary", "updated", "last_log", "questions_open",
+        "shape", "program", "milestone", "milestone_no", "summary", "updated", "last_log", "questions_open", "questions",
         "running", "steps", "milestones", "overall", "error")
 
 
-def build(repo, slug, d, text, state, cwd):
+def build(repo, slug, d, text, state, cwd, question_group=None):
     jtext = db.read_text(os.path.join(d, "journal.jsonl"))
     journal = db.Journal(jtext, "%s/%s" % (repo, slug))
     base, _ = db.build_task(repo, slug, d, text, state, journal)
@@ -341,6 +425,11 @@ def build(repo, slug, d, text, state, cwd):
     t["running"] = {"roles": [], "last_spawn": None, "spawns": []}
     t["steps"] = {"plan": None, "total": None, "done": None, "percent": None, "current": None, "items": []}
     t["overall"] = {"percent": None, "estimate": False, "basis": "steps"}
+    t["questions"] = empty_questions()
+    try:
+        t["questions"] = questions_block(d, question_group)
+    except Exception as exc:
+        t["error"] = db.cell("%s: %s" % (type(exc).__name__, exc), 200)
     try:
         t["in_cwd"] = in_cwd(cwd, status)
         try:
@@ -369,7 +458,7 @@ def build(repo, slug, d, text, state, cwd):
     return t
 
 
-def compute(root, cwd=None):
+def compute(root, cwd=None, question_group=None):
     cwd = os.path.realpath(cwd) if cwd else None
     found = []
     for repo, slug, d in db.task_dirs(root):
@@ -380,7 +469,7 @@ def compute(root, cwd=None):
         if state in db.FINISHED:
             continue
         mtimes = [i.st_mtime for i in (db.stat_regular(os.path.join(d, n)) for n in ("status.md", "log.md")) if i]
-        found.append((-(max(mtimes) if mtimes else 0), "%s/%s" % (repo, slug), build(repo, slug, d, text, state, cwd)))
+        found.append((-(max(mtimes) if mtimes else 0), "%s/%s" % (repo, slug), build(repo, slug, d, text, state, cwd, question_group)))
     found.sort(key=lambda f: (f[0], f[1]))
     return {"schema": SCHEMA, "generated": now(), "cwd": cwd, "tasks": [f[2] for f in found]}
 
@@ -390,11 +479,14 @@ def cmd_status(ns, extra):
         raise OrchError("status lists every active task; -t is not supported", 1)
     if not ns.json_out:
         raise OrchError("status needs --json", 1)
-    sys.stdout.write(json.dumps(compute(orch_root(), ns.cwd), indent=1) + "\n")
+    sys.stdout.write(json.dumps(compute(orch_root(), ns.cwd, ns.question_group), indent=1) + "\n")
     return 0
 
 
 def register(add):
     sp = add("status", cmd_status, "read-only JSON of each active task's progress (for the orch-pane mod)")
     sp.add_argument("--json", dest="json_out", action="store_true")
+    sp.add_argument("--question-group", default=None,
+                    help="return this group's open questions in full (default: the group of the first open question; "
+                         "%s names the ones with no group)" % qs.UNGROUPED)
     sp.add_argument("--cwd", default=None, help="mark tasks whose repo or worktree holds this directory (in_cwd)")
