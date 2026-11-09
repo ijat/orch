@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -589,6 +590,54 @@ class TestQuestionsBlock(Base):
         self.assertEqual({e["detail"] for e in q["open"]}, {"full", "compact", "minimal"})
         self.assertEqual([e["n"] for e in q["open"]], list(range(201, 401)))
         self.assertTrue(all(e["text"] for e in q["open"]))
+
+    def worst_case(self, ch):
+        """200 open and 200 answered questions, every field past its limit, in characters of width `ch`. `orch ask` and
+        `orch answers` write one of each; the file repeats those blocks under new numbers (400 runs take minutes)."""
+        long = lambda n: ch * n   # noqa: E731
+        opts = "|".join("%d%s :: %s" % (i, long(190), long(2500)) for i in range(6))
+        for _ in range(2):
+            self.cli("ask", long(2500), "--options", opts, "--topic", long(300), "--blocks", "x" * 90, "--group", long(200))
+        self.cli("answers", "1", long(1500))
+        path = os.path.join(self.d, "questions.md")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        head = re.compile(r"^## Q(\d+)\b", re.M)
+        marks = [m.start() for m in head.finditer(text)]
+        lead, answered, open_ = text[:marks[0]], text[marks[0]:marks[1]], text[marks[1]:]
+        blocks = [head.sub("## Q%d" % n, (answered if n <= 200 else open_), count=1) for n in range(1, 401)]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(lead + "".join(b if b.endswith("\n") else b + "\n" for b in blocks))
+        q, size = self.block()
+        self.assertLess(size, 256 * 1024)
+        self.assertEqual((len(q["open"]), len(q["history"])), (200, 200))
+        for e in q["history"]:
+            self.assertTrue(e["answer"] and e["topic"] and e["answered"], e["id"])   # shortened, never lost
+        return size
+
+    def test_worst_case_every_field_at_its_limit_stays_under_256_KiB(self):   # F15
+        self.worst_case("x")
+
+    def test_worst_case_in_characters_that_print_as_12_bytes_stays_under_256_KiB(self):   # F15
+        self.worst_case("\U0001F600")
+
+    def test_history_at_ordinary_sizes_keeps_the_usual_clips(self):   # F15
+        for i in range(30):
+            self.cli("ask", "q%d" % i, "--topic", "Topic %d" % i)
+        args = []
+        for n in range(1, 31):
+            args += [str(n), "a" * 150]
+        self.cli("answers", *args)
+        q, _ = self.block()
+        self.assertTrue(all(e["answer"] == "a" * 150 for e in q["history"]))
+
+    def test_a_question_with_huge_options_does_not_overrun_the_full_budget(self):   # F15
+        opts = "|".join("%d :: %s" % (i, "e" * 2000) for i in range(40))
+        for i in range(3):
+            self.cli("ask", "q%d" % i, "--options", opts, "--group", "g")
+        q, _ = self.block()
+        self.assertEqual(q["open"][0]["detail"], "full")          # the first of the window is always whole
+        self.assertTrue(all(e["detail"] != "full" and e["options"] == [] for e in q["open"][1:]))
 
     def test_history_keeps_answer_and_topic_at_every_detail_level(self):   # F8
         text = ("word " * 80).strip()
