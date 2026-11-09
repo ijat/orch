@@ -750,6 +750,14 @@ class TestAnswers(FlowBase):
         self.assertIn("orchestrator: question Q1 answered: yes please", new[0])
         self.assertEqual(text.split("## Q1 ")[1].count("\n- answer:"), 3)
 
+    def test_after_double_dash_every_text_is_an_answer_even_one_that_looks_like_a_flag(self):
+        """The pane passes `-t <task> -- <qid> <text> ...`: no answer text can be read as an option."""
+        self.ok("answers", "-t", T, "--", "1", "--auto", "3", "-t other")
+        text = self.read(self.qpath()).decode()
+        self.assertIn("- answer: --auto (2026-03-01T10:00Z)\n", text.split("## Q1 ")[1].split("\n## ")[0])
+        self.assertIn("- answer: -t other (2026-03-01T10:00Z)\n", text.split("## Q3 ")[1].split("\n## ")[0])
+        self.assertIn("- status: answered\n", text.split("## Q1 ")[1].split("\n## ")[0])
+
     def test_same_file_as_single_answers(self):
         with open(self.qpath(), "rb") as fh:
             original = fh.read()
