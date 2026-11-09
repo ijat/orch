@@ -30,6 +30,8 @@ HISTORY_MAX = 200            # newest answered and assumed questions in the ques
 FULL_BUDGET = 30000          # bytes of the printed (indent 1) JSON: a question list is full up to here,
 HISTORY_FULL_BUDGET = 12000  # the history keeps options only on its newest few; the rest keep answer and topic
 COMPACT_BUDGET = 45000       # compact up to here, minimal after (the open list and the history each)
+QUESTIONS_BUDGET = 236000    # bytes of the printed questions block; the history gives way so the block stays under it
+TIGHT_ENTRY = 500            # the most bytes a history entry at its tightest clips takes in the printed JSON
 LABEL_SAFETY = 1000          # a read-side guard only: `orch ask` refuses a label over questions.LABEL_MAX
 QUESTION_STATUSES = ("open", "answered", "assumed", "withdrawn")
 ASKED_RE = re.compile(r"^(.*?)\s+at\s+(\S+)$")
@@ -354,13 +356,31 @@ def overall(program, steps, milestones):
 
 # -- questions ---------------------------------------------------------------------------------------
 
-def question_entry(q, detail="full"):
+def json_cell(value, limit):
+    """`db.cell`, then clipped to `limit` bytes as printed: `json.dumps` writes a non-ASCII character as up to 12 bytes,
+    so a limit in characters does not bound the output."""
+    text = db.cell(value, limit)
+    if text is None or len(json.dumps(text)) - 2 <= limit:
+        return text
+    kept, used = [], len(json.dumps("\u2026")) - 2
+    for ch in text:
+        used += len(json.dumps(ch)) - 2
+        if used > limit:
+            break
+        kept.append(ch)
+    return "".join(kept).rstrip() + "\u2026"
+
+
+def question_entry(q, detail="full", tight=False, shrink=None):
     """One question for the pane. `detail` shrinks an entry once the list's byte budget is spent: `full`; `compact`
     (no options, clipped text and answer); `minimal` (id, status, a short text, group and blocks only); and, for the
     answered history only, `history` (no options, reversible, blocks or asker, but the answer, its time and the topic: the
     pane shows and searches them on every page). Every key is always present, so a consumer reads all four the same way.
     A label is never clipped (`orch ask` refuses one over LABEL_MAX, and an answer is the label as written); the text
-    limits are generous, and `fit`'s byte budget bounds the payload."""
+    limits are generous, and `fit`'s byte budget bounds the payload. `tight` is a `history` entry the budget has no room
+    for at the usual clips: answer, topic and text stay, shortened to a fixed number of printed bytes, and so does
+    a `minimal` entry's every field, since nothing budgets those. `shrink` is a byte limit for the text and each
+    explanation of a full entry too large for its list (labels stay whole)."""
     full = detail == "full"
     asked_by = asked = answer = answered = None
     if detail != "minimal":
@@ -370,35 +390,60 @@ def question_entry(q, detail="full"):
                 asked_by, asked = db.cell(m.group(1), 60), db.cell(m.group(2), 32)
         raw = q.fields.get("answer", "")
         if raw:
-            clip = {"full": 1000, "history": 160, "compact": 50}[detail]
+            cut = (lambda v: json_cell(v, 48)) if tight else (lambda v: db.cell(v, {"full": 1000, "history": 160, "compact": 50}[detail]))
             m = ANSWER_RE.match(raw)
-            answer, answered = (db.cell(m.group(1), clip), db.cell(m.group(2), 32)) if m else (db.cell(raw, clip), None)
-    options = [{"label": db.cell(o.label, LABEL_SAFETY), "text": db.cell(o.text, 2000), "kind": o.kind,
+            answer, answered = (cut(m.group(1)), db.cell(m.group(2), 32)) if m else (cut(raw), None)
+    long_text = (lambda v: json_cell(v, shrink)) if shrink else (lambda v: db.cell(v, 2000))
+    options = [{"label": db.cell(o.label, LABEL_SAFETY), "text": long_text(o.text), "kind": o.kind,
                 "recommended": o.recommended} for o in q.option_details()] if full else []
     text_max = {"full": 2000, "history": 80, "compact": 100, "minimal": 60}[detail]
-    return {"id": "Q%d" % q.n, "n": q.n, "status": q.status or None, "text": db.cell(q.text, text_max),
-            "topic": db.cell(q.fields.get("topic"), {"full": 80, "history": 60, "compact": 40}[detail])
-            if detail != "minimal" else None,
-            "group": db.cell(q.fields.get("group"), 60),
+    if tight:
+        text, topic, group = json_cell(q.text, 30), json_cell(q.fields.get("topic"), 24), json_cell(q.fields.get("group"), 16)
+    elif detail == "minimal":
+        text, topic, group = json_cell(q.text, text_max), None, json_cell(q.fields.get("group"), 60)
+    else:
+        text, topic, group = (long_text(q.text) if full else db.cell(q.text, text_max), db.cell(q.fields.get("topic"), {"full": 80, "history": 60, "compact": 40}[detail]),
+                              db.cell(q.fields.get("group"), 60))
+    return {"id": "Q%d" % q.n, "n": q.n, "status": q.status or None, "text": text, "topic": topic, "group": group,
             "reversible": db.cell(q.fields.get("reversible"), 10) if detail != "history" else None,
-            "blocks": db.cell(q.fields.get("blocks"), 60) if detail != "history" else None, "asked_by": asked_by, "asked": asked,
+            "blocks": (json_cell if detail == "minimal" else db.cell)(q.fields.get("blocks"), 60) if detail != "history" else None,
+            "asked_by": asked_by, "asked": asked,
             "options": options, "answer": answer, "answered": answered, "detail": detail}
 
 
-def fit(questions, skip=0, tail=None, full_budget=FULL_BUDGET):
+def printed_size(value):
+    text = json.dumps(value, indent=1)
+    return len(text) + 6 * text.count("\n")   # an entry sits about six levels deep in the printed block
+
+
+def fit(questions, skip=0, tail=None, full_budget=FULL_BUDGET, total=None):
     """Entries in order: full while the list has spent under FULL_BUDGET bytes, compact up to COMPACT_BUDGET, then
-    minimal. Nothing is dropped, so at 200 questions the list is still complete and bounded. `skip` moves the window
-    of full entries: the first `skip` entries are minimal and the budgets start at the next one. With `tail` (the
-    history), every entry after the full ones takes that detail instead of compact and minimal."""
+    minimal. Nothing is dropped, so at 200 questions the list is still complete and bounded. A full entry that would
+    pass the budget (a question with huge options) gives way to the next level, unless it is the first of the window.
+    `skip` moves the window of full entries: the first `skip` entries are minimal and the budgets start at the next
+    one. With `tail` (the history), every entry after the full ones takes that detail instead of compact and minimal;
+    an entry takes the tight clips once the list would otherwise pass `total` bytes with every later entry tight."""
     out, used = [], 0
+    level = lambda: "full" if used < full_budget else tail or ("compact" if used < COMPACT_BUDGET else "minimal")   # noqa: E731
     for i, q in enumerate(questions):
         if i < skip:
             out.append(question_entry(q, "minimal"))
             continue
-        detail = "full" if used < full_budget else tail or ("compact" if used < COMPACT_BUDGET else "minimal")
+        detail = level()
         entry = question_entry(q, detail)
-        text = json.dumps(entry, indent=1)
-        used += len(text) + 6 * text.count("\n")   # the entry sits about six levels deep in the printed block
+        size = printed_size(entry)
+        if detail == "full" and used > 0 and used + size > full_budget:
+            used = full_budget
+            detail = level()
+            entry = question_entry(q, detail)
+            size = printed_size(entry)
+        if detail == "full" and size > full_budget:      # the first of the window, whole but for its longest texts
+            entry = question_entry(q, "full", shrink=max(120, full_budget // (len(entry["options"]) + 1) // 2))
+            size = printed_size(entry)
+        if tail and total is not None and used + size + (len(questions) - i - 1) * TIGHT_ENTRY > total:
+            entry = question_entry(q, tail, tight=True)
+            size = printed_size(entry)
+        used += size
         out.append(entry)
     return out
 
@@ -437,7 +482,8 @@ def questions_block(task_dir, group=None, skip=0):
     def when(q):
         m = ANSWER_RE.match(q.fields.get("answer", "")) or ASKED_RE.match(q.fields.get("asked by", ""))
         return (m.group(2) if m else "", q.n)
-    out["history"] = fit(sorted(done, key=when, reverse=True)[:HISTORY_MAX], tail="history", full_budget=HISTORY_FULL_BUDGET)
+    out["history"] = fit(sorted(done, key=when, reverse=True)[:HISTORY_MAX], tail="history", full_budget=HISTORY_FULL_BUDGET,
+                         total=max(0, QUESTIONS_BUDGET - printed_size(out)))
     return out
 
 
