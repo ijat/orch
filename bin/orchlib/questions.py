@@ -156,7 +156,7 @@ def check_reason(label, reason):
 def split_options(raw, recommended, reversible="unknown"):
     """([Option], recommended label) from `--options "Label :: explanation|Label !! reason"` (D2). Each option has
     exactly one separator; a `!!` reason never goes on the recommended option or on a `--reversible no` question."""
-    parts = [o.strip() for o in (raw or "").split("|")] if raw else []
+    parts = [cli.one_line(o) for o in raw.split("|")] if raw else []
     if any(not o for o in parts):
         raise OrchError("--options has an empty option", 1)
     rec = (recommended or "").strip()
@@ -421,8 +421,9 @@ def ask_text(shown, remaining):
         if not opts:
             out.append("   Answer in your own words.")
     hints = ["`1a 2b` (question 1 option a, question 2 option b)"]
-    if any(o.recommended for q in shown for o in q.option_details()):
-        hints.append("`ok` to take every recommended option")
+    if any(o.recommended for q in shown if q.fields.get("reversible") != "no" for o in q.option_details()):
+        hints.append("`ok` to take every recommended option except on questions marked `reversible no`, "
+                     "which you answer yourself")
     hints.append("`hold`")
     out.append("Hold on: stop and wait until you resume.")
     out.append("Reply with %s." % ", ".join(hints))

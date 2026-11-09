@@ -354,7 +354,7 @@ is written**, and the other files point here.
 ## Checkpoints and questions
 
 Ask the user only what they must decide. Park a question: `orch ask "<question>" --options "A :: what it does|B !! why
-it can't be explained" --recommended A --blocks <steps> --reversible no` (`--blocks`: step ids, `all` (default) or `none`;
+it can't be explained" --recommended A --blocks <steps> --reversible yes` (`--blocks`: step ids, `all` (default) or `none`;
 `--topic` a short title, default the first 60 characters; `--group` a name that batches related questions) and keep
 working on everything it doesn't block; `orch answer <qid> "<answer>"` resolves one, `orch answers <qid> "<answer>" <qid>
 "<answer>" …` several at once (all or nothing). Every option is `Label :: explanation` or `Label !! reason` (3 or more words,
@@ -364,8 +364,8 @@ parks, so group related ones and merge duplicates. `orch status --json` carries 
 
 **Asking the user.** In text, never a blocking dialog, so the session stays free; end the turn after asking. Numbered
 questions, lettered options with the recommended one first and marked `(recommended)`, each option explained, a reply hint
-(`1a 2b`, `ok` for every recommended one, `hold`), and always **Hold on** (stop and wait until the user resumes). Write each
-explanation for someone who has not read the code: say what changes for the user, explain any technical term, and add an
+(`1a 2b`, `ok` for every recommended one except on a critical question, `hold`), and always **Hold on** (stop and wait
+until the user resumes). Write each explanation for someone who has not read the code: say what changes for the user, explain any technical term, and add an
 example when it is still abstract. A critical change (destructive, hard to reverse, wide blast radius; `--reversible no`):
 no preselected option, and each option says what will happen, with a before and after. Only session startup (the mode choice,
 an `orch current` `ask`) is asked as the global block says; everything else, including the plan gate and every question a role
