@@ -170,22 +170,28 @@ def task_names(task_dir):
 REPO_JSON = "repo.json"
 
 
-def root_commit(repo_root):
-    """The oldest root commit of the repo's HEAD history (oldest by committer date, then sha), or None when the repo
-    has no commits or isn't a git repo."""
+def root_commits(repo_root):
+    """Every root commit of the repo's HEAD history, oldest first (by committer date, then sha); [] when the repo has
+    no commits or isn't a git repo."""
     try:
         res = subprocess.run(["git", "-C", repo_root, "log", "--max-parents=0", "--format=%ct %H", "HEAD"],
                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15, universal_newlines=True)
     except (OSError, subprocess.SubprocessError):
-        return None
+        return []
     if res.returncode != 0:
-        return None
+        return []
     roots = []
     for line in res.stdout.splitlines():
         parts = line.split()
         if len(parts) == 2 and parts[0].isdigit():
             roots.append((int(parts[0]), parts[1]))
-    return min(roots)[1] if roots else None
+    return [sha for _, sha in sorted(roots)]
+
+
+def root_commit(repo_root):
+    """The oldest root commit (what a new repo.json records), or None."""
+    roots = root_commits(repo_root)
+    return roots[0] if roots else None
 
 
 def read_repo_json(folder):
@@ -210,12 +216,15 @@ def repo_folder(repo_root, tasks_dir=None, name=None):
     """The tasks folder name for a repo (D19): its folder name, or `<name>-<first 4 hex of its root commit>` when
     tasks/<name>/repo.json records a different root. A missing repo.json is written once the repo has a root commit;
     a repo with no commits writes nothing and gets the same folder after its first commit. Existing folders are
-    never renamed. `name` replaces the repo folder's name (`orch init` passes the name it was given)."""
+    never renamed. A recorded root matches when it is any of the repo's roots (a merged-in older history adds a root
+    and must not move the repo to a new folder); a new repo.json records the oldest. `name` replaces the repo
+    folder's name (`orch init` passes the name it was given)."""
     tasks_dir = tasks_dir or orch_root()
     name = name or os.path.basename(os.path.normpath(repo_root))
-    root = root_commit(repo_root)
-    if root is None:
+    roots = root_commits(repo_root)
+    if not roots:
         return name
+    root = roots[0]
     for candidate in (name, "%s-%s" % (name, root[:4])):
         folder = os.path.join(tasks_dir, candidate)
         state, recorded = read_repo_json(folder)
@@ -224,7 +233,7 @@ def repo_folder(repo_root, tasks_dir=None, name=None):
         if state == "absent":
             write_repo_json(folder, root)
             return candidate
-        if recorded == root:
+        if recorded in roots:
             return candidate
     raise OrchError("tasks folders %s and %s-%s belong to other repos" % (name, name, root[:4]), 2)
 

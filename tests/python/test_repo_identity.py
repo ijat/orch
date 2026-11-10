@@ -93,6 +93,42 @@ class RepoIdentity(Fixture):
         self.assertEqual(len(git(repo, "rev-list", "--max-parents=0", "HEAD").split()), 2)
         self.assertEqual(paths.root_commit(repo), old_root)
 
+    def merge_older_unrelated_history(self, repo):
+        """Merge an unrelated branch whose root commit is older than the repo's own; returns that older root."""
+        branch = git(repo, "symbolic-ref", "--short", "HEAD")
+        git(repo, "checkout", "-q", "--orphan", "vendored")
+        self.commit(repo, "vendored", GIT_COMMITTER_DATE="2001-01-01T00:00:00Z", GIT_AUTHOR_DATE="2001-01-01T00:00:00Z")
+        old_root = git(repo, "rev-parse", "HEAD")
+        git(repo, "checkout", "-q", "-f", branch)
+        git(repo, "merge", "-q", "--allow-unrelated-histories", "-m", "import", "vendored")
+        return old_root
+
+    def test_merging_an_older_unrelated_history_keeps_the_folder(self):
+        repo = self.make_repo("a", "proj")
+        own_root = paths.root_commit(repo)
+        self.assertEqual(paths.repo_folder(repo, self.tasks), "proj")
+        old_root = self.merge_older_unrelated_history(repo)
+        self.assertEqual(paths.root_commit(repo), old_root)  # the oldest root changed
+        self.assertEqual(paths.root_commits(repo), [old_root, own_root])
+        self.assertEqual(paths.repo_folder(repo, self.tasks), "proj")  # but the recorded one is still one of them
+        self.assertEqual(sorted(os.listdir(self.tasks)), ["proj"])
+        self.assertEqual(self.recorded("proj"), own_root)  # nothing re-recorded
+
+    def test_a_repo_with_merged_history_records_its_oldest_root_when_new(self):
+        repo = self.make_repo("a", "proj")
+        old_root = self.merge_older_unrelated_history(repo)
+        self.assertEqual(paths.repo_folder(repo, self.tasks), "proj")
+        self.assertEqual(self.recorded("proj"), old_root)
+
+    def test_a_repo_with_merged_history_matches_the_folder_of_the_history_it_merged(self):
+        # D19 accepts this: membership widens the match to a repo that contains another repo's whole history
+        vendored = self.make_repo("a", "lib", message="lib root")
+        self.assertEqual(paths.repo_folder(vendored, self.tasks), "lib")
+        host = self.make_repo("b", "lib", message="host root")
+        git(host, "fetch", "-q", vendored, "HEAD:refs/heads/lib")
+        git(host, "merge", "-q", "--allow-unrelated-histories", "-m", "import", "lib")
+        self.assertEqual(paths.repo_folder(host, self.tasks), "lib")
+
     def test_repo_json_bad_raises(self):
         repo = self.make_repo("a", "proj")
         os.makedirs(os.path.join(self.tasks, "proj"))
