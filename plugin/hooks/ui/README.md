@@ -8,7 +8,7 @@ Terminal only. Off by default. A reply is rewritten by one `claude -p` call, so 
 
 ## Use
 
-`/orch-ui` opens the settings pane. Press a row to switch it on or off, or to move it to its next value. Every choice is kept across sessions.
+`/orch:ui` opens the settings pane. Press a row to switch it on or off, or to move it to its next value. Every choice is kept across sessions.
 
 | Row | Values | Default |
 | --- | --- | --- |
@@ -63,7 +63,7 @@ To read a message as written, ask the agent ("show raw", "give me unfiltered"). 
 - `scope: "latest"` (the default): only the newest formatted message is drawn as written; the next message is formatted again.
 - `scope: "session"`: every message is drawn as written and none is rewritten, until you ask for the formatting back (`format: "formatted"`), press the **Format replies** row, or start a new session. The stored option is not changed.
 
-Raw state is not kept: `/clear` and a new session start formatted. `/clear` also ends the orchestrator marking, so formatting resumes when the `orchestrate` skill loads again. A `/clear` resets what a session holds, so orch-ui reads your stored choices again (the option, model, effort, billing, key source, trigger) when the `orchestrate` skill loads, when you run `/orch-ui`, and before a settings press. One gap: a settings pane left open across a `/clear` draws the defaults until you press a row or reopen it with `/orch-ui`. Pressing the **Format replies** row while any message is shown raw brings the formatting back and keeps the option on; otherwise it switches the option.
+Raw state is not kept: `/clear` and a new session start formatted. `/clear` also ends the orchestrator marking, so formatting resumes when the `orchestrate` skill loads again. A `/clear` resets what a session holds, so orch-ui reads your stored choices again (the option, model, effort, billing, key source, trigger) when the `orchestrate` skill loads, when you run `/orch:ui`, and before a settings press. One gap: a settings pane left open across a `/clear` draws the defaults until you press a row or reopen it with `/orch:ui`. Pressing the **Format replies** row while any message is shown raw brings the formatting back and keeps the option on; otherwise it switches the option.
 
 ## Billing
 

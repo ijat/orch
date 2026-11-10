@@ -100,9 +100,8 @@ async function boot($: Engine, on: On, seed: Record<string, unknown> = { 'opt:fo
   on('session.cwd', () => ({ value: '/proj' }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', (_, e) => {
-    // The plugin's other mod is not under test here: its start is refused (the one module goes on with orch-ui's), so no
-    // pane timers or status runs share the mock clock that the timeout tests move by minutes.
-    if (e.name === 'orch-pane') throw new Error('orch-pane is not under test')
+    // Neither mod registers a bare command (/orch:pane and /orch:ui are the plugin's command files): recorded so a test
+    // can say none was.
     w.commands.push(e.name)
     return { value: { command: e.name } }
   })
@@ -408,10 +407,10 @@ test('summary rows and other surfaces are left as they are', async ($, on) => {
 
 // -- the settings pane ----------------------------------------------------------------------------------
 
-test('session start registers /orch-ui once and /orch-ui opens the pane', async ($, on) => {
+test('session start registers no bare command and /orch:ui opens the pane', async ($, on) => {
   const b = await boot($, on)
-  expect(b.w.commands).toEqual(['orch-ui'])
-  const out = await $.command.run({ command: 'orch-ui', args: '' } as never)
+  expect(b.w.commands).toEqual([])
+  const out = await $.command.run({ command: 'orch:ui', args: '' } as never)
   await b.clock.settle()
   expect(out.text).toBe('orch-ui settings opened.')
   expect(b.w.opened).toHaveLength(1)
@@ -719,7 +718,7 @@ test('with the option off the tool says so and changes nothing', async ($, on) =
   await boot($, on, {})
   await orchestrate($)
   for (const input of [{ format: 'raw' }, { format: 'raw', scope: 'session' }, { format: 'formatted' }]) {
-    expect(resultOf(await callTool($, input))).toBe("Formatting is off in orch-ui's settings (/orch-ui); nothing changed.")
+    expect(resultOf(await callTool($, input))).toBe("Formatting is off in orch-ui's settings (/orch:ui); nothing changed.")
   }
   const ui = await settingsPane($)
   expect((await optionRow(ui)).note).toBeUndefined()
@@ -800,9 +799,9 @@ test('after a /clear the stored model, effort and billing are the ones a convers
   await ui.unmount()
 })
 
-test('after a /clear /orch-ui loads the stored settings before the pane opens', async ($, on) => {
+test('after a /clear /orch:ui loads the stored settings before the pane opens', async ($, on) => {
   const b = await bootThenStore($, on)
-  await $.command.run({ command: 'orch-ui', args: '' } as never)
+  await $.command.run({ command: 'orch:ui', args: '' } as never)
   await b.clock.settle()
   const ui = await settingsPane($)
   expect((await optionRow(ui)).label).toBe('[x] Format replies')
@@ -1654,7 +1653,7 @@ test('"formatted" says why and makes no call when formatting is off or paused, o
   const off = await boot($, on, { 'opt:format': false })
   await orchestrate($)
   await finish($, off, options.source)
-  expect(resultOf(await callTool($, { format: 'formatted' }))).toBe("Formatting is off in orch-ui's settings (/orch-ui); nothing changed.")
+  expect(resultOf(await callTool($, { format: 'formatted' }))).toBe("Formatting is off in orch-ui's settings (/orch:ui); nothing changed.")
   expect(off.w.calls).toEqual([])
 })
 
