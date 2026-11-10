@@ -114,6 +114,33 @@ class RepoIdentity(Fixture):
         self.assertEqual(sorted(os.listdir(self.tasks)), ["proj"])
         self.assertEqual(self.recorded("proj"), own_root)  # nothing re-recorded
 
+    def test_a_suffixed_repo_keeps_its_folder_after_merging_an_older_history(self):
+        # F5: the suffix was taken from the repo's own root; the merge makes another root the oldest
+        self.make_repo("a", "proj", message="one")
+        paths.repo_folder(os.path.join(self.tmp, "a", "proj"), self.tasks)
+        repo = self.make_repo("b", "proj", message="two")
+        own_root = paths.root_commit(repo)
+        folder = paths.repo_folder(repo, self.tasks)
+        self.assertEqual(folder, "proj-" + own_root[:4])
+        old_root = self.merge_older_unrelated_history(repo)
+        if old_root[:4] == own_root[:4]:
+            self.skipTest("the two roots share a 4-hex prefix")
+        self.assertEqual(paths.root_commit(repo), old_root)
+        self.assertEqual(paths.repo_folder(repo, self.tasks), folder)
+        self.assertEqual(sorted(os.listdir(self.tasks)), sorted(["proj", folder]))
+        self.assertEqual(self.recorded(folder), own_root)
+
+    def test_a_suffixed_folder_named_by_no_current_root_is_still_found(self):
+        # any existing name-<4 hex> folder whose repo.json records one of the roots is the repo's
+        self.make_repo("a", "proj", message="one")
+        paths.repo_folder(os.path.join(self.tmp, "a", "proj"), self.tasks)
+        repo = self.make_repo("b", "proj", message="two")
+        own_root = paths.root_commit(repo)
+        odd = "proj-" + ("0000" if not own_root.startswith("0000") else "1111")
+        paths.write_repo_json(os.path.join(self.tasks, odd), own_root)
+        self.assertEqual(paths.repo_folder(repo, self.tasks), odd)
+        self.assertEqual(sorted(os.listdir(self.tasks)), sorted(["proj", odd]))
+
     def test_a_repo_with_merged_history_records_its_oldest_root_when_new(self):
         repo = self.make_repo("a", "proj")
         old_root = self.merge_older_unrelated_history(repo)
