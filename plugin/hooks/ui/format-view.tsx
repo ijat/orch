@@ -13,9 +13,8 @@ import {
 import type { Kind, Part, Route, Row, RowTag } from './format'
 import { textKey } from './lib'
 
-const SKILL = 'orchestrate'
 export const FORMAT_TOOL = 'set_message_format'
-export const FORMAT_TOOL_FULL = 'mcp__orch-ui__set_message_format'
+export const FORMAT_TOOL_FULL = 'mcp__orch__set_message_format'
 const OPT_KEY = 'opt:format'
 const DEFAULT_TRIGGER = 'marked'
 const TRIGGERS = ['marked', 'auto'] as const
@@ -1030,7 +1029,7 @@ function bornIn(id: string, turn: FmtTurn): number {
 export function registerFormat(on: On) {
   // The orchestrator session is the one where the orchestrate skill loaded. After a restart nothing is
   // formatted until it loads again; the resume flow loads it.
-  on('skill.prompt', { skill: SKILL }, async ($, e, next) => {
+  on('skill.prompt', { skill: ['orchestrate', 'orch:orchestrate'] }, async ($, e, next) => {
     const out = await next(e)
     // Every conversion and the tool wait for this hook, so the settings they use are the stored ones.
     await ensureLoaded($)

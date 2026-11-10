@@ -90,7 +90,7 @@ Two environment rules apply to both sources:
 - The formatter ignores a host `ANTHROPIC_AUTH_TOKEN`; the child runs with it blank.
 - The file key is never sent while `ANTHROPIC_BASE_URL` is set (`base-url-set`). With the environment key, or with `subscription`, the run goes wherever that variable points, as with any `claude` started in that session; the note then adds `via ANTHROPIC_BASE_URL` and never shows the value. A Bedrock, Vertex, Foundry or similar provider setting stops every run (`cloud-provider`).
 
-The run happens in `~/.claude/orch-ui-format`, a folder orch-ui creates, so it does not start inside your project.
+The run happens in `~/.claude/orch-data/cache/ui-format`, a folder orch-ui creates, so it does not start inside your project.
 
 ### Cost
 
@@ -117,7 +117,7 @@ The first group pauses formatting for the session. The reply stays as written, n
 | `cli-missing` | The `claude` command was not found. Put it on `PATH`. |
 | `cloud-provider` | A Bedrock, Vertex, Foundry or similar provider variable is set. Formatting uses Anthropic's own API only; unset it for this plugin to work. |
 | `base-url-set` | The file key with `ANTHROPIC_BASE_URL` set, so the key is not sent. Unset the variable, switch **Format API key** to `ANTHROPIC_API_KEY`, or switch billing to `subscription`. |
-| `workdir-failed` | `~/.claude/orch-ui-format` could not be created (no home folder, or not writable). Fix the folder's permissions. |
+| `workdir-failed` | `~/.claude/orch-data/cache/ui-format` could not be created (no home folder, or not writable). Fix the folder's permissions. |
 
 The rest leave that reply as written and the next reply tries again:
 

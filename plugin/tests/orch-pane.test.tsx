@@ -16,7 +16,7 @@ import type { Draft, IndexStatus, StatusQuestion, StatusRole, StatusTask } from 
 const NOW = Date.parse('2026-10-29T10:30Z')
 
 const PANE = {
-  plugin: 'orch-pane',
+  plugin: 'orch',
   component: 'Pane',
   requestId: 'orch-pane',
   props: {
@@ -72,6 +72,8 @@ type Ran = { exitCode: number; stdout: string; stderr: string }
 type World = {
   // `refuseSession`: an orch that predates `--session` (exit 1, its real stderr) for any run that carries the flag.
   refuseSession?: boolean
+  // Where installed_plugins.json says `orch@orch` is installed; the plugin's own root when left out.
+  installedAt?: string
   runs: string[][]; indexRuns: string[][]; opens: number; paneOpen: boolean; placed: boolean; result: Ran; index: Ran
   // `orch answers` runs (its argv), its answer, and what the orch would then print for `status`.
   answers: string[][]; answered: Ran; onAnswers: (argv: string[]) => void
@@ -102,6 +104,10 @@ const INDEX_RAN: Ran = { exitCode: 0, stdout: JSON.stringify(INDEX), stderr: '' 
 
 // The engine beneath the plugin: env, cwd, the command, panes, and `orch status` itself.
 // `env` replaces the environment.
+// The CLI runs from the plugin's own bin: the mod reads its root from `$.plugin.root`, which in these tests is the plugin
+// dir above this file (nothing is written down, so a checkout anywhere passes).
+const PLUGIN_ROOT = import.meta.dir.replace(/\\/g, '/').replace(/\/tests$/, '')
+const ORCH = `${PLUGIN_ROOT}/bin/orch`
 function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' },
                env: Record<string, string> = { HOME: '/home/u' }): World {
   const w: World = {
@@ -122,10 +128,11 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
       : [],
   }))
   on('process.run', (_, e) => {
-    // The About probes: `--version` of orch and orch-index, and a python one-liner for the two JSON files.
+    // The About probes: `--version` of orch and orch-index, and a python one-liner for installed_plugins.json
+    // (it prints the installPath and the gitCommitSha of `orch@orch`; `w.installedAt` is where it says it is installed).
     if (e.argv.includes('--version') || e.argv.includes('-c')) {
       const out = e.argv.includes('-c')
-        ? (e.argv.at(-1)?.endsWith('installed_plugins.json') ? '0.5.1 abc1234def' : '611c4fa7ed')
+        ? `${w.installedAt ?? PLUGIN_ROOT} abc1234def56789`
         : e.argv[0]?.includes('orch-index') ? 'orch-index 0.2.0' : 'orch 0.1.0'
       return { value: { exitCode: 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
@@ -163,7 +170,7 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
   on('ui.toast', (_, e) => { w.toasts.push(JSON.stringify(e)); return { value: undefined } })
   on('tool.register', (_, e) => {
     w.tools.push(e.name)
-    return { value: { tool: `mcp__orch-pane__${e.name}` } }
+    return { value: { tool: `mcp__orch__${e.name}` } }
   })
   on('session.compact', (_, e) => {
     if (w.compactFails > 0) {
@@ -186,8 +193,8 @@ test('shows the repo task with bars, markers and the running line, on every surf
   const clock = mock.clock(on, { now: NOW })
   const w = world(on)
   await start($, clock)
-  expect(w.runs).toEqual([['/home/u/.claude/bin/orch', 'status', '--json', '--cwd', '/proj']])
-  expect(w.indexRuns).toEqual([['/home/u/.claude/bin/orch-index', 'status', '--json', '--repo', '/proj']])
+  expect(w.runs).toEqual([[ORCH, 'status', '--json', '--cwd', '/proj']])
+  expect(w.indexRuns).toEqual([['/home/u/.claude/orch-data/bin/orch-index', 'status', '--json', '--repo', '/proj']])
   expect(w.opens).toBe(1)
 
   for (const surface of ['terminal', 'desktop'] as const) {
@@ -211,8 +218,8 @@ test('on Windows it runs orch through python from USERPROFILE, not HOME', async 
   const clock = mock.clock(on, { now: NOW })
   const w = world(on, undefined, { OS: 'Windows_NT', USERPROFILE: 'C:\\home\\u', HOME: '/c/home/u' })
   await start($, clock)
-  expect(w.runs).toEqual([['python', 'C:/home/u/.claude/bin/orch', 'status', '--json', '--cwd', '/proj']])
-  expect(w.indexRuns).toEqual([['C:/home/u/.claude/bin/orch-index.exe', 'status', '--json', '--repo', '/proj']])
+  expect(w.runs).toEqual([['python', ORCH, 'status', '--json', '--cwd', '/proj']])
+  expect(w.indexRuns).toEqual([['C:/home/u/.claude/orch-data/bin/orch-index.exe', 'status', '--json', '--repo', '/proj']])
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /could not run/ })).toBeUndefined()
   await ui.unmount()
@@ -997,12 +1004,12 @@ function seedState(on: On, seeds: Record<string, unknown>) {
   on('state.get', async (_, e, next) => {
     const r = await next(e)
     const read = r.value as { value?: unknown; version: number } | undefined
-    const seeded = e.plugin === 'orch-pane' && live.has(e.key) && read !== undefined && read.value === undefined
+    const seeded = e.plugin === 'orch' && live.has(e.key) && read !== undefined && read.value === undefined
     return seeded ? ({ value: { value: seeds[e.key], version: read.version } } as typeof r) : r
   })
   on('state.set', (_, e, next) => {
-    if (e.plugin === 'orch-pane') live.delete(e.key)
-    if (e.plugin === 'orch-pane' && e.key === 'frame') ticks.n += 1
+    if (e.plugin === 'orch') live.delete(e.key)
+    if (e.plugin === 'orch' && e.key === 'frame') ticks.n += 1
     return next(e)
   })
   return ticks
@@ -1165,7 +1172,7 @@ test('placeText names the repo and marks a worktree', () => {
   expect(placeText({ ...t, repo: null, worktree: null })).toBe('app')
 })
 
-test('About lists the version and commit of the skill, index and pane', async ($, on) => {
+test('About lists orch with the installed commit (12 characters) and orch-index', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   world(on)
   await start($, clock)
@@ -1174,10 +1181,23 @@ test('About lists the version and commit of the skill, index and pane', async ($
   const all = (await ui.findAll({ type: 'Text', text: /./ })).map(t => t.text).join('\n')
   expect(all).toContain('About')
   expect(all).toContain('v0.1.0')
-  expect(all).toContain('611c4fa')
+  expect(all).toContain('abc1234def56')
+  expect(all).not.toContain('abc1234def567')
   expect(all).toContain('v0.2.0')
-  expect(all).toContain('v0.5.1')
-  expect(all).toContain('abc1234')
+  expect(all).not.toContain('dev')
+})
+
+test('About says dev when orch@orch is installed somewhere else than this plugin root', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on)
+  w.installedAt = '/elsewhere/plugins/cache/orch/orch/0123456789ab'
+  await start($, clock)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'tab:more' })
+  const all = (await ui.findAll({ type: 'Text', text: /./ })).map(t => t.text).join('\n')
+  expect(all).toContain('v0.1.0')
+  expect(all).toContain('dev')
+  expect(all).not.toContain('abc1234')
 })
 
 // -- the status card, the work panel and the folded tabs (ported from the approved mock) ---------------
@@ -1435,7 +1455,6 @@ function qblock(open: StatusQuestion[], history: StatusQuestion[] = [], answered
 }
 const withQs = (t: object, open: StatusQuestion[], history: StatusQuestion[] = [], answered = 0) =>
   ({ ...t, questions_open: open.length, questions: qblock(open, history, answered) })
-const ORCH = '/home/u/.claude/bin/orch'
 
 async function pane($: Engine, on: On, tasks: object[], seed: Record<string, unknown> = {}) {
   const clock = mock.clock(on, { now: NOW })
@@ -2000,7 +2019,7 @@ test('on Windows the answers run through python, from USERPROFILE', async ($, on
   await start($, clock)
   const ui = await $.ui.mount(PANE60('terminal'))
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers).toEqual([['python', 'C:/home/u/.claude/bin/orch', 'answers', '-t', 'app/build', '--', 'Q1', 'Keep']])
+  expect(w.answers).toEqual([['python', ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Keep']])
   await ui.unmount()
 })
 
@@ -2113,7 +2132,7 @@ const endTurn = async ($: Engine, clock: MockClock, extra: Record<string, unknow
 test('the compaction tool is registered at session start', async ($, on) => {
   const { w } = await pane($, on, [IDLE_PROGRAM])
   expect(w.tools).toEqual(['compact_when_idle'])
-  expect(COMPACT_TOOL_FULL).toBe('mcp__orch-pane__compact_when_idle')
+  expect(COMPACT_TOOL_FULL).toBe('mcp__orch__compact_when_idle')
 })
 
 test('a request made while nothing runs compacts once, when the turn ends, with the caller\'s instructions, then wakes the agent', async ($, on) => {
@@ -2346,7 +2365,7 @@ test('with an older orch (no this_session) or no session id the pane is as befor
   await ui.unmount()
 })
 
-// The mock's refusal is the real one: `~/.claude/bin/orch status --json --session x` on an orch without the flag
+// The mock's refusal is the real one: `<plugin>/bin/orch status --json --session x` on an orch without the flag
 // prints `orch: unrecognized argument '--session'` and exits 1.
 test('an id but an older orch that rejects --session: run again without it, the folder\'s tasks still show', async ($, on) => {
   on('session.id', () => ({ value: SESSION_ID }))

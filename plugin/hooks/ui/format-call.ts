@@ -24,7 +24,7 @@ async function workDir($: EngineInterface): Promise<string | null> {
   const windows = (await $.env.get('OS')) === 'Windows_NT'
   const home = windows ? await $.env.get('USERPROFILE') : await $.env.get('HOME')
   if (!home) return null
-  const dir = `${home.replace(/\\/g, '/')}/.claude/orch-ui-format`
+  const dir = `${home.replace(/\\/g, '/')}/.claude/orch-data/cache/ui-format`
   try {
     await $.fs.write(`${dir}/.keep`, '')
   } catch {

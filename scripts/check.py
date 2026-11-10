@@ -8,6 +8,7 @@ Checks (independent ones run in parallel; one line each, with its verdict and wa
   validate  `claude plugin validate plugin` and `claude plugin validate .`
   python    every test class in tests/python/test_*.py in its own process (own ORCH_DIR temp dir), up to the CPU
             count at a time; the totals are the sum over the classes
+  mods      `claude plugin test plugin`: the orch-pane and orch-ui mod suites (plugin/tests/)
   public    scripts/check-public.py --tree . and --range HEAD (commits on no remote-tracking ref; none is a pass)
   parity    scripts/text-parity.py --base dce7cf7 (only with --parity: this task's gate)
 Exit 0 only if every selected check passed. A check that cannot run (no `claude`, no denylist) fails and is never
@@ -148,6 +149,26 @@ def check_python():
     return (not failed and not broken), summary, detail.rstrip("\n")
 
 
+MODS_PASS_RE = re.compile(r"^\s*(\d+) pass\s*$", re.M)
+MODS_FAIL_RE = re.compile(r"^\s*(\d+) fail\s*$", re.M)
+MODS_RAN_RE = re.compile(r"^Ran (\d+) tests? across (\d+) files?", re.M)
+
+
+def check_mods():
+    if not shutil.which("claude"):
+        return False, "`claude` is not on PATH: cannot run the mod suites", ""
+    rc, out = run(["claude", "plugin", "test", "plugin"], timeout=600)
+    passed, failed, ran = MODS_PASS_RE.search(out), MODS_FAIL_RE.search(out), MODS_RAN_RE.search(out)
+    if not (passed and failed and ran):
+        return False, "could not read the mod test totals (exit %d)" % rc, tail(out, 20)
+    n_pass, n_fail, n_ran = int(passed.group(1)), int(failed.group(1)), int(ran.group(1))
+    summary = "%d passed, %d failed of %d tests in %s files" % (n_pass, n_fail, n_ran, ran.group(2))
+    if rc != 0 or n_fail or n_ran == 0 or n_pass != n_ran:
+        fails = [l for l in out.splitlines() if l.startswith("(fail)")]
+        return False, summary, "\n".join("    " + l for l in fails[:20]) or tail(out, 20)
+    return True, summary, ""
+
+
 def check_public():
     script = os.path.join(SCRIPTS, "check-public.py")
     notes = []
@@ -169,7 +190,7 @@ def check_parity():
 
 
 CHECKS = [("agents", check_agents), ("validate", check_validate), ("python", check_python),
-          ("public", check_public)]
+          ("mods", check_mods), ("public", check_public)]
 OPTIONAL = {"parity": check_parity}
 
 
