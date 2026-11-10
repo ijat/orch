@@ -363,7 +363,7 @@ This is a rule the roles follow, not a lock: another person's session, or a role
 rule, is not blocked.
 
 **Delegation hook (unwired).** `orch hook delegate` can deny a repo-wide Grep, Glob or Bash search on an indexed
-repository and tell the caller to spawn `orch-explorer`. It was declared in the frontmatter of `orch-implementer`
+repository and tell the caller to spawn `orch:explorer`. It was declared in the frontmatter of `orch-implementer`
 and `orch-code-reviewer` from 2026-11-01 and removed the same day: the deny stopped Sonnet in the middle of
 legitimate work. Those roles now carry a strong "prefer the explorer" rule in their prompt and nothing enforces it.
 The command and its tests remain; wire it back by adding a PreToolUse `Grep|Glob|Bash` hook to a role's frontmatter.
