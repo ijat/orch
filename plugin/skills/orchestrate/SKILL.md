@@ -458,7 +458,7 @@ it's tied to this repo (prefer repo when unsure).
 ```
 
 **Promote, don't just log.** If the lesson changes a role's standing behaviour, edit it into that
-role's source, `plugin/skills/orchestrate/roles/<role>.md` in the orch repository (or this skill, for orchestrator behaviour), and run
+role's source, `plugin/skills/orchestrate/roles/<role>.md` in this plugin's source repository (or this skill, for orchestrator behaviour), and run
 `scripts/build-agents.py plugin/skills/orchestrate/roles plugin/agents` in the same change — never `plugin/agents/*.md`, which are generated and
 overwritten by the next build; and in
 `LESSONS.md` replace the entry with a one-line row in the *Promoted* table pointing at where it now
