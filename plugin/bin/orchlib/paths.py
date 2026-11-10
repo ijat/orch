@@ -1,4 +1,5 @@
 """Task resolution, locking, atomic writes, timestamps, index refresh."""
+import json
 import os
 import re
 import shutil
@@ -164,6 +165,109 @@ def task_names(task_dir):
     """(repo, slug) of a task dir: its parent's and its own basename."""
     task_dir = os.path.normpath(task_dir)
     return os.path.basename(os.path.dirname(task_dir)), os.path.basename(task_dir)
+
+
+REPO_JSON = "repo.json"
+
+
+def root_commit(repo_root):
+    """The oldest root commit of the repo's HEAD history (oldest by committer date, then sha), or None when the repo
+    has no commits or isn't a git repo."""
+    try:
+        res = subprocess.run(["git", "-C", repo_root, "log", "--max-parents=0", "--format=%ct %H", "HEAD"],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15, universal_newlines=True)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if res.returncode != 0:
+        return None
+    roots = []
+    for line in res.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit():
+            roots.append((int(parts[0]), parts[1]))
+    return min(roots)[1] if roots else None
+
+
+def read_repo_json(folder):
+    """(state, root): state is 'absent', 'ok' (root is the recorded commit) or 'bad' (unreadable or malformed)."""
+    path = os.path.join(folder, REPO_JSON)
+    if not os.path.exists(path):
+        return "absent", None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            root = json.load(fh).get("root_commit")
+    except (OSError, ValueError, AttributeError):
+        return "bad", None
+    return ("ok", root) if isinstance(root, str) and root else ("bad", None)
+
+
+def write_repo_json(folder, root):
+    os.makedirs(folder, exist_ok=True)
+    write_atomic(os.path.join(folder, REPO_JSON), (json.dumps({"root_commit": root}) + "\n").encode("utf-8"), 0o644)
+
+
+def repo_folder(repo_root, tasks_dir=None):
+    """The tasks folder name for a repo (D19): its folder name, or `<name>-<first 4 hex of its root commit>` when
+    tasks/<name>/repo.json records a different root. A missing repo.json is written once the repo has a root commit;
+    a repo with no commits writes nothing and gets the same folder after its first commit. Existing folders are
+    never renamed."""
+    tasks_dir = tasks_dir or orch_root()
+    name = os.path.basename(os.path.normpath(repo_root))
+    root = root_commit(repo_root)
+    if root is None:
+        return name
+    for candidate in (name, "%s-%s" % (name, root[:4])):
+        folder = os.path.join(tasks_dir, candidate)
+        state, recorded = read_repo_json(folder)
+        if state == "bad":
+            raise OrchError("unreadable %s in %s" % (REPO_JSON, folder), 3)
+        if state == "absent":
+            write_repo_json(folder, root)
+            return candidate
+        if recorded == root:
+            return candidate
+    raise OrchError("tasks folders %s and %s-%s belong to other repos" % (name, name, root[:4]), 2)
+
+
+def status_repo_path(status_file):
+    """The `repo:` line of a status.md (a trailing parenthetical dropped), or None."""
+    try:
+        with open(status_file, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    m = re.search(r"^- repo:[ \t]*(.*)$", text, re.M)
+    return re.sub(r"\s*\(.*$", "", m.group(1).strip()) if m else None
+
+
+def backfill(tasks_dir):
+    """Write repo.json for each existing repo folder that has none, from the first task (by name) whose status.md
+    `repo:` path exists on disk and has a root commit; the rest are skipped. Dot entries and non-directories are
+    never repo folders. Returns {folder: root_commit} for the files written."""
+    written = {}
+    try:
+        names = sorted(os.listdir(tasks_dir))
+    except OSError:
+        return written
+    for name in names:
+        folder = os.path.join(tasks_dir, name)
+        if name.startswith(".") or not os.path.isdir(folder) or os.path.islink(folder):
+            continue
+        if read_repo_json(folder)[0] != "absent":
+            continue
+        for slug in sorted(os.listdir(folder)):
+            if slug.startswith("."):
+                continue
+            repo = status_repo_path(os.path.join(folder, slug, "status.md"))
+            repo = os.path.expanduser(repo) if repo else None
+            if not repo or not os.path.isabs(repo) or not os.path.isdir(repo):
+                continue
+            root = root_commit(repo)
+            if root:
+                write_repo_json(folder, root)
+                written[name] = root
+                break
+    return written
 
 
 def resolve_task(arg, must_exist=True):
