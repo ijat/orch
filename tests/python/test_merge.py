@@ -1329,7 +1329,7 @@ class TestRepoAndRefs(GitBase):
         import shutil
         shutil.rmtree(self.repo, ignore_errors=True)
         shutil.rmtree(os.path.join(self.projects, "myapp-worktrees"), ignore_errors=True)
-        shutil.rmtree(self.d, ignore_errors=True)
+        shutil.rmtree(os.path.dirname(self.d), ignore_errors=True)   # the repo folder too: its repo.json names the old repo
 
     def test_git_dir_in_the_environment_cannot_redirect_the_merge(self):
         self.setup_task()

@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -60,7 +61,7 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="orch-dash-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        patcher = mock.patch.dict(os.environ, {"HOME": "/home/u"})   # task_dir shows as ~/… under the home directory only
+        patcher = mock.patch.dict(os.environ, {"HOME": "/home/u", "ORCH_DATA": os.path.join(self.tmp, "data")})   # task_dir shows as ~/… under the home directory only; no real head file
         patcher.start()
         self.addCleanup(patcher.stop)
         self.root = os.path.join(self.tmp, "orch")
@@ -972,6 +973,129 @@ class TestRealPage(Base):
             lines = fh.read().split("\n")
         self.assertEqual(len([l for l in lines if "<link" in l]), 0)
         self.assertEqual(len([l for l in lines if l == '  --font: system-ui, -apple-system, "Segoe UI", sans-serif;']), 1)
+
+
+class TestHeadFile(Base):
+    """The optional private dashboard-head.html: only stylesheet links to https and style elements get in."""
+
+    PAGE = b"<!doctype html><html><head><title>t</title></head><body><p>page</p><script>var x = 1;</script></body></html>\n"
+
+    def setUp(self):
+        Base.setUp(self)
+        with open(self.html, "wb") as fh:
+            fh.write(self.PAGE)
+        self.head = os.path.join(self.tmp, "head.html")
+
+    def write_head(self, data):
+        with open(self.head, "wb") as fh:
+            fh.write(data)
+
+    def page(self):
+        with mock.patch.object(sys, "stderr", io.StringIO()) as err:
+            data, version = db.Dashboard(self.root, self.html, self.head).page()
+        return data, version, err.getvalue()
+
+    def test_absent_file_leaves_the_page_byte_identical(self):
+        data, version, err = self.page()
+        self.assertEqual((data, err), (self.PAGE, ""))
+        self.assertEqual(version, hashlib.sha256(self.PAGE).hexdigest()[:12])
+        # the default location (private data folder) is absent too
+        self.assertEqual(db.Dashboard(self.root, self.html).page()[0], self.PAGE)
+
+    def test_kept_link_and_style_are_placed_before_head_ends(self):
+        self.write_head(b'<link rel="stylesheet" href="https://fonts.example/css?family=A:wght@400&display=swap">\n'
+                        b'<style>:root { --font: "A", sans-serif; }</style>')
+        data, version, err = self.page()
+        self.assertEqual(err, "")
+        want = (b'<title>t</title><link rel="stylesheet" href="https://fonts.example/css?family=A:wght@400&amp;display=swap">\n'
+                b'<style>:root { --font: "A", sans-serif; }</style>\n</head>')
+        self.assertIn(want, data)
+        self.assertEqual(data.replace(want[len(b"<title>t</title>"):], b"</head>"), self.PAGE)
+        csp = db.csp_for(data)
+        self.assertIn("style-src 'unsafe-inline' https://fonts.example;", csp)
+        self.assertIn("font-src https://fonts.example;", csp)
+        self.assertEqual(len(re.findall(rb"<script>", data)), 1)
+
+    def test_everything_else_is_dropped_with_a_warning_that_names_tags_only(self):
+        self.write_head(b'<script>steal()</script><img src="https://evil.example/x.png"><link rel="preload" href="https://a.example/x">'
+                        b'<link rel="stylesheet" href="http://plain.example/x.css"><link rel="stylesheet" href="//proto.example/x.css">'
+                        b'<link rel="stylesheet" href="https://user@evil.example/x.css">'
+                        b'<link rel="stylesheet" href="https://ok.example/x.css" onload="bad()"> loose text <!-- comment -->')
+        data, version, err = self.page()
+        self.assertIn(b'<link rel="stylesheet" href="https://ok.example/x.css">\n</head>', data)
+        for bad in (b"steal", b"evil.example", b"plain.example", b"proto.example", b"onload", b"loose", b"preload", b"<img"):
+            self.assertNotIn(bad, data)
+        self.assertIn("dropped", err)
+        for word in ("script", "img", "link", "text"):
+            self.assertIn(word, err)
+        self.assertNotIn("steal", err)
+        self.assertNotIn("evil.example", err)
+        self.assertEqual(db.csp_for(data).count("https://"), 2)   # ok.example in style-src and font-src
+
+    def test_a_file_with_nothing_to_keep_leaves_the_page_unchanged(self):
+        self.write_head(b"<script>x()</script>")
+        data, _, err = self.page()
+        self.assertEqual(data, self.PAGE)
+        self.assertIn("script", err)
+
+    def test_style_cannot_close_early_or_smuggle_a_script(self):
+        self.write_head(b"<style>a{}</style><script>x()</script><style>b{}</sty")
+        data, _, err = self.page()
+        self.assertIn(b"<style>a{}</style>\n</head>", data)
+        self.assertNotIn(b"x()", data)
+        self.assertNotIn(b"b{}", data)       # the unclosed style block is dropped whole
+        self.assertEqual(len(re.findall(rb"<script>", data)), 1)
+
+    def test_the_16_kb_cap(self):
+        ok = b"<style>" + b"a" * (db.HEAD_CAP - 20) + b"</style>"
+        self.assertLessEqual(len(ok), db.HEAD_CAP)
+        self.write_head(ok)
+        self.assertIn(b"<style>aaa", self.page()[0])
+        self.write_head(ok + b" " * 64)
+        data, _, err = self.page()
+        self.assertEqual(data, self.PAGE)
+        self.assertIn("larger than", err)
+
+    def test_not_a_regular_file_and_no_head_element_are_ignored(self):
+        os.symlink(self.html, self.head)
+        data, _, err = self.page()
+        self.assertEqual(data, self.PAGE)
+        os.unlink(self.head)
+        self.write_head(b"<style>a{}</style>")
+        with open(self.html, "wb") as fh:
+            fh.write(b"<p>no head element</p>")
+        data, _, err = self.page()
+        self.assertEqual(data, b"<p>no head element</p>")
+        self.assertIn("no </head>", err)
+
+    def test_changing_the_head_file_changes_the_page_and_its_version(self):
+        dash = db.Dashboard(self.root, self.html, self.head)
+        with mock.patch.object(sys, "stderr", io.StringIO()):
+            first = dash.page()
+            self.write_head(b"<style>a{}</style>")
+            second = dash.page()
+            self.write_head(b"<style>b{}</style>")
+            third = dash.page()
+        self.assertEqual(first[0], self.PAGE)
+        self.assertEqual(len({first[1], second[1], third[1]}), 3)
+        self.assertIn(b"<style>b{}</style>", third[0])
+
+    def test_served_page_carries_the_head_and_a_csp_for_it(self):
+        self.write_head(b'<link rel="stylesheet" href="https://fonts.example/css">')
+        srv = db.make_server(self.root, 0, self.html, self.head)
+        thread = threading.Thread(target=srv.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+        conn.request("GET", "/")
+        res = conn.getresponse()
+        body = res.read()
+        conn.close()
+        self.assertIn(b'href="https://fonts.example/css"', body)
+        self.assertIn("font-src https://fonts.example;", res.getheader("Content-Security-Policy"))
 
 
 class TestPageViaNode(unittest.TestCase):

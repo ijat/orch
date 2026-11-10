@@ -1,0 +1,50 @@
+#!/bin/sh
+# pre-push: refuse a push when any commit about to be published matches the private denylist.
+# Install: link this file as .git/hooks/pre-push (a global pre-push can chain to it). It reads git's stdin lines
+# "<local ref> <local sha> <remote ref> <remote sha>" and runs scripts/check-public.py on exactly the pushed commits.
+# --no-verify is never the way past a hit: rewrite the unpushed commits instead.
+
+# Find check-public.py next to this file (following links), else in the repo being pushed from.
+self=$0
+while [ -L "$self" ]; do
+    target=$(readlink "$self")
+    case $target in /*) self=$target ;; *) self=$(dirname "$self")/$target ;; esac
+done
+checker=$(dirname "$self")/../scripts/check-public.py
+if [ ! -f "$checker" ]; then
+    top=$(git rev-parse --show-toplevel 2>/dev/null) || top=.
+    checker=$top/scripts/check-public.py
+fi
+if [ ! -f "$checker" ]; then
+    echo "pre-push: scripts/check-public.py not found: nothing checked (not a pass)" >&2
+    exit 2
+fi
+
+status=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ -n "$local_ref" ] || continue
+    case $local_sha in *[!0]*) ;; *) continue ;; esac   # a deletion pushes no commits
+    if [ "$(git cat-file -t "$local_sha" 2>/dev/null)" = "tag" ]; then
+        echo "pre-push: $local_ref is an annotated tag; its message is not checked. Push a lightweight tag." >&2
+        status=1
+        continue
+    fi
+    echo "pre-push: checking $local_ref"
+    case $remote_sha in
+        *[!0]*)
+            if ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+                echo "pre-push: remote commit $remote_sha is not here: fetch first" >&2
+                status=2
+                continue
+            fi
+            python3 "$checker" --rev "$local_sha" --range "$remote_sha..$local_sha" ;;
+        *)
+            python3 "$checker" --rev "$local_sha" --range "$local_sha" ;;
+    esac
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "pre-push: $local_ref refused (check-public exit $rc)" >&2
+        [ "$status" -lt "$rc" ] && status=$rc
+    fi
+done
+exit $status
