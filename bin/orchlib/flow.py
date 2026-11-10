@@ -163,6 +163,13 @@ def cmd_spawn(ns, extra):
             cli.append_log(task_dir, cli.log_line(ts, "orchestrator", refused))
             raise OrchError("%s — %s" % (refused, usage_line), 2)
 
+        if status is not None:
+            try:
+                if cli.record_driver(status):
+                    write_atomic(cli.status_path(task_dir), status.render())
+            except OSError as exc:
+                warn_stderr("driver_session not recorded: %s" % exc)
+
         if ns.reused:
             why = reuse_refusal(read_journal(task_dir), role, ns.tier, ts, auto_ms)
             if why:

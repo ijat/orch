@@ -48,7 +48,8 @@ class Base(unittest.TestCase):
         self.home = os.path.join(self.tmp, "home")
         self.root = os.path.join(self.home, ".claude", "orchestrations")
         os.makedirs(self.root)
-        self.env = {"HOME": self.home, "ORCH_DIR": self.root, "ORCH_NO_INDEX": "1", "ORCH_NOW": DEFAULT_NOW}
+        self.env = {"HOME": self.home, "ORCH_DIR": self.root, "ORCH_NO_INDEX": "1", "ORCH_NOW": DEFAULT_NOW,
+                    "CLAUDE_CODE_SESSION_ID": ""}   # a test session's own id must not leak into the fixtures
 
     def run_orch(self, *argv, **kw):
         env = dict(self.env)
