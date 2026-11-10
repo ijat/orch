@@ -15,8 +15,8 @@
 #                                         are unchanged; pruned to 26 h above 256 KB)
 #
 # Use it in either of two ways:
-#   - as the whole statusline:  "statusLine": {"type": "command", "command": "~/.claude/bin/orch-ratelimit-cache.sh --print"}
-#   - from your own statusline: input=$(cat); printf '%s' "$input" | ~/.claude/bin/orch-ratelimit-cache.sh
+#   - as the whole statusline:  "statusLine": {"type": "command", "command": "~/.claude/orch-data/plugin/bin/orch-ratelimit-cache.sh --print"}
+#   - from your own statusline: input=$(cat); printf '%s' "$input" | ~/.claude/orch-data/plugin/bin/orch-ratelimit-cache.sh
 #
 # Needs jq. Never fails the statusline: always exits 0.
 set -u

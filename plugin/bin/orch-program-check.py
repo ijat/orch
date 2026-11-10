@@ -3,7 +3,7 @@
 
 Usage: orch-program-check.py <roadmap.md>
 Prints one line per finding (FAIL / WARN) and a final verdict line. Exit 0 = no FAIL, 1 = FAIL,
-2 = unreadable or no milestone table. Rules and their reasons: ~/.claude/skills/orchestrate/PROGRAM.md.
+2 = unreadable or no milestone table. Rules and their reasons: ${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/PROGRAM.md.
 """
 import re, sys
 

@@ -33,11 +33,11 @@ main-checkout rule below applies unchanged: from a linked worktree a `pre-plan` 
 
 Run, before anything else:
 
-    OI="${ORCH_INDEX_BIN:-$(command -v orch-index || echo "$HOME/.claude/bin/orch-index")}"
+    OI="${ORCH_INDEX_BIN:-$(command -v orch-index || echo "${ORCH_DATA:-$HOME/.claude/orch-data}/bin/orch-index")}"
     "$OI" stats [--repo DIR]   </dev/null
 
 (`--repo DIR` when the caller names a repository, otherwise the current directory. The binary is
-`$ORCH_INDEX_BIN` if set, else `orch-index` on `PATH`, else `$HOME/.claude/bin/orch-index`; Bash calls do
+`$ORCH_INDEX_BIN` if set, else `orch-index` on `PATH`, else `${ORCH_DATA:-$HOME/.claude/orch-data}/bin/orch-index`; Bash calls do
 not share variables, so set `OI` this way in every command that uses it.) It prints `commit <sha>` and row counts. Compare `commit` with
 `git -C DIR rev-parse HEAD`. `stats` does not show an index built by an older `orch-index`, so when
 `commit` equals HEAD also run one cheap probe query:
@@ -90,7 +90,7 @@ exit status last, with `DIR` and `LOG` (a scratch file) filled in:
     if [ -n "$P" ] && kill -0 "$P" 2>/dev/null && find "$M/indexing" -mmin -30 | grep -q .; then
       echo "exit=busy" >LOG; exit 0; fi
     L="pid=$$ started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "marker: $L" >LOG; echo "$L" > "$M/indexing"
-    OI="${ORCH_INDEX_BIN:-$(command -v orch-index || echo "$HOME/.claude/bin/orch-index")}"
+    OI="${ORCH_INDEX_BIN:-$(command -v orch-index || echo "${ORCH_DATA:-$HOME/.claude/orch-data}/bin/orch-index")}"
     "$OI" index --repo DIR >>LOG 2>&1 </dev/null; rc=$?
     [ "$(cat "$M/indexing" 2>/dev/null)" = "$L" ] && rm -f "$M/indexing"
     echo "exit=$rc" >>LOG
@@ -126,7 +126,7 @@ Check the conditions in this order, and stop at the first that fails:
 2. Read them in one command:
 
        echo "autoinstall=${ORCH_INDEX_AUTOINSTALL-} bin=${ORCH_INDEX_BIN-} path=$(command -v orch-index)"
-       if [ -e "$HOME/.claude/bin/orch-index" ] || [ -L "$HOME/.claude/bin/orch-index" ]; then echo home=present; else echo home=absent; fi
+       if [ -e "${ORCH_DATA:-$HOME/.claude/orch-data}/bin/orch-index" ] || [ -L "${ORCH_DATA:-$HOME/.claude/orch-data}/bin/orch-index" ]; then echo home=present; else echo home=absent; fi
 
 3. `autoinstall=0`: report `install disabled (ORCH_INDEX_AUTOINSTALL=0)` and "manual steps: README,
    Code index", and stop.

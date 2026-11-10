@@ -517,7 +517,7 @@ export const agentPctTail = (p: number) => `${p}%`.padStart(4)
 // Gradient ends and the moving highlight of an agent's progress bar.
 type Palette = { dark: number[]; light: number[]; glow: number[] }
 const GREEN: Palette = { dark: [0x16, 0xa3, 0x4a], light: [0x4a, 0xde, 0x80], glow: [0xe0, 0xff, 0xec] } // #16a34a #4ade80 #e0ffec
-// By role base name; the colours of the `color:` in each ~/.claude/agents/orch-*.md.
+// By role base name; the colours of the `color:` in each plugin/agents/<role>.md.
 const PALETTES: Record<string, Palette> = {
   implementer: GREEN,
   planner: { dark: [0x93, 0x33, 0xea], light: [0xc0, 0x84, 0xfc], glow: [0xf3, 0xe8, 0xff] }, // #9333ea #c084fc #f3e8ff

@@ -369,7 +369,7 @@ legitimate work. Those roles now carry a strong "prefer the explorer" rule in th
 The command and its tests remain; wire it back by adding a PreToolUse `Grep|Glob|Bash` hook to a role's frontmatter.
 
 You do not need the index. The binary is `$ORCH_INDEX_BIN` if set, else `orch-index` on `PATH`, else
-`$HOME/.claude/bin/orch-index`.
+`${ORCH_DATA:-$HOME/.claude/orch-data}/bin/orch-index`.
 
 **Automatic install.** `orch:graph` installs a missing binary only when the caller did not ask for check only,
 `ORCH_INDEX_AUTOINSTALL` is not `0`, `ORCH_INDEX_BIN` is unset or empty, no `orch-index` is on `PATH`,

@@ -110,7 +110,7 @@ class Layout(unittest.TestCase):
         self.assertEqual(skill.count("a relative path is relative to this skill's directory"), 1)
 
     def test_t4_no_old_install_paths_and_data_paths_under_orch_data(self):
-        self.assertEqual(hits(self.files, re.compile(r"~/\.claude/(bin|skills|agents)/|~/\.claude/orchestrations")), [])
+        self.assertEqual(hits(self.files, re.compile(r"(?:~|\$\{?HOME\}?)/\.claude/(?:bin|skills|agents)/|(?:~|\$\{?HOME\}?)/\.claude/orchestrations")), [])
         odd = []
         for rel, text in self.files:
             for m in DATA_PATH.finditer(text):
