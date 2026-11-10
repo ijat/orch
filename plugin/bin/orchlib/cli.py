@@ -11,7 +11,7 @@ from . import __version__
 from . import journal as jr
 from . import status as st
 from .paths import (OrchError, TaskLock, TEMPLATES_DIR, append_bytes, ends_with_newline, now, orch_root,
-                    refresh_index, require_write_allowed, resolve_task, task_names, tilde, warn_stderr,
+                    refresh_index, repo_folder, require_write_allowed, resolve_task, task_names, tilde, warn_stderr,
                     write_atomic, writes_allowed)
 
 SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -145,6 +145,10 @@ def cmd_init(ns, extra):
         if not val.strip():
             raise OrchError("%s is empty" % name, 1)
     request = one_line(ns.request)
+    folder = repo_folder(os.path.expanduser(ns.repo_path.strip()), name=repo)  # D19: a name another repo already uses gets a suffix
+    if folder != repo:
+        print("repo folder: %s (the name %s belongs to another repo)" % (folder, repo))
+    repo = folder
     task_dir = os.path.join(orch_root(), repo, slug)
     if os.path.exists(task_dir):
         raise OrchError("exists — use `orch resume %s/%s`" % (repo, slug), 2)

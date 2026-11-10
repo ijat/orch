@@ -206,13 +206,13 @@ def write_repo_json(folder, root):
     write_atomic(os.path.join(folder, REPO_JSON), (json.dumps({"root_commit": root}) + "\n").encode("utf-8"), 0o644)
 
 
-def repo_folder(repo_root, tasks_dir=None):
+def repo_folder(repo_root, tasks_dir=None, name=None):
     """The tasks folder name for a repo (D19): its folder name, or `<name>-<first 4 hex of its root commit>` when
     tasks/<name>/repo.json records a different root. A missing repo.json is written once the repo has a root commit;
     a repo with no commits writes nothing and gets the same folder after its first commit. Existing folders are
-    never renamed."""
+    never renamed. `name` replaces the repo folder's name (`orch init` passes the name it was given)."""
     tasks_dir = tasks_dir or orch_root()
-    name = os.path.basename(os.path.normpath(repo_root))
+    name = name or os.path.basename(os.path.normpath(repo_root))
     root = root_commit(repo_root)
     if root is None:
         return name

@@ -6,7 +6,7 @@ import re
 from . import cli
 from . import resume
 from . import status as st
-from .paths import orch_root, task_names, tilde
+from .paths import orch_root, read_repo_json, root_commit, task_names, tilde
 
 STALE_DAYS = 7  # the same line as ACTIVE.md's STALE>7d
 MAX_OTHERS = 20
@@ -40,8 +40,10 @@ def field(text, name):
     return re.sub(r"\s*\(.*$", "", m.group(1).strip()) if m else ""
 
 
-def match(cwd, root, task_dir, text):
-    """How this task belongs here: worktree, repo, name (its repo path is gone, only the name agrees) or None."""
+def match(cwd, root, task_dir, text, root_id=None):
+    """How this task belongs here: worktree, repo, name (its repo path is gone, only the name agrees) or None.
+    root_id is this repo's root commit: when the task's folder records one (repo.json, D19) it decides a task whose
+    repo path is gone, so a moved repo matches as `repo` and a folder name another repo owns matches nothing."""
     wt = os.path.expanduser(field(text, "worktree"))
     if os.path.isabs(wt) and os.path.isdir(wt) and inside(cwd, os.path.realpath(wt)):
         return "worktree"
@@ -50,6 +52,10 @@ def match(cwd, root, task_dir, text):
         if root:
             return "repo" if same_dir(repo, root) else None
         return "repo" if inside(cwd, os.path.realpath(repo)) else None
+    if root_id:
+        state, recorded = read_repo_json(os.path.dirname(task_dir))
+        if state == "ok":
+            return "repo" if recorded == root_id else None
     return "name" if task_names(task_dir)[0] == os.path.basename(root or cwd) else None
 
 
@@ -79,10 +85,11 @@ def row(h):
 def cmd_current(ns, extra):
     cwd = os.path.realpath(os.getcwd())
     root = git_root(cwd)
+    root_id = root_commit(root) if root else None  # a worktree shares its main repo's history, so the same root
     hits, others = [], []
     for repo, slug, state, _, updated, _, last, task_dir in cli.active_tasks(orch_root()):
         text = st.read_text_like_index(cli.status_path(task_dir))
-        how = match(cwd, root, task_dir, text)
+        how = match(cwd, root, task_dir, text, root_id)
         age = age_seconds(task_dir)
         item = {"task": "%s/%s" % (repo, slug), "state": state, "updated": updated, "match": how, "last": last,
                 "stale": age / 86400 > STALE_DAYS, "busy": age < resume.RECENT_SECONDS,

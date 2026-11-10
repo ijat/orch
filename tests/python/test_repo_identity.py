@@ -26,7 +26,7 @@ def git(repo, *args, **env):
     return out.stdout.strip()
 
 
-class RepoIdentity(unittest.TestCase):
+class Fixture(unittest.TestCase):
     def setUp(self):
         self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="orch-ident-"))
         self.tasks = os.path.join(self.tmp, "tasks")
@@ -48,6 +48,8 @@ class RepoIdentity(unittest.TestCase):
         with open(os.path.join(self.tasks, name, "repo.json")) as fh:
             return json.load(fh)["root_commit"]
 
+
+class RepoIdentity(Fixture):
     def test_same_name_same_root_same_folder(self):
         repo = self.make_repo("a", "proj")
         self.assertEqual(paths.repo_folder(repo, self.tasks), "proj")
@@ -142,6 +144,44 @@ class RepoIdentity(unittest.TestCase):
         self.assertEqual(sorted(n for n in os.listdir(self.tasks) if n.startswith(".")), [".DS_Store", ".migrate-backup-1"])
         self.assertEqual(paths.backfill(self.tasks), {})  # idempotent
         self.assertEqual(paths.backfill(os.path.join(self.tmp, "nowhere")), {})
+
+
+class InitUsesIdentity(Fixture):
+    """`orch init` resolves the tasks folder through repo_folder."""
+
+    def init(self, name, slug, repo):
+        env = dict(os.environ, ORCH_DIR=self.tasks, ORCH_NO_INDEX="1")
+        return subprocess.run([sys.executable, os.path.join(BIN, "orch"), "init", name, slug, "--repo-path", repo,
+                               "--base", "main", "--request", "x"], env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, universal_newlines=True)
+
+    def test_fresh_name_keeps_name_and_records_root(self):
+        repo = self.make_repo("a", "proj")
+        res = self.init("proj", "one", repo)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertTrue(os.path.isdir(os.path.join(self.tasks, "proj", "one")))
+        self.assertEqual(self.recorded("proj"), git(repo, "rev-list", "--max-parents=0", "HEAD"))
+        self.assertNotIn("repo folder:", res.stdout)
+        self.assertEqual(self.init("proj", "two", repo).returncode, 0)  # the same repo again: same folder
+        self.assertEqual(sorted(os.listdir(self.tasks)), ["proj"])
+
+    def test_clashing_name_gets_suffix_and_says_so(self):
+        first = self.make_repo("a", "proj", message="one")
+        second = self.make_repo("b", "proj", message="two")
+        self.assertEqual(self.init("proj", "one", first).returncode, 0)
+        res = self.init("proj", "two", second)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        folder = "proj-" + git(second, "rev-list", "--max-parents=0", "HEAD")[:4]
+        self.assertIn("repo folder: %s" % folder, res.stdout)
+        self.assertTrue(os.path.isdir(os.path.join(self.tasks, folder, "two")))
+        self.assertFalse(os.path.exists(os.path.join(self.tasks, "proj", "two")))
+
+    def test_name_argument_is_respected_and_missing_repo_is_fine(self):
+        repo = self.make_repo("a", "proj")
+        self.assertEqual(self.init("custom", "one", repo).returncode, 0)
+        self.assertTrue(os.path.isdir(os.path.join(self.tasks, "custom", "one")))
+        self.assertEqual(self.init("nowhere", "one", os.path.join(self.tmp, "gone")).returncode, 0)
+        self.assertFalse(os.path.exists(os.path.join(self.tasks, "nowhere", "repo.json")))
 
 
 if __name__ == "__main__":
