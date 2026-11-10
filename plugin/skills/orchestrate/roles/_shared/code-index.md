@@ -6,10 +6,10 @@ the question (`D` = the repository the caller names, else `.`):
     D=.; M="$(git -C $D rev-parse --path-format=absolute --git-common-dir)/orch-index/indexing"
     P=$(sed -n 's/^pid=\([0-9]*\).*/\1/p' "$M" 2>/dev/null)
     if [ ! -f "$M" ]; then echo marker: none; elif [ -n "$P" ] && kill -0 "$P" 2>/dev/null && find "$M" -mmin -30 | grep -q .; then echo marker: live; else echo marker: stale; fi
-    OI="${ORCH_INDEX_BIN:-$(command -v orch-index || echo "$HOME/.claude/bin/orch-index")}"
+    OI="${ORCH_INDEX_BIN:-$(command -v orch-index || echo "${ORCH_DATA:-$HOME/.claude/orch-data}/bin/orch-index")}"
     "$OI" stats --repo $D </dev/null 2>&1 | head -4; git -C $D rev-parse HEAD
 
-The binary is `$ORCH_INDEX_BIN` if set, else `orch-index` on `PATH`, else `$HOME/.claude/bin/orch-index`.
+The binary is `$ORCH_INDEX_BIN` if set, else `orch-index` on `PATH`, else `${ORCH_DATA:-$HOME/.claude/orch-data}/bin/orch-index`.
 
 `marker: live` = a rebuild is running: re-run the marker lines every `sleep 15`, at most 5 minutes; still
 live → reply `index busy`, use scoped search. `marker: stale` (dead pid or over 30 min): ignore it,

@@ -36,6 +36,8 @@ TABLE = (
     ("data:logs", re.compile(HOME + r"/orch-data/logs/"), "~/.claude/orchestrations/"),
     ("data:tasks", re.compile(HOME + r"/orch-data/tasks(?![\w-])"), "~/.claude/orchestrations"),
     ("data:orch-index", re.compile(HOME + r"/orch-data/bin/orch-index(?![\w.-])"), "~/.claude/bin/orch-index"),
+    ("data:orch-index-env", re.compile(r"\$\{ORCH_DATA:-\$HOME/\.claude/orch-data\}/bin/orch-index(?![\w.-])"),
+     "$HOME/.claude/bin/orch-index"),
     ("data:usage", re.compile(HOME + r"/orch-data/cache/usage(?![\w.-])"), "~/.claude/.orch-usage"),
     ("data:private", re.compile(HOME + r"/orch-data/private/"), "~/.claude/"),
     ("agent-file", re.compile(r"(?:%s|%s|\.\./\.\.)/agents/(?:orch-)?(%s)\.md" % (HOME, PLUG, COLLAPSED)),
