@@ -642,7 +642,7 @@ test('the raw tool is registered when the session is marked, and not before', as
 test('the plugin skill orch:orchestrate marks the session too, other skills do not', async ($, on) => {
   const b = await boot($, on)
   await $.skill.prompt({ skill: 'commit', text: 'rules' })
-  await $.skill.prompt({ skill: 'orch:orch-init', text: 'rules' })
+  await $.skill.prompt({ skill: 'orch:init', text: 'rules' })
   expect(formatTools(b.w)).toEqual([])
   await $.skill.prompt({ skill: 'orch:orchestrate', text: 'rules' })
   expect(formatTools(b.w)).toEqual([FORMAT_TOOL])

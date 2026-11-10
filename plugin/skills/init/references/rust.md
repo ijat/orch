@@ -11,7 +11,7 @@ Lines marked `unverified` have no primary source fetched. Architecture rules: `r
 
 ## Init command
 
-These are for the first plan: `orch-init` writes docs and config only and does not run them. CLAUDE.md
+These are for the first plan: the `orch:init` skill writes docs and config only and does not run them. CLAUDE.md
 `Commands` lists the ones that need code as `not yet runnable (no code)`.
 
 - `cargo new <name>` (binary, the default) or `cargo new --lib <name>`; the default edition is 2024
