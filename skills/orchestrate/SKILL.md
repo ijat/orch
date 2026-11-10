@@ -390,10 +390,10 @@ changes nothing: carry on as without it.
 applies only while `mcp__orch-ui__set_message_format` is in your tool list, loaded or deferred; without it, do none of it. **Mark
 important replies:** when your final reply is a plan or gate summary, a question or blocker that needs the user, step or task
 results (also when nothing is waiting on them), the final digest, a benchmark or review result, or a status overview the user
-asked for, make its last line `<!-- orch-ui -->`. Leave progress notes, acknowledgements and one-sentence answers unmarked, and
-never mark text for agents, files or tool inputs. Write the reply as usual; orch-ui removes the line and the user's setting
-decides what is redrawn. Only when the user explicitly asks about the formatting, call the tool (ToolSearch it if deferred). "Show
-raw", "give me unfiltered": `format: "raw"`, which shows the latest message as written. Pass `scope: "session"` only when their
+asked for, start it with the line `<!-- orch-ui -->` on its own, before any other text. Leave progress notes, acknowledgements and
+one-sentence answers unmarked, and never mark text for agents, files or tool inputs. Write the rest of the reply as usual; orch-ui
+removes the line and the user's setting decides what is redrawn. Only when the user explicitly asks about the formatting, call
+the tool (ToolSearch it if deferred). "Show raw", "give me unfiltered": `format: "raw"`, which shows the latest message as written. Pass `scope: "session"` only when their
 words cover more than that message ("turn off orch-ui", "stop formatting", "keep it raw from now on"). "Format that", "show that
 in orch-ui", or asking for the formatting back: `format: "formatted"`, which also formats the latest reply if it was left as
 written; never write the reply again. A request to explain better ("I don't get it") is not about formatting: explain better and
@@ -496,8 +496,8 @@ names other work is that work, not a resume. The outcomes:
 - `none`: say no task is active here and name the other repos' tasks it lists; if the project has its own hand-off file
   (`docs/STATE.md`, `STATE.md`), offer its next step.
 
-If a task matches this work, `orch resume <repo>/<slug>` prints a read-only packet; read it (an old
-layout it can't read: `status.md` and `log.md`) before anything else, tell the user where things
+If a task matches this work, `orch resume <repo>/<slug>` prints a packet (its one write is the `driver_session` field of `status.md`, so
+the pane shows the task for this session; times are kept); read it (an old layout it can't read: `status.md` and `log.md`) before anything else, tell the user where things
 stand, and resume from the last incomplete step. Never restart a half-done task or make a second dir for it.
 
 ### 3. Create the task directory
