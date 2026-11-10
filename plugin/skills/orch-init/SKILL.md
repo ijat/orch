@@ -5,12 +5,12 @@ description: Initialize or audit a project's agent setup — a short canonical C
 
 # orch-init
 
-You are the **session** that runs project initialization. A Sonnet `orch-init` agent researches
+You are the **session** that runs project initialization. A Sonnet `orch:init` agent researches
 current tooling, writes the files and commits; **you** detect, ask the user, show the proposal and
 hand off. The agent never asks the user anything. Orchestration rules (modes, dispatch, usage pacing,
-the task dir, the planner) live in `~/.claude/skills/orchestrate/SKILL.md`: cite them, do not redo them.
+the task dir, the planner) live in `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/SKILL.md`: cite them, do not redo them.
 **Outside orchestration** (a request on a new repo, or any audit): there is no task dir, so no `orch spawn`,
-no `orch -t` and no `log.md`; spawn the agent directly, still writing to `~/.claude/orchestrations/<repo-name>/`,
+no `orch -t` and no `log.md`; spawn the agent directly, still writing to `~/.claude/orch-data/tasks/<repo-name>/`,
 and say any skip or refusal in your reply instead of a log.
 
 Evidence base: the generated files are minimal on purpose. Context files that restate what the code
@@ -47,7 +47,7 @@ instead. Never overwrite an existing `CLAUDE.md`.
 1. **Detect** (above). Read `~/.claude/CLAUDE.md` yourself or pass its path to the agent: generated
    files never copy its rules (global-rule dedup, below).
 2. **Restate and offer.** First say in 3–5 lines what you understand the project to be, and invite
-   corrections. Then offer, as a parked question (`orch ask`, answered in orch-pane; `~/.claude/skills/orchestrate/SKILL.md` § Checkpoints and questions;
+   corrections. Then offer, as a parked question (`orch ask`, answered in orch-pane; `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/SKILL.md` § Checkpoints and questions;
    outside orchestration, in text), this text verbatim in the question:
 
    > This looks like a new project. I can set it up before planning: a short CLAUDE.md, an AGENTS.md
@@ -78,12 +78,12 @@ instead. Never overwrite an existing `CLAUDE.md`.
    "No remote" or "don't push" means *not now*: init writes no `git push`/`git remote` deny rule and no
    "nothing is pushed" CLAUDE.md rule for it. Only if the user explicitly asks for a permanent ban, write
    that rule and mark it `Override:` (the global file allows push after asking).
-4. **Phase 1 — proposal.** Spawn the `orch-init` agent (model `sonnet`, effort `high`; `opus`/`medium`
+4. **Phase 1 — proposal.** Spawn the `orch:init` agent (model `sonnet`, effort `high`; `opus`/`medium`
    when no reference file) per the Dispatch protocol, with the brief: repo path, mode `new`, the base
    branch (the one `orch init --base` recorded; outside orchestration, the repo's current or intended
    default branch, asked if unknown), the answers, the skill dir, the global `CLAUDE.md` path, and "phase 1: write the proposal only, no repo
    writes". It researches current tooling (web, dated), reads `references/architecture.md` and
-   `references/<ecosystem>.md`, and writes `~/.claude/orchestrations/<repo-name>/init-proposal.md`
+   `references/<ecosystem>.md`, and writes `~/.claude/orch-data/tasks/<repo-name>/init-proposal.md`
    from `templates/proposal.md`: the file list with sizes (including untracked docs already in the
    repo, which the init commit will include), the filled CLAUDE.md, the commands it ran and their
    results, the planned architecture (interfaces and adapters named for this project; marked "to be
@@ -101,7 +101,7 @@ instead. Never overwrite an existing `CLAUDE.md`.
    a branch. It checks the files (below) and makes **one** commit `chore: initialize project (orch-init)`
    that includes the files it wrote plus the untracked docs the proposal listed (so the worktree built
    from the base has the user's specs). It never adds a remote and never pushes.
-   It then writes `~/.claude/orchestrations/<repo-name>/init.md` from `templates/init-record.md`
+   It then writes `~/.claude/orch-data/tasks/<repo-name>/init.md` from `templates/init-record.md`
    (`refresh: pending`).
 7. **Verify** (agent, before it reports), limited to what init wrote: every command in CLAUDE.md
    `Commands` that can run on the repo as it is was run and the result is in the report; a command that
@@ -112,7 +112,7 @@ instead. Never overwrite an existing `CLAUDE.md`.
    file CLAUDE.md names as existing exists (paths marked "to be created by the first plan" are exempt);
    after the commit `git status --porcelain` is empty for the paths init wrote or the proposal listed.
 8. **Hand off.** Return to orchestrate step 4. The planner's brief names `CLAUDE.md`,
-   `docs/STATE.md`, `docs/DECISIONS.md` and `~/.claude/orchestrations/<repo-name>/init.md` as required
+   `docs/STATE.md`, `docs/DECISIONS.md` and `~/.claude/orch-data/tasks/<repo-name>/init.md` as required
    reading (each "if set up": after a skip they do not exist and the brief omits them), and the init
    commit is the base the plan is made against. The planner treats DECISIONS.md rows as settled ("don't re-open unless the
    user asks"). The refresh runs once after the first merge (below).
@@ -132,7 +132,7 @@ work you did not start. Re-running commands in phase 1 follows the audit rule be
 ## Mode `audit`
 
 On request, any repo. Spawn the agent with mode `audit`; it writes
-`~/.claude/orchestrations/<repo-name>/audit.md` from `templates/audit.md`: findings with evidence and
+`~/.claude/orch-data/tasks/<repo-name>/audit.md` from `templates/audit.md`: findings with evidence and
 a **proposed diff** per finding. It **never edits** the repo. Checks:
 
 - Size: CLAUDE.md > 200 lines, or sections that restate the layout or dependency lists.
@@ -185,20 +185,20 @@ Content rules:
 - Overwrite an existing `CLAUDE.md` or `AGENTS.md`; in `new` mode that switches to `audit`.
 - Copy global rules into the project (global-rule dedup, above), or duplicate CLAUDE.md into AGENTS.md.
 - Write the repo in `audit` mode, or before the user approved the proposal.
-- Run `install.sh`, deploy, or touch anything outside the repo and `~/.claude/orchestrations/<repo-name>/`.
+- Deploy, or touch anything outside the repo and `~/.claude/orch-data/tasks/<repo-name>/`.
 - Commit a secret, a real credential, `.env`, `CLAUDE.local.md` or `settings.local.json`.
 - Install tools or global config on the user's machine: it proposes the commands, the user decides.
 - Treat the permission/hook snippets as security: they are config text; deny rules are the control.
 
 ## The init record
 
-`~/.claude/orchestrations/<repo-name>/init.md`, format in `templates/init-record.md`: mode, date,
+`~/.claude/orch-data/tasks/<repo-name>/init.md`, format in `templates/init-record.md`: mode, date,
 ecosystem, answers, extras chosen, files written, commit sha, `refresh: pending|done|skipped|n/a`.
 Orchestrate reads it to decide the refresh (only `pending` fires); `audit` reads it to know what was generated and what the user chose.
 
 ## Paths
 
-`~/.claude/skills/orch-init/` (live) — `templates/{CLAUDE.md, AGENTS.md, STATE.md, DECISIONS.md,
+`${CLAUDE_PLUGIN_ROOT}/skills/orch-init/` (live) — `templates/{CLAUDE.md, AGENTS.md, STATE.md, DECISIONS.md,
 init-record.md, proposal.md, audit.md, snippets.md}`; `references/architecture.md`;
 `references/{typescript, python, rust, go, dotnet, swift, godot, non-code}.md`. The role is
-`agents/orch-init.md` (`skills/orchestrate/roles/orch-init.md`).
+`agents/init.md` (`skills/orchestrate/roles/init.md`).

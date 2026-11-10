@@ -1,4 +1,4 @@
-<!-- Written by the orch-init agent at ~/.claude/orchestrations/<repo-name>/init.md. Orchestrate reads
+<!-- Written by the orch:init agent at ~/.claude/orch-data/tasks/<repo-name>/init.md. Orchestrate reads
 `refresh:` to decide the one refresh after the first merge. -->
 # Init record: {{repo-name}}
 

@@ -1,7 +1,7 @@
 # `journal.jsonl` — schema
 
 One JSON object per line, append-only, **written only by the orchestrator**. It records what the
-workflow decided and why, in a form `~/.claude/bin/orch-stats.sh` can aggregate across tasks.
+workflow decided and why, in a form `orch-stats.sh` can aggregate across tasks.
 `log.md` stays the human-readable narrative; this is for analysis. The append method is
 `orch journal <kind> k=v k:=json [--set F=V] [--log TEXT]` (it validates, fills `ts`, `repo`, `task`,
 and for programs `milestone`; `review_round` and `final_gate` take `sha` as below). Hand append with the
@@ -63,7 +63,7 @@ In a program, every other line also carries `milestone` (number, or null before 
 Example:
 
 ```json
-{"ts":"2026-09-26T10:02Z","repo":"myapp","task":"add-login","kind":"tier_choice","role":"implementer","agent":"orch-implementer","tier":"sonnet/high","reason":"plan flags no concurrency or algorithmic risk; steps are UI wiring","alternatives":["opus/medium"],"tradeoff":"default: no factor pushes up or down"}
+{"ts":"2026-09-26T10:02Z","repo":"myapp","task":"add-login","kind":"tier_choice","role":"implementer","agent":"orch:implementer","tier":"sonnet/high","reason":"plan flags no concurrency or algorithmic risk; steps are UI wiring","alternatives":["opus/medium"],"tradeoff":"default: no factor pushes up or down"}
 ```
 
 Fallback — when `orch` is unavailable, append through a quoted heredoc (so the shell can't expand

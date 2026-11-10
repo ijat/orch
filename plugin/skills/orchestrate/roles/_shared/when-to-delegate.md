@@ -4,14 +4,14 @@ Delegating protects *your* context from bulk you only need a conclusion from. It
 judgement, and it is never worth a worse result — when in doubt about whether a digest is enough,
 read the source yourself.
 
-- **`orch-executor` — any command whose output you only need the verdict of:** full builds, test suites,
+- **`orch:executor` — any command whose output you only need the verdict of:** full builds, test suites,
   linters, typecheckers, large greps/listings of generated output. Give it the exact command and what
   "pass" means. If its digest reports a failure, or is vaguer than the failure deserves, re-run that
   one case yourself and read the raw output before acting on it.
-- **`orch-explorer` — breadth lookups and claim checks, and your default for them:** "where is X used",
+- **`orch:explorer` — breadth lookups and claim checks, and your default for them:** "where is X used",
   "who calls/includes/overrides X", "does this repo already have a helper for Y", "what does the config
   actually say", and confirming a `plan.md` assumption before you rely on it. **Your FIRST search on any
-  question that is not about one file you were handed is an `orch-explorer` spawn** (send all such
+  question that is not about one file you were handed is an `orch:explorer` spawn** (send all such
   questions of the current task in one spawn; ask for `file:line` evidence). Run your own Grep/Read only
   for the cases under *Do it yourself instead* below and on files the explorer returned; read the
   cited lines yourself for anything you will build on. On a repository with a code index the

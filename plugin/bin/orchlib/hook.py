@@ -18,7 +18,7 @@ import zlib
 from .paths import agent_key, data_bin, logs_dir
 
 ENFORCED = ("orch-implementer", "orch-code-reviewer")
-REASON = ("orch: this repo has a code index — send repo-wide searches to orch-explorer "
+REASON = ("orch: this repo has a code index — send repo-wide searches to orch:explorer "
           "(batch your questions; ask for file:line). Searching one file is fine.")
 HATCH_HINT = ('If a Bash search must run itself, add "# orch-self-search: <reason>" to the command '
               "(logged). Grep and Glob have no such marker: use Bash with it.")
@@ -477,5 +477,5 @@ def cmd_hook(ns, extra):
 
 
 def register(add):
-    sp = add("hook", cmd_hook, "PreToolUse hooks (hook delegate: send repo-wide searches to orch-explorer)")
+    sp = add("hook", cmd_hook, "PreToolUse hooks (hook delegate: send repo-wide searches to orch:explorer)")
     sp.add_argument("which", choices=["delegate"])

@@ -21,7 +21,7 @@
 
 ## Milestones
 
-<!-- One row per milestone, in run order. Parsed by ~/.claude/bin/orch-program-check.py, so keep
+<!-- One row per milestone, in run order. Parsed by orch-program-check.py, so keep
      the header and these value forms exactly:
      M          1, 2, 3 … (run order)
      depends on - | 1 | 1,3

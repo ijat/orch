@@ -2,7 +2,7 @@
 
 Read this when the task's mode is lite. Everything in `SKILL.md` applies except where this file says otherwise.
 
-One `orch-implementer` plans **and** implements, so the repo gets explored once instead of twice.
+One `orch:implementer` plans **and** implements, so the repo gets explored once instead of twice.
 Everything else stays: task dir, journal, plan gate, worktree, code review, retro — and the standard
 stop policy (step 5 rule, assumed decisions, parked questions, step 10's automatic merge).
 
@@ -17,7 +17,7 @@ earn an `opus/max` planner). The user may force lite anyway — journal it as `o
 **Flow** — the standard procedure with these differences:
 
 - **Step 3:** `orch init … --mode lite` (`mode: lite`, planner row `n/a (lite)`, `task_start` mode `"lite"`).
-- **Step 4:** after the pre-plan `orch-graph` call, spawn the lite agent (`description`: `orch-implementer-<model>[<effort>] lite: <task>`)
+- **Step 4:** after the pre-plan `orch:graph` call, spawn the lite agent (`description`: `orch-implementer-<model>[<effort>] lite: <task>`)
   in **phase 1**: read-only on the repo, writes a lite `plan.md` (see the role file) and returns; you
   `orch plan-check --lite` it and set `task_state: awaiting_approval`. Gate it exactly as a standard
   plan. Revisions go back to the same agent via `SendMessage`.

@@ -1,10 +1,10 @@
 ## Rules for every role
 
-These apply to every `orch-*` role. Where your own sections are stricter, they win.
+These apply to every `orch:*` role. Where your own sections are stricter, they win.
 
 - **Checkpoint as you go, not only at the ends.** One call per checkpoint sets your `status.md` row
   (with its UTC timestamp) and appends your `log.md` line:
-  `~/.claude/bin/orch -t <task> role <role> <state> --note "<N>" --log "<what>"` (`<task>` is the task
+  `orch -t <task> role <role> <state> --note "<N>" --log "<what>"` (`<task>` is the task
   dir, `<role>` your row; add `--step <step>` to update `last completed step`; add `--pct N` (0–99,
   your rough estimate of your current assignment; `0` at start) on an `in_progress` checkpoint).
   If your brief has a *Checkpoint commands* section, run those as written.
