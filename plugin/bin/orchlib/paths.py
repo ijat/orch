@@ -243,16 +243,21 @@ def repo_folder(repo_root, tasks_dir=None, name=None):
                 and entry not in candidates):
             candidates.append(entry)
     states = {}
+    matches = []
     for i, candidate in enumerate(candidates):
         folder = os.path.join(tasks_dir, candidate)
         state, recorded = read_repo_json(folder)
         if state == "bad":
-            if i < derived:
+            if i < derived and not matches:
                 raise OrchError("unreadable %s in %s" % (REPO_JSON, folder), 3)
             continue
         states[candidate] = state
         if state == "ok" and recorded in roots:
-            return candidate
+            matches.append(candidate)
+    if matches:
+        # Several folders record one of the roots (a repo that merged its namesake's history, F6): prefer the one
+        # that already holds a task for this repo; otherwise the first in the order above.
+        return _folder_with_task_for(tasks_dir, matches, repo_root) if len(matches) > 1 else matches[0]
     # None matches: create `name`, or `name-<oldest[:4]>` when `name` belongs to another repo.
     root = roots[0]
     for candidate in (name, "%s-%s" % (name, root[:4])):
@@ -260,6 +265,24 @@ def repo_folder(repo_root, tasks_dir=None, name=None):
             write_repo_json(os.path.join(tasks_dir, candidate), root)
             return candidate
     raise OrchError("tasks folders %s and %s-%s belong to other repos" % (name, name, root[:4]), 2)
+
+
+def _folder_with_task_for(tasks_dir, matches, repo_root):
+    """The first of `matches` holding a task whose status.md `repo:` path is repo_root (realpath), else matches[0]."""
+    want = os.path.realpath(repo_root)
+    for candidate in matches:
+        folder = os.path.join(tasks_dir, candidate)
+        try:
+            slugs = sorted(os.listdir(folder))
+        except OSError:
+            continue
+        for slug in slugs:
+            if slug.startswith("."):
+                continue
+            repo = status_repo_path(os.path.join(folder, slug, "status.md"))
+            if repo and os.path.realpath(os.path.expanduser(repo)) == want:
+                return candidate
+    return matches[0]
 
 
 def status_repo_path(status_file):

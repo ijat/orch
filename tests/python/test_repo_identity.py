@@ -156,6 +156,38 @@ class RepoIdentity(Fixture):
         git(host, "merge", "-q", "--allow-unrelated-histories", "-m", "import", "lib")
         self.assertEqual(paths.repo_folder(host, self.tasks), "lib")
 
+    def test_two_matching_folders_prefer_the_one_holding_this_repos_task(self):
+        # F6: b (in lib-<b root[:4]>) merges a's history; both folders now record one of b's roots
+        a = self.make_repo("a", "lib", message="lib root")
+        self.assertEqual(paths.repo_folder(a, self.tasks), "lib")
+        b = self.make_repo("b", "lib", message="host root")
+        b_folder = paths.repo_folder(b, self.tasks)
+        self.assertEqual(b_folder, "lib-" + paths.root_commit(b)[:4])
+        self.write_status(b_folder, "t1", b)
+        git(b, "fetch", "-q", a, "HEAD:refs/heads/lib")
+        git(b, "merge", "-q", "--allow-unrelated-histories", "-m", "import", "lib")
+        self.assertEqual(paths.repo_folder(b, self.tasks), b_folder)
+        self.assertEqual(paths.repo_folder(a, self.tasks), "lib")
+        self.assertEqual(sorted(os.listdir(self.tasks)), sorted(["lib", b_folder]))
+
+    def test_unreadable_repo_json_in_an_unrelated_listed_folder_is_skipped(self):
+        # F7: the skip applies to extra listed name-<4 hex> folders only; derived candidates still raise
+        repo = self.make_repo("a", "proj")
+        root = paths.root_commit(repo)
+        other = "proj-" + ("0000" if not root.startswith("0000") else "1111")
+        os.makedirs(os.path.join(self.tasks, other))
+        with open(os.path.join(self.tasks, other, "repo.json"), "w") as fh:
+            fh.write("{not json")
+        self.assertEqual(paths.repo_folder(repo, self.tasks), "proj")  # no raise, new folder created
+        self.assertEqual(self.recorded("proj"), root)
+        self.assertEqual(paths.repo_folder(repo, self.tasks), "proj")
+        # a clean case beside it: the repo's own suffixed folder is found past the broken one
+        own = "proj-" + root[:4]
+        paths.write_repo_json(os.path.join(self.tasks, own), root)
+        os.remove(os.path.join(self.tasks, "proj", "repo.json"))
+        paths.write_repo_json(os.path.join(self.tasks, "proj"), "f" * 40)
+        self.assertEqual(paths.repo_folder(repo, self.tasks), own)
+
     def test_repo_json_bad_raises(self):
         repo = self.make_repo("a", "proj")
         os.makedirs(os.path.join(self.tasks, "proj"))
