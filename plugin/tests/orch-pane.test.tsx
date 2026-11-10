@@ -119,7 +119,6 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
   mock.env(on, env)
   on('session.cwd', () => ({ value: '/proj' }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('command.register', () => ({ value: { command: 'orch-pane' } }))
   on('ui.open', () => {
     w.opens += 1
     return { value: { isPlaced: true } }

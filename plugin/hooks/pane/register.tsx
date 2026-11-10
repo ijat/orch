@@ -164,7 +164,7 @@ async function sessionArgs($: EngineInterface): Promise<string[]> {
 
 // The one way to run `orch status --json`: `argv(session)` is the whole command with `session` (`--session <id>` or
 // nothing) placed where it belongs. An orch that predates the flag exits 1 with "unrecognized argument '--session'":
-// the run is repeated without it, and the flag is left out until the next session start or /orch-pane (an upgraded
+// the run is repeated without it, and the flag is left out until the next session start or /orch:pane (an upgraded
 // orch is picked up then). Every other failure comes back as it is.
 async function runStatus($: EngineInterface, argv: (session: string[]) => string[]) {
   const session = await sessionArgs($)
@@ -215,7 +215,7 @@ async function fetchStatusOnce($: EngineInterface): Promise<StatusJson | null> {
     const fetchedAt = await $.clock.now()
     await update($, snapshot, s => ({ ...(s ?? EMPTY), data, error: null, fetchedAt, okAt: fetchedAt }))
     await fetchIndex($, home, windows, cwd)
-    // Versions change only on an install: read them once per session (and again after /orch-pane).
+    // Versions change only on an install: read them once per session (and again after /orch:pane).
     if (!(await read($, snapshot))?.about) {
       const about = await fetchAbout($, home, windows)
       await update($, snapshot, s => ({ ...(s ?? EMPTY), about }))
@@ -923,10 +923,6 @@ const minutesText = (min: number, now: number) => elapsed(new Date(now - min * 6
 // orch-pane's session-start work. plugin/hooks/register.tsx runs it from the plugin's one session.start hook (a second
 // unmatched one on that event is refused), in its own try/catch.
 export async function startPane($: EngineInterface): Promise<void> {
-  await $.command.register({
-    name: 'orch-pane',
-    description: 'Show the orchestration tasks of this repo in a pane',
-  })
   try {
     await $.tool.register({
       name: COMPACT_TOOL,
@@ -959,7 +955,7 @@ export async function startPane($: EngineInterface): Promise<void> {
 
 export const registerPane: Register = on => {
 
-  on('command.run', { command: 'orch-pane' }, async $ => {
+  on('command.run', { command: 'orch:pane' }, async $ => {
     await update($, dismissed, () => false)
     orchRefusesSession = false
     await update($, snapshot, s => ({ ...(s ?? EMPTY), about: null }))
@@ -985,7 +981,7 @@ export const registerPane: Register = on => {
   })
 
   // The pane's only close is the engine's own mark or key (origin `person`): remember it, so a reload's
-  // session.start does not open the pane again; /orch-pane still does.
+  // session.start does not open the pane again; /orch:pane still does.
   on('ui.close', async ($, e, next) => {
     const closed = await next(e)
     if (e.id === PANE && e.origin.kind === 'person') await update($, dismissed, () => true)
