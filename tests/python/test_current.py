@@ -119,6 +119,40 @@ class Current(Base):
         self.assertEqual(action, "ask")
         self.assertIn("[name]", out)
 
+    def record_root(self, folder, repo=None):
+        root = subprocess.run(["git", "-C", repo or self.repo, "rev-list", "--max-parents=0", "HEAD"], check=True,
+                              stdout=subprocess.PIPE, universal_newlines=True).stdout.split()[0]
+        with open(os.path.join(self.orch, folder, "repo.json"), "w") as fh:
+            fh.write('{"root_commit": "%s"}\n' % root)
+
+    def test_moved_repo_with_recorded_root_resumes(self):
+        self.task("proj", "a", os.path.join(self.tmp, "gone", "proj"))
+        self.record_root("proj")
+        action, out = self.action(self.repo)
+        self.assertEqual(action, "resume proj/a")
+        self.assertIn("[repo]", out)
+
+    def test_moved_repo_with_a_renamed_folder_resumes(self):
+        self.task("proj-ab12", "a", os.path.join(self.tmp, "gone", "proj"))
+        self.record_root("proj-ab12")
+        self.assertEqual(self.action(self.repo)[0], "resume proj-ab12/a")
+
+    def test_moved_checkout_via_worktree_resumes(self):
+        wt = os.path.join(self.tmp, "wt")
+        git(self.repo, "worktree", "add", "-q", "-b", "orch/b", wt)
+        self.task("proj", "a", os.path.join(self.tmp, "gone", "proj"))
+        self.record_root("proj")
+        self.assertEqual(self.action(wt)[0], "resume proj/a")  # the worktree shares the main repo's root
+
+    def test_clashing_folder_name_of_another_repo_is_not_this_repo(self):
+        other = os.path.join(self.tmp, "elsewhere", "proj")
+        os.makedirs(other)
+        git(other, "init", "-q", "-b", "main")
+        git(other, "commit", "-q", "--allow-empty", "-m", "different")
+        self.task("proj", "a", os.path.join(self.tmp, "gone", "proj"))
+        self.record_root("proj", other)
+        self.assertEqual(self.action(self.repo)[0], "none")  # same name, other history: not this repo
+
     def test_nested_repo_is_not_its_parent(self):
         inner = os.path.join(self.repo, "inner")
         os.makedirs(inner)
