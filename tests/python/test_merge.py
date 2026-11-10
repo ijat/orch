@@ -701,6 +701,18 @@ class TestSecurityCondition(GitBase):
                     "steps:=null", "usage_5h:=1", "usage_7d:=1")
         self.due()
 
+    def test_a_spawn_by_plugin_agent_name_counts(self):
+        """C3: `orch:security-reviewer` is the security reviewer."""
+        self.cmd_ok("journal", "spawn", "role=reviewer", "agent=orch:security-reviewer", "tier=opus/high",
+                    "steps:=null", "usage_5h:=1", "usage_7d:=1")
+        self.due()
+
+    def test_other_prefixes_are_not_the_security_reviewer(self):
+        for agent in ("foo:security-reviewer", "orch:orch-security-reviewer"):
+            self.cmd_ok("journal", "spawn", "role=reviewer", "agent=%s" % agent, "tier=opus/high",
+                        "steps:=null", "usage_5h:=1", "usage_7d:=1")
+        self.merge_ok("--check", "--recheck-ok")
+
     def test_ran_false_then_ran_true(self):
         self.auto("false")
         self.auto("true", rule="request")

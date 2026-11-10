@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 
-from .paths import OrchError, require_write_allowed, tilde, write_atomic
+from .paths import OrchError, agent_key, require_write_allowed, tilde, write_atomic
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(os.path.dirname(os.path.dirname(HERE)), "skills", "orchestrate", "templates", "claude-md-block.md")
@@ -14,6 +14,12 @@ END = "<!-- orch:end"
 HEADING_RE = re.compile(r"^(#{1,6})\s")
 LEGACY_HEADING_RE = re.compile(r"^#{1,6}\s+Orchestration mode\b")
 BULLET_RE = re.compile(r"^\s*[-*]\s")
+AGENT_WORD_RE = re.compile(r"orch:[a-z][a-z-]*")
+
+
+def agent_text(line):
+    """The line with every agent name in today's spelling (agent_key on each `orch:<role>` word)."""
+    return AGENT_WORD_RE.sub(lambda m: agent_key(m.group(0)), line)
 
 
 def default_file():
@@ -59,7 +65,7 @@ def legacy_spans(lines, skip):
         line = lines[i]
         if LEGACY_HEADING_RE.match(line):
             spans.append((i, section_end(lines, i)))
-        elif BULLET_RE.match(line) and ("orchestrations/ACTIVE.md" in line or ("orch-explorer" in line and "orch-executor" in line)):
+        elif BULLET_RE.match(line) and ("orchestrations/ACTIVE.md" in line or ("orch-explorer" in agent_text(line) and "orch-executor" in agent_text(line))):
             spans.append((i, bullet_end(lines, i)))
         i = spans[-1][1] if spans and spans[-1][0] == i else i + 1
     return spans

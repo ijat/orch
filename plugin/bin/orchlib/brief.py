@@ -4,6 +4,7 @@ TASK/briefs/. Python 3.9 compatible, standard library only."""
 import glob
 import os
 import re
+import shlex
 import sys
 
 from . import cli
@@ -13,7 +14,7 @@ from . import merge
 from . import plan as pl
 from . import questions as qs
 from . import status as st
-from .paths import OrchError, TaskLock, orch_root, require_write_allowed, task_names, write_atomic
+from .paths import BIN_DIR, OrchError, TaskLock, orch_root, require_write_allowed, task_names, write_atomic
 
 SUPERSEDE_RE = re.compile(r"restat|replaces|replaced|supersed|\bnew block\b", re.I)
 NO_WORKTREE = ("not yet created", "unknown", "removed after merge")
@@ -96,6 +97,11 @@ def to_worktree(c, path):
     return os.path.join(c.wt, rel) if (rel and c.wt) else path
 
 
+def orch_cli():
+    """The running CLI's own absolute path, shell-quoted only when it needs it: briefs name the copy that wrote them."""
+    return shlex.quote(os.path.join(BIN_DIR, "orch"))
+
+
 def sq(text):
     """Always single-quoted, so the line reads `orch -t '<task>' role '<role>' …` and survives spaces in paths."""
     return "'" + text.replace("'", "'\\''") + "'"
@@ -163,8 +169,7 @@ EST_PCT = "<0-99: your rough estimate of this assignment>"
 
 def checkpoint_text(c, role, ids_text, last_id):
     t, r = sq(c.task_dir), sq(role)
-    orch = "~/.claude/bin/orch"
-    head = "%s -t %s role %s" % (orch, t, r)
+    head = "%s -t %s role %s" % (orch_cli(), t, r)
     return "\n".join([
         "Run these as written (replace only the quoted placeholders):",
         "",
@@ -183,7 +188,7 @@ def checkpoint_text(c, role, ids_text, last_id):
 def review_checkpoint_text(c, role):
     """The reviewer's checkpoint commands. `-t` names the task dir, the one holding status.md: in a program
     that is the program dir, not the milestone dir the plan and review file sit in."""
-    head = "~/.claude/bin/orch -t %s role %s" % (sq(c.task_dir), sq(role))
+    head = "%s -t %s role %s" % (orch_cli(), sq(c.task_dir), sq(role))
     return "\n".join([
         "Run these as written (replace only the quoted placeholders):",
         "",

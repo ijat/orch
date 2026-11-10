@@ -5,7 +5,7 @@ since that sample; k (5h points per $) is calibrated per window from the samples
 line = clamp(100 - S - R - U, LINE_MIN, LINE_MAX): R = what stopping everything still costs, U = uncertainty.
 
 Reads only local files under H = $ORCH_USAGE_HOME or ~/.claude, plus the .claude.json beside H (~/.claude.json: the
-logged-in account); writes only its state dir ($ORCH_USAGE_STATE or H/.orch-usage/, atomic writes, never required).
+logged-in account); writes only its state dir ($ORCH_USAGE_STATE or <orch data>/cache/usage/, atomic writes, never required).
 No network. I/O loaders are separate from compute(), which is pure (no files, no clock) so replays can drive it.
 
 Account rule: the samples of one account only. Every log line may carry the account (7th field: first 8 chars of
@@ -353,7 +353,9 @@ def home_dir():
 
 
 def state_dir(home=None):
-    return os.environ.get('ORCH_USAGE_STATE') or os.path.join(home or home_dir(), '.orch-usage')
+    """Pacing state: $ORCH_USAGE_STATE, else CACHE/usage under the orch data root (`home` is accepted, not used)."""
+    from .paths import cache_dir
+    return os.environ.get('ORCH_USAGE_STATE') or os.path.join(cache_dir(), 'usage')
 
 
 def _num(s):

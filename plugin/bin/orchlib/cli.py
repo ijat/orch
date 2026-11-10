@@ -11,8 +11,8 @@ from . import __version__
 from . import journal as jr
 from . import status as st
 from .paths import (OrchError, TaskLock, TEMPLATES_DIR, append_bytes, ends_with_newline, now, orch_root,
-                    is_live, refresh_index, require_write_allowed, resolve_task, task_names, tilde, warn_stderr,
-                    write_atomic)
+                    refresh_index, require_write_allowed, resolve_task, task_names, tilde, warn_stderr,
+                    write_atomic, writes_allowed)
 
 SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 ROLE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _:.()-]*$")
@@ -108,7 +108,7 @@ def record_driver(status):
 def record_driver_keep_times(task_dir):
     """`orch resume`'s only write: driver_session in status.md, with the file's atime/mtime put back so `last activity`
     and the updated ordering (orch current, orch status) still mean the last real change. Never fails the caller."""
-    if not st.driver_session_id() or not (is_live() or os.environ.get("ORCH_DIR")):
+    if not st.driver_session_id() or not writes_allowed():
         return False
     path = status_path(task_dir)
     try:

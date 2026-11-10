@@ -15,7 +15,7 @@ from . import flow
 from . import journal as jr
 from . import policy as pol
 from . import status as st
-from .paths import OrchError, TaskLock, refresh_index, task_names, warn_stderr, write_atomic, require_write_allowed, now
+from .paths import OrchError, TaskLock, agent_key, refresh_index, task_names, warn_stderr, write_atomic, require_write_allowed, now
 
 # -- git layer -----------------------------------------------------------------------------------
 
@@ -446,7 +446,7 @@ def security_signals(ctx):
         if str(r.get("answer")).strip().lower() == "accepted":
             sig.append("security_offer accepted")
     for r in scoped(ctx, "spawn", strict=False, null_ok=True):
-        if str(r.get("role")).startswith("security-reviewer") or r.get("agent") == "orch-security-reviewer":
+        if str(r.get("role")).startswith("security-reviewer") or agent_key(r.get("agent")) == "orch-security-reviewer":
             sig.append("security reviewer spawned")
     rows = role_states(ctx.status)
     if rows is None:

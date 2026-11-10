@@ -3,6 +3,7 @@ neutral values only. The review-brief header is checked against the reader `orch
 import json
 import os
 import re
+import shlex
 import sys
 import unittest
 
@@ -12,7 +13,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "plugin"
 
 import test_core as core  # noqa: E402
 from test_merge import GitBase  # noqa: E402
-from orchlib import brief, merge, plan as pl  # noqa: E402
+from orchlib import brief, merge, paths, plan as pl  # noqa: E402
+
+CLI = shlex.quote(os.path.join(paths.BIN_DIR, "orch"))   # briefs name the running CLI by its own absolute path
 
 FIX = os.path.join(HERE, "fixtures", "plans")
 T = "myapp/add-login"
@@ -270,7 +273,7 @@ class TestImplementBrief(BriefBase):
         _, text = self.brief("implement", "1,2")
         c = sec(text, "Checkpoint commands")
         q = "'%s'" % self.d
-        self.assertIn("~/.claude/bin/orch -t %s role 'implementer' in_progress --note 'working on step(s) 1, 2' --log 'started step(s) 1, 2'" % q, c)
+        self.assertIn(CLI + " -t %s role 'implementer' in_progress --note 'working on step(s) 1, 2' --log 'started step(s) 1, 2'" % q, c)
         self.assertIn("role 'implementer' done --step '2' --note '<one line>' --log 'done: <one line>'", c)
         self.assertIn("role 'implementer' blocked --note 'need: <what>' --log 'blocked: <what>'", c)
         self.assertIn("--log 'started step(s) 1, 2' --pct 0\n", c)
@@ -774,7 +777,7 @@ class TestReviewBrief(BriefBase):
         _, text = self.brief("review")
         self.assertIn("- task dir (status.md, log.md): %s" % self.d, text)
         c = sec(text, "Checkpoint commands")
-        self.assertIn("~/.claude/bin/orch -t '%s' role 'code-reviewer' in_progress --note 'reviewing' --log 'started review'" % self.d, c)
+        self.assertIn(CLI + " -t '%s' role 'code-reviewer' in_progress --note 'reviewing' --log 'started review'" % self.d, c)
         self.assertIn("role 'code-reviewer' done --note '<verdict>, <N> findings' --log 'done: <verdict>'", c)
         self.assertIn("--log 'started review' --pct 0\n", c)
         self.assertIn("--log 'reviewed <file group>' --pct '<0-99: your rough estimate of this assignment>'\n", c)
@@ -877,7 +880,8 @@ class TestProgramReviewBrief(BriefBase):
             argv = shlex.split(line.replace("<0-99: your rough estimate of this assignment>", "40")
                                .replace("<verdict>", "pass").replace("<N>", "0").replace("<file group>", "all")
                                .replace("<what>", "x"))
-            self.assertEqual(argv[0], "~/.claude/bin/orch")
+            self.assertEqual(argv[0], os.path.join(paths.BIN_DIR, "orch"))
+            self.assertTrue(os.path.isabs(argv[0]))
             self.assertEqual(argv[1:3], ["-t", self.d])      # the program dir, never the milestone dir
             self.assertEqual(argv[3:5], ["role", role])
             self.ok(*argv[1:])

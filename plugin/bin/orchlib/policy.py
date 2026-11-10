@@ -1,4 +1,4 @@
-"""Per-repo policy: ~/.claude/orchestrations/<repo>/policy.md (the parent dir of the task dir)."""
+"""Per-repo policy: <tasks root>/<repo>/policy.md (the parent dir of the task dir)."""
 import os
 import re
 from collections import namedtuple
