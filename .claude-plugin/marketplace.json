@@ -1,0 +1,12 @@
+{
+  "name": "orch",
+  "owner": {
+    "name": "orch"
+  },
+  "plugins": [
+    {
+      "name": "orch",
+      "source": "./plugin"
+    }
+  ]
+}
