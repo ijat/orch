@@ -132,6 +132,25 @@ class Current(Base):
         self.assertEqual(action, "resume proj/a")
         self.assertIn("[repo]", out)
 
+    def test_moved_repo_that_merged_an_older_unrelated_history_still_resumes(self):
+        self.task("proj", "a", os.path.join(self.tmp, "gone", "proj"))
+        self.record_root("proj")  # the root recorded before the import
+        branch = subprocess.run(["git", "-C", self.repo, "symbolic-ref", "--short", "HEAD"], check=True,
+                                stdout=subprocess.PIPE, universal_newlines=True).stdout.strip()
+        git(self.repo, "checkout", "-q", "--orphan", "vendored")
+        old = "2001-01-01T00:00:00Z"
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-C", self.repo, "commit", "-q",
+                        "--allow-empty", "-m", "vendored"], check=True,
+                       env=dict(os.environ, GIT_AUTHOR_DATE=old, GIT_COMMITTER_DATE=old))
+        git(self.repo, "checkout", "-q", "-f", branch)
+        git(self.repo, "merge", "-q", "--allow-unrelated-histories", "-m", "import", "vendored")
+        roots = subprocess.run(["git", "-C", self.repo, "rev-list", "--max-parents=0", "HEAD"], check=True,
+                               stdout=subprocess.PIPE, universal_newlines=True).stdout.split()
+        self.assertEqual(len(roots), 2)
+        action, out = self.action(self.repo)
+        self.assertEqual(action, "resume proj/a")
+        self.assertIn("[repo]", out)
+
     def test_moved_repo_with_a_renamed_folder_resumes(self):
         self.task("proj-ab12", "a", os.path.join(self.tmp, "gone", "proj"))
         self.record_root("proj-ab12")
