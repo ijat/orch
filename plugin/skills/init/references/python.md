@@ -12,7 +12,7 @@ Architecture rules: `references/architecture.md`.
 
 ## Init command
 
-These are for the first plan: `orch-init` writes docs and config only and does not run them. CLAUDE.md
+These are for the first plan: the `orch:init` skill writes docs and config only and does not run them. CLAUDE.md
 `Commands` lists the ones that need code as `not yet runnable (no code)`.
 
 - `uv init` makes an application by default; `uv init --lib` a library (adds `py.typed`). Both get `pyproject.toml`,
