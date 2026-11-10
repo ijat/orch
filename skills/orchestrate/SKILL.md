@@ -386,12 +386,18 @@ once, between turns, and wakes you. Afterwards re-read the state from `orch` (`o
 `log.md`) and trust that, not memory. A refusal (it says why) is not retried before the next checkpoint. No tool, or a refusal,
 changes nothing: carry on as without it.
 
-**Message formatting (optional).** orch-pane can redraw your finished replies for the user in a structured layout. Only when the
-user explicitly asks about the formatting, and `mcp__orch-pane__set_message_format` is in your tool list (ToolSearch it if
-deferred), call it. "Show raw", "give me unfiltered": `format: "raw"`, which shows the latest message as written. Pass
-`scope: "session"` only when their words cover more than that message ("turn off orch-ui", "stop formatting", "keep it raw from
-now on"). Call it with `"formatted"` when they ask for it back. A request to explain better ("I don't get it") is not about
-formatting: explain better and leave it on. Text between agents is never rewritten. No tool: nothing to turn off.
+**Message formatting (optional).** orch-ui can redraw your finished replies for the user in a structured layout. All of this
+applies only while `mcp__orch-ui__set_message_format` is in your tool list, loaded or deferred; without it, do none of it. **Mark
+important replies:** when your final reply is a plan or gate summary, a question or blocker that needs the user, step or task
+results (also when nothing is waiting on them), the final digest, a benchmark or review result, or a status overview the user
+asked for, make its last line `<!-- orch-ui -->`. Leave progress notes, acknowledgements and one-sentence answers unmarked, and
+never mark text for agents, files or tool inputs. Write the reply as usual; orch-ui removes the line and the user's setting
+decides what is redrawn. Only when the user explicitly asks about the formatting, call the tool (ToolSearch it if deferred). "Show
+raw", "give me unfiltered": `format: "raw"`, which shows the latest message as written. Pass `scope: "session"` only when their
+words cover more than that message ("turn off orch-ui", "stop formatting", "keep it raw from now on"). "Format that", "show that
+in orch-ui", or asking for the formatting back: `format: "formatted"`, which also formats the latest reply if it was left as
+written; never write the reply again. A request to explain better ("I don't get it") is not about formatting: explain better and
+leave it on. Text between agents is never rewritten.
 
 **Hard stops** — the only things never parked or assumed; ask or report at once: sudo, an exclusive VM
 or device, a paid action; a destructive operation outside the task's worktree; **push**; an upstream PR;
