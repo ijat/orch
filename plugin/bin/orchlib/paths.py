@@ -217,23 +217,47 @@ def repo_folder(repo_root, tasks_dir=None, name=None):
     tasks/<name>/repo.json records a different root. A missing repo.json is written once the repo has a root commit;
     a repo with no commits writes nothing and gets the same folder after its first commit. Existing folders are
     never renamed. A recorded root matches when it is any of the repo's roots (a merged-in older history adds a root
-    and must not move the repo to a new folder); a new repo.json records the oldest. `name` replaces the repo
+    and must not move the repo to a new folder), and every existing folder that could be the repo's is checked before
+    anything is created; a new repo.json records the oldest. `name` replaces the repo
     folder's name (`orch init` passes the name it was given)."""
     tasks_dir = tasks_dir or orch_root()
     name = name or os.path.basename(os.path.normpath(repo_root))
     roots = root_commits(repo_root)
     if not roots:
         return name
-    root = roots[0]
-    for candidate in (name, "%s-%s" % (name, root[:4])):
+    # Find before creating: `name`, then `name-<r[:4]>` for every root r, then any other `name-<4 hex>` folder. A
+    # repo that lives in a suffixed folder keeps it when a merge changes its oldest root (F5).
+    candidates = [name]
+    for r in roots:
+        if "%s-%s" % (name, r[:4]) not in candidates:
+            candidates.append("%s-%s" % (name, r[:4]))
+    derived = len(candidates)
+    try:
+        listing = sorted(os.listdir(tasks_dir))
+    except OSError:
+        listing = []
+    prefix = name + "-"
+    for entry in listing:
+        tail = entry[len(prefix):]
+        if (entry.startswith(prefix) and len(tail) == 4 and all(c in "0123456789abcdef" for c in tail)
+                and entry not in candidates):
+            candidates.append(entry)
+    states = {}
+    for i, candidate in enumerate(candidates):
         folder = os.path.join(tasks_dir, candidate)
         state, recorded = read_repo_json(folder)
         if state == "bad":
-            raise OrchError("unreadable %s in %s" % (REPO_JSON, folder), 3)
-        if state == "absent":
-            write_repo_json(folder, root)
+            if i < derived:
+                raise OrchError("unreadable %s in %s" % (REPO_JSON, folder), 3)
+            continue
+        states[candidate] = state
+        if state == "ok" and recorded in roots:
             return candidate
-        if recorded in roots:
+    # None matches: create `name`, or `name-<oldest[:4]>` when `name` belongs to another repo.
+    root = roots[0]
+    for candidate in (name, "%s-%s" % (name, root[:4])):
+        if states.get(candidate) == "absent":
+            write_repo_json(os.path.join(tasks_dir, candidate), root)
             return candidate
     raise OrchError("tasks folders %s and %s-%s belong to other repos" % (name, name, root[:4]), 2)
 
