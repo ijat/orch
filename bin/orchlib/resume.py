@@ -1,4 +1,5 @@
-"""resume: a read-only packet for a fresh orchestrator session (writes nothing, not even the lock file)."""
+"""resume: a packet for a fresh orchestrator session. Its one write is the driver_session field of status.md (when
+CLAUDE_CODE_SESSION_ID is set), with the file times kept; the packet itself is read first."""
 import glob
 import os
 import re
@@ -163,8 +164,10 @@ def cmd_resume(ns, extra):
     arg = ns.task_arg or getattr(ns, "task_sub", None) or ns.task
     if not arg:
         raise OrchError("resume needs a task: <repo>/<slug>, a unique slug, or an absolute dir", 1)
-    for line in packet(find_task(arg)):
+    task_dir = find_task(arg)
+    for line in packet(task_dir):
         print(line)
+    cli.record_driver_keep_times(task_dir)   # the one write: which session drives this task (times kept)
     return 0
 
 

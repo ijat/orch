@@ -822,6 +822,43 @@ class TestScopeAndSummary(Base):
         self.assertEqual(self.data()["tasks"], [])
 
 
+class TestThisSession(Base):
+    SID = "9f2c1a6e-3b7d-4c58-8a10-5d2e7b4f6a01"
+
+    def with_driver(self, slug, sid):
+        d = self.task(slug)
+        path = os.path.join(d, "status.md")
+        with open(path) as fh:
+            text = fh.read()
+        text = text.replace("- repo:", "- driver_session: %s\n- repo:" % sid, 1)
+        with open(path, "w") as fh:
+            fh.write(text)
+        return d
+
+    def flags(self, *extra):
+        rc, out, err = run_cli(self.root, "status", "--json", *extra)
+        self.assertEqual((rc, err), (0, ""))
+        return {t["slug"]: t["this_session"] for t in json.loads(out)["tasks"]}
+
+    def test_match_and_no_match(self):
+        self.with_driver("mine", self.SID)
+        self.with_driver("theirs", "11111111-2222-3333-4444-555555555555")
+        self.task("none")   # an old status.md without the field
+        self.assertEqual(self.flags("--session", self.SID), {"mine": True, "theirs": False, "none": False})
+
+    def test_exact_match_only(self):
+        self.with_driver("mine", self.SID)
+        self.assertEqual(self.flags("--session", self.SID[:-1]), {"mine": False})
+        self.assertEqual(self.flags("--session", self.SID + "0"), {"mine": False})
+        self.assertEqual(self.flags("--session", ""), {"mine": False})
+
+    def test_without_the_flag_the_key_is_null(self):
+        self.with_driver("mine", self.SID)
+        self.task("none")
+        self.assertEqual(self.flags(), {"mine": None, "none": None})
+        self.assertEqual(self.data()["schema"], 1)
+
+
 class TestCommand(Base):
     def test_dashboard_fixtures_same_set_and_order(self):        # (h)
         root = os.path.join(self.tmp, "dash")
