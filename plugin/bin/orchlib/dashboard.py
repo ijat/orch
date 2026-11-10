@@ -8,6 +8,8 @@ import calendar
 import datetime
 import errno
 import hashlib
+import html as htmllib
+import html.parser
 import http.server
 import json
 import os
@@ -23,10 +25,12 @@ import webbrowser
 from . import plan as pl
 from . import questions as qs
 from . import status as st
-from .paths import OrchError, orch_root, tilde
+from .paths import OrchError, orch_root, private_dir, tilde
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HTML_PATH = os.path.join(HERE, "dashboard.html")
+HEAD_NAME = "dashboard-head.html"   # optional, in the private data folder: a font link or a style block for the page
+HEAD_CAP = 16 * 1024
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -488,12 +492,85 @@ def stamp(base, now, page_version):
             "page_version": page_version, "tasks": tasks, "events": base["events"], "finished": base["finished"]}
 
 
+HEAD_HREF_RE = re.compile(r"""^https://[A-Za-z0-9.-]+(?::\d+)?(?:/[^\s"'<>\\]*)?$""")
+
+
+class HeadParser(html.parser.HTMLParser):
+    """Keeps only `<link rel="stylesheet" href="https://…">` and `<style>` elements of the head file, rebuilt from
+    their parts; everything else (scripts, other tags, text, other attributes) is dropped and named in `dropped`."""
+
+    def __init__(self):
+        html.parser.HTMLParser.__init__(self, convert_charrefs=True)
+        self.out = []
+        self.dropped = []
+        self._css = None
+
+    def drop(self, what):
+        what = re.sub(r"[^a-z0-9]", "", what.lower())[:20] or "?"
+        if what not in self.dropped:
+            self.dropped.append(what)
+
+    def handle_starttag(self, tag, attrs):
+        if self._css is not None:
+            return
+        if tag == "style":
+            self._css = []
+        elif tag == "link":
+            a = dict((k, v) for k, v in attrs if v is not None)
+            href = a.get("href", "")
+            if (a.get("rel", "").lower().split() == ["stylesheet"] and HEAD_HREF_RE.match(href)
+                    and len(href) <= 2048):
+                self.out.append('<link rel="stylesheet" href="%s">' % htmllib.escape(href, quote=True))
+            else:
+                self.drop("link")
+        elif tag not in ("html", "head", "body", "meta", "title"):
+            self.drop(tag)
+
+    def handle_endtag(self, tag):
+        if tag == "style" and self._css is not None:
+            self.out.append("<style>%s</style>" % "".join(self._css))
+            self._css = None
+
+    def handle_data(self, data):
+        if self._css is not None:
+            self._css.append(data)
+        elif data.strip():
+            self.drop("text")
+
+    def handle_comment(self, data):
+        pass
+
+    def handle_decl(self, decl):
+        pass
+
+    def handle_pi(self, data):
+        self.drop("pi")
+
+    def close(self):
+        html.parser.HTMLParser.close(self)
+        if self._css is not None:      # a style block that never closed
+            self.drop("style")
+            self._css = None
+
+
+def sanitize_head(data):
+    """(bytes to place before `</head>`, [names of what was dropped]) for the text of a dashboard-head file."""
+    parser = HeadParser()
+    try:
+        parser.feed(data.decode("utf-8", errors="replace"))
+        parser.close()
+    except Exception:           # the parser is lenient; anything it still rejects drops the whole file
+        return b"", ["unparsable"]
+    return "\n".join(parser.out).encode("utf-8"), parser.dropped
+
+
 class Dashboard(object):
     """Cached computation over `root`; recomputed only when the signature of the watched files changes."""
 
-    def __init__(self, root, html_path=None):
+    def __init__(self, root, html_path=None, head_path=None):
         self.root = root
         self.html_path = html_path or HTML_PATH
+        self.head_path = head_path
         self.lock = threading.Lock()
         self._sig = None
         self._base = None
@@ -501,17 +578,49 @@ class Dashboard(object):
         self._page = None
         self.computes = 0
 
+    def head_file(self):
+        return self.head_path or os.path.join(private_dir(), HEAD_NAME)
+
     def page(self):
-        """(html bytes, page_version) or (None, None) when dashboard.html is missing or unreadable."""
+        """(html bytes, page_version) or (None, None) when dashboard.html is missing or unreadable. The optional head
+        file's kept elements (see sanitize_head) are placed before `</head>`; without the file the page is exactly
+        dashboard.html."""
         info = stat_regular(self.html_path)
         if info is None:
             return None, None
-        sig = (info.st_ino, info.st_mtime_ns, info.st_size)
+        head = self.head_file()
+        hinfo = stat_regular(head)
+        sig = (info.st_ino, info.st_mtime_ns, info.st_size,
+               (hinfo.st_ino, hinfo.st_mtime_ns, hinfo.st_size, head) if hinfo else None)
         if sig != self._page_sig:
             data = read_file(self.html_path, 4 * 1024 * 1024)
+            if data is not None and hinfo is not None:
+                data = self.with_head(data, head, hinfo)
             self._page = (data, hashlib.sha256(data).hexdigest()[:12]) if data is not None else (None, None)
             self._page_sig = sig
         return self._page
+
+    @staticmethod
+    def with_head(data, head, hinfo):
+        def warn(msg):
+            sys.stderr.write("warning: %s: %s\n" % (HEAD_NAME, msg))
+        if hinfo.st_size > HEAD_CAP:
+            warn("larger than %d bytes, ignored" % HEAD_CAP)
+            return data
+        raw = read_file(head, HEAD_CAP)
+        if raw is None:
+            warn("not a readable regular file, ignored")
+            return data
+        kept, dropped = sanitize_head(raw)
+        if dropped:
+            warn("dropped %s (only stylesheet links to https and style elements are kept)" % ", ".join(dropped))
+        at = re.search(rb"</head\s*>", data, re.I)
+        if not kept:
+            return data
+        if not at:
+            warn("the page has no </head>, ignored")
+            return data
+        return data[:at.start()] + kept + b"\n" + data[at.start():]
 
     def data(self, now=None):
         now = now_epoch() if now is None else now
@@ -708,7 +817,7 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
         http.server.HTTPServer.__init__(self, (HOST, port), Handler)
 
 
-def make_server(root, port=DEFAULT_PORT, html_path=None):
+def make_server(root, port=DEFAULT_PORT, html_path=None, head_path=None):
     """A bound (not yet serving) server on 127.0.0.1. Raises OrchError (exit 1) when the port is taken."""
     if not isinstance(port, int) or not 0 <= port <= 65535:
         raise OrchError("--port must be 0-65535", 1)
@@ -723,7 +832,7 @@ def make_server(root, port=DEFAULT_PORT, html_path=None):
         if taken:
             raise OrchError("port %d is already in use on %s" % (port, HOST), 1)
     try:
-        return Server(port, Dashboard(root, html_path))
+        return Server(port, Dashboard(root, html_path, head_path))
     except OSError as exc:
         if exc.errno == errno.EADDRINUSE:
             raise OrchError("port %d is already in use on %s" % (port, HOST), 1)
