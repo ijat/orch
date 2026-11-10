@@ -1,0 +1,28 @@
+{
+  "modules": [
+    "./register.tsx"
+  ],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orch-index-hook.sh\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orch-session-start.sh\" \"${CLAUDE_PLUGIN_ROOT}\" >/dev/null 2>&1 || true"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""orch — orchestration bookkeeping CLI (launcher). Code lives in orchlib/ next to this file."""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+
+if sys.argv[1:2] == ["session-start"]:  # SessionStart hook (orch-session-start.sh ROOT): ACTIVE.md and the pointer
+    from orchlib.paths import refresh_index, update_pointer, warn_stderr, writes_allowed  # noqa: E402
+    if len(sys.argv) != 3:
+        sys.stderr.write("usage: orch session-start PLUGIN_ROOT\n")
+        sys.exit(1)
+    if writes_allowed():   # a dev copy not told where to write leaves the real ACTIVE.md alone too
+        refresh_index(warn_stderr)
+    try:
+        update_pointer(sys.argv[2])
+    except OSError as exc:
+        sys.stderr.write("orch session-start: pointer not updated: %s\n" % exc)
+        sys.exit(3)
+    sys.exit(0)
+
+if sys.argv[1:3] == ["hook", "delegate"]:  # PreToolUse hook: skip loading the whole CLI (about 25 ms)
+    from orchlib.hook import run  # noqa: E402
+    sys.exit(run())
+
+from orchlib.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())
