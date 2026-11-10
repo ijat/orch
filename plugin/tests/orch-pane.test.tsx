@@ -104,6 +104,8 @@ const INDEX_RAN: Ran = { exitCode: 0, stdout: JSON.stringify(INDEX), stderr: '' 
 
 // The engine beneath the plugin: env, cwd, the command, panes, and `orch status` itself.
 // `env` replaces the environment.
+// Tests that move the mock clock by tens of seconds (animation ticks, polls) are CPU-bound: they take ~1.5 s alone and
+// more than the 5 s default when scripts/check.py runs the Python suite beside them, so they carry `timeoutMs: 30000`.
 // The CLI runs from the plugin's own bin: the mod reads its root from `$.plugin.root`, which in these tests is the plugin
 // dir above this file (nothing is written down, so a checkout anywhere passes).
 const PLUGIN_ROOT = import.meta.dir.replace(/\\/g, '/').replace(/\/tests$/, '')
@@ -1019,7 +1021,7 @@ function seedState(on: On, seeds: Record<string, unknown>) {
 const glyphOf = async (ui: { find: (q: { type: string; text: RegExp }) => Promise<{ text: string } | undefined> }, re: RegExp) =>
   (await ui.find({ type: 'Text', text: re }))?.text?.[0]
 
-test('an Ask left busy by a lost call expires and the tick stops', async ($, on) => {
+test('an Ask left busy by a lost call expires and the tick stops', { timeoutMs: 30000 }, async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   world(on, { exitCode: 0, stdout: IDLE_OUT, stderr: '' })
   const ticks = seedState(on, { ask: { state: 'busy', question: 'status?', at: NOW } })
@@ -1038,7 +1040,7 @@ test('an Ask left busy by a lost call expires and the tick stops', async ($, on)
   await ui.unmount()
 })
 
-test('a summary left pending by a lost call expires, keeps the raw text, and is asked again on re-expand', async ($, on) => {
+test('a summary left pending by a lost call expires, keeps the raw text, and is asked again on re-expand', { timeoutMs: 30000 }, async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
   world(on, { exitCode: 0, stdout: IDLE_OUT, stderr: '' })
   memStore(on)
@@ -1697,7 +1699,7 @@ test('a draft of a question that is no longer open is dropped by the next poll',
 
 // -- auto-answer ----------------------------------------------------------------------------------------
 
-test('Auto-answer is off until switched on, answers only reversible recommended questions, records Auto and wakes once', async ($, on) => {
+test('Auto-answer is off until switched on, answers only reversible recommended questions, records Auto and wakes once', { timeoutMs: 30000 }, async ($, on) => {
   const open = [
     mkq(1), mkq(2), critical(3), mkq(4, { reversible: 'unknown' }), mkq(5, { options: [qopt('A', 'first'), qopt('B', 'second')] }),
     mkq(6, { detail: 'minimal', options: [] }),
@@ -1734,7 +1736,7 @@ test('Auto-answer leaves a question the person has already touched', async ($, o
   await ui.unmount()
 })
 
-test('a refused auto-answer is not retried on every poll and shows the error', async ($, on) => {
+test('a refused auto-answer is not retried on every poll and shows the error', { timeoutMs: 30000 }, async ($, on) => {
   const { ui, w, clock } = await pane($, on, [withQs(PROGRAM, [mkq(1)])])
   w.answered = { exitCode: 1, stdout: '', stderr: 'orch: Q1 is not --reversible yes' }
   await ui.press({ key: 'tab:more' })

@@ -11,6 +11,8 @@ import * as options from './fixtures/format/options'
 import * as review from './fixtures/format/review'
 import { textKey } from '../hooks/ui/lib'
 
+// The timeout cases move the mock clock by minutes (CPU-bound, ~1.7 s alone, over the 5 s default beside the Python
+// suite in scripts/check.py): they carry `timeoutMs: 30000`.
 type Call = {
   model: string; effort?: string; maxTokens?: number; timeoutMs?: number; system?: string; prompt: string
   argv: string[]; env: Record<string, string>; cwd?: string
@@ -363,7 +365,7 @@ const FAILS: [string, Reply, string, string][] = [
   ['a rewrite that drops an id', options.output.replace(/`v3\.0\.0`/g, 'the release'), 'missing-id', ' · api $0.01'],
 ]
 for (const [name, reply, reason, tail] of FAILS) {
-  test(`${name}: the original stays, the reason is recorded`, async ($, on) => {
+  test(`${name}: the original stays, the reason is recorded`, { timeoutMs: 30000 }, async ($, on) => {
     const b = await boot($, on)
     b.w.replies.set(options.source, reply)
     await orchestrate($)
@@ -1336,7 +1338,7 @@ const TIMEOUT_CASES: [string, Reply, string][] = [
   ['a missing program, said otherwise', { deny: 'claude: command not found' }, 'cli-missing'],
 ]
 for (const [name, reply, reason] of TIMEOUT_CASES) {
-  test(`timeouts are told by elapsed time, not by the message: ${name} is ${reason}`, async ($, on) => {
+  test(`timeouts are told by elapsed time, not by the message: ${name} is ${reason}`, { timeoutMs: 30000 }, async ($, on) => {
     const b = await boot($, on)
     b.w.replies.set(options.source, reply)
     await orchestrate($)
