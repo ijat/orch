@@ -139,11 +139,14 @@ class Layout(unittest.TestCase):
         for tool in ("mcp__orch__compact_when_idle", "mcp__orch__set_message_format"):
             self.assertIn(tool, skill)
 
-    def test_t5_init_agent_never_where_the_skill_or_a_path_is_meant(self):
-        bad = re.compile(r"orch:orch-|/orch:init|orch:init(/|\.md)|`?orch:init`?\s+skill|skills/orch:init")
+    def test_t5_init_skill_and_agent_names(self):
+        # The skill and the agent are both `orch:init` (skills/init, agents/init.md); prose tells them apart by the word
+        # after the name. The old skill name and path are gone.
+        bad = re.compile(r"orch-init|orch:orch-|skills/orch:init")
         self.assertEqual(hits(self.files, bad), [])
-        self.assertIn("name: orch-init\n", dict(self.files)["skills/orch-init/SKILL.md"])
+        self.assertIn("name: init\n", dict(self.files)["skills/init/SKILL.md"])
         self.assertTrue(hits(self.files, re.compile(r"`orch:init` agent")))  # instrument check: the agent is named
+        self.assertTrue(hits(self.files, re.compile(r"`orch:init` skill")))  # and so is the skill
 
     def test_t6_no_legacy_agent_names_role_words_kept_removed_tools_gone(self):
         self.assertEqual(hits(self.files, LEGACY_AGENT, history), [])

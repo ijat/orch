@@ -9,7 +9,7 @@ Architecture rules: `references/architecture.md`.
 
 ## Init command
 
-These are for the first plan: `orch-init` writes docs and config only and does not run them. CLAUDE.md
+These are for the first plan: the `orch:init` skill writes docs and config only and does not run them. CLAUDE.md
 `Commands` lists the ones that need code as `not yet runnable (no code)`.
 
 - `go mod init <module-path>` in the project directory (pkg.go.dev/cmd/go: writes `go.mod`, must not exist, one optional argument).

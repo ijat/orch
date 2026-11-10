@@ -83,7 +83,7 @@ reason — every time (`orch merge` reads the row, so last milestone's value mus
 A lite milestone that returns `scope_exceeded` switches to standard as a lite task does.
 Sequential only: no two milestones run at once.
 
-After the first milestone's merge on a repo set up by `orch-init`: if `<repo-name>/init.md` says `refresh: pending`, run the `orch-init` skill's refresh (SKILL.md step 11).
+After the first milestone's merge on a repo set up by the `orch:init` skill: if `<repo-name>/init.md` says `refresh: pending`, run the `orch:init` skill's refresh (SKILL.md step 11).
 
 ## 3. Re-plan check and roadmap revisions
 

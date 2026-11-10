@@ -1,9 +1,9 @@
 ---
-name: orch-init
-description: Initialize or audit a project's agent setup — a short canonical CLAUDE.md, an AGENTS.md pointer, docs/STATE.md and docs/DECISIONS.md, plus offered extras (gate command and CI, Claude settings and hooks, README/LICENSE, CLAUDE.local.md) and a language-adaptive architecture built on swappable interfaces. Use when the orchestrate skill offers it on a new or empty repo (step 3a), when the user says "init/initialize/set up this project", "/orch-init", or "audit CLAUDE.md" / "audit the project setup", and for the one refresh after the first merge on an initialized repo.
+name: init
+description: Initialize or audit a project's agent setup — a short canonical CLAUDE.md, an AGENTS.md pointer, docs/STATE.md and docs/DECISIONS.md, plus offered extras (gate command and CI, Claude settings and hooks, README/LICENSE, CLAUDE.local.md) and a language-adaptive architecture built on swappable interfaces. Use when the orchestrate skill offers it on a new or empty repo (step 3a), when the user says "init/initialize/set up this project", "/orch:init", or "audit CLAUDE.md" / "audit the project setup", and for the one refresh after the first merge on an initialized repo.
 ---
 
-# orch-init
+# orch:init
 
 You are the **session** that runs project initialization. A Sonnet `orch:init` agent researches
 current tooling, writes the files and commits; **you** detect, ask the user, show the proposal and
@@ -21,7 +21,7 @@ invariants, decisions, the swap points). Stay under the 200-line guidance
 ## When it runs
 
 - **Offered automatically** only from orchestrate step 3a: an orchestrated task starts on a new or
-  empty repo (below). Outside orchestration it runs only on request (`/orch-init`, "initialize this
+  empty repo (below). Outside orchestration it runs only on request (`/orch:init`, "initialize this
   project", "audit CLAUDE.md").
 - **New or empty repo**: either (a) a directory that is not a git repo, or (b) a git repo with no
   commits, or (c) tracked files only from {`README*`, `LICENSE*`, `.gitignore`, `.gitattributes`,
@@ -98,7 +98,7 @@ instead. Never overwrite an existing `CLAUDE.md`.
    scripts; the first plan creates the code. If the directory is not a repo it runs `git init -b <base>`;
    an existing repo with no commits must already point `HEAD` at `<base>`
    (`git symbolic-ref --short HEAD`), otherwise it blocks with `need: base mismatch` and never renames
-   a branch. It checks the files (below) and makes **one** commit `chore: initialize project (orch-init)`
+   a branch. It checks the files (below) and makes **one** commit `chore: initialize project (orch:init)`
    that includes the files it wrote plus the untracked docs the proposal listed (so the worktree built
    from the base has the user's specs). It never adds a remote and never pushes.
    It then writes `~/.claude/orch-data/tasks/<repo-name>/init.md` from `templates/init-record.md`
@@ -123,7 +123,7 @@ Runs once, automatically, when `init.md` says `refresh: pending` and the first t
 mode, the first milestone) has merged. Same two phases: the agent diffs CLAUDE.md, docs/STATE.md and
 the architecture notes against the repo as built (real commands re-run, real layout), writes a
 proposal of diffs only; the user is asked through a parked question (`orch ask`; outside orchestration, in text), options explained: **Approve (recommended)** / **Skip** /
-**Hold on**. On Approve: one commit `chore: refresh project docs (orch-init)`, and `init.md` becomes
+**Hold on**. On Approve: one commit `chore: refresh project docs (orch:init)`, and `init.md` becomes
 `refresh: done`. On Skip: you set `refresh: skipped` in `init.md` yourself (the agent is not running)
 and log it, so the refresh is not offered again. Orchestrate fires the refresh only on `pending`.
 Later refreshes happen only through `audit` on request. Never refresh while the tree has uncommitted
@@ -198,7 +198,7 @@ Orchestrate reads it to decide the refresh (only `pending` fires); `audit` reads
 
 ## Paths
 
-`${CLAUDE_PLUGIN_ROOT}/skills/orch-init/` (live) — `templates/{CLAUDE.md, AGENTS.md, STATE.md, DECISIONS.md,
+`${CLAUDE_PLUGIN_ROOT}/skills/init/` (live) — `templates/{CLAUDE.md, AGENTS.md, STATE.md, DECISIONS.md,
 init-record.md, proposal.md, audit.md, snippets.md}`; `references/architecture.md`;
 `references/{typescript, python, rust, go, dotnet, swift, godot, non-code}.md`. The role is
 `agents/init.md` (`skills/orchestrate/roles/init.md`).

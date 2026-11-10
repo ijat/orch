@@ -1,4 +1,4 @@
-# Snippets for orch-init outputs
+# Snippets for orch:init outputs
 
 Default snippets are applied without a question; everything under "Opt-in" only when the user chose
 that extra in the question batch. Replace `{{...}}`. No real values, tokens or hostnames in any snippet.

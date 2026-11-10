@@ -7,14 +7,13 @@ const PANE = 'orch-ui'
 // orch-ui's session-start work. plugin/hooks/register.tsx runs it from the plugin's one session.start hook (a second
 // unmatched one on that event is refused), in its own try/catch.
 export async function startUi($: EngineInterface): Promise<void> {
-  await $.command.register({ name: 'orch-ui', description: "Open orch-ui's settings" })
   void loadFormat($)
 }
 
 export const registerUi: Register = on => {
   registerFormat(on)
 
-  on('command.run', { command: 'orch-ui' }, async $ => {
+  on('command.run', { command: 'orch:ui' }, async $ => {
     await ensureLoaded($)
     await $.ui.open({ id: PANE, title: PANE, closeOnEscape: true })
 
