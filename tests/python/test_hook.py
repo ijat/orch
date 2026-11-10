@@ -12,7 +12,7 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BIN = os.path.dirname(os.path.dirname(HERE))
+BIN = os.path.join(os.path.dirname(os.path.dirname(HERE)), "plugin", "bin")
 sys.path.insert(0, BIN)
 
 from orchlib import hook  # noqa: E402

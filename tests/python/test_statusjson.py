@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BIN = os.path.dirname(os.path.dirname(HERE))
+BIN = os.path.join(os.path.dirname(os.path.dirname(HERE)), "plugin", "bin")
 sys.path.insert(0, BIN)
 
 from orchlib import cli, dashboard as db, statusjson as sj  # noqa: E402

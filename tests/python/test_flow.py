@@ -11,7 +11,7 @@ from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "plugin", "bin"))
 
 import test_core as core  # noqa: E402
 from orchlib import flow, questions as qs, status as st  # noqa: E402
@@ -586,7 +586,7 @@ class TestAskOptions(FlowBase):
 
     def test_the_skills_own_ask_example_is_accepted(self):   # F5
         here = os.path.dirname(os.path.abspath(__file__))
-        skill = os.path.join(here, "..", "..", "..", "skills", "orchestrate", "SKILL.md")
+        skill = os.path.join(here, "..", "..", "plugin", "skills", "orchestrate", "SKILL.md")
         with open(skill, encoding="utf-8") as fh:
             text = re.sub(r"\s*\n\s*", " ", fh.read())
         m = re.search(r'`orch ask "<question>" --options "([^"]+)" --recommended (\S+) --blocks <steps> --reversible (\w+)`',

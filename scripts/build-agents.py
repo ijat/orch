@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
-"""Render orch-* agent files from role sources plus shared blocks.
+"""Render agent files from role sources plus shared blocks.
 
 Agent files are subagent system prompts, and Claude Code does not expand imports in them
 (probed 2026-10-15), so shared rules are inlined at build time. A source line of the exact form
 `<!-- @include _shared/<name>.md -->` is replaced by that file's contents.
 
-Usage: orch-build-agents.py [<roles-dir> <agents-dir>] [--check]
-  defaults: ~/.claude/skills/orchestrate/roles  ~/.claude/agents
-  --check: write nothing. Exit 1 if any rendered file differs from the one in agents-dir.
+Usage: build-agents.py <roles-dir> <agents-dir> [--check]
+  --check: write nothing. Exit 1 if any rendered file differs from the one in agents-dir,
+           or if an agent's `name:` differs from its file stem.
+  No arguments: print this usage and exit 2 (never writes anywhere).
 """
 import glob, os, re, sys
 
 RX = re.compile(r'^<!-- @include (_shared/[\w.-]+\.md) -->\n$')
+NAME_RX = re.compile(r'^name:[ \t]*(.+?)[ \t]*$', re.M)
+
+def name_of(text):
+    """The `name:` of the frontmatter (the block between the first two --- lines), or None."""
+    if not text.startswith('---\n'):
+        return None
+    end = text.find('\n---', 4)
+    m = NAME_RX.search(text[4:end if end > 0 else len(text)])
+    return m.group(1).strip('"\'') if m else None
 
 def render(path, roles):
     out = []
@@ -32,13 +42,13 @@ def main():
         sys.exit(__doc__)  # an unknown flag (e.g. --help) must never fall through to a write
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     check = '--check' in sys.argv
-    if len(args) not in (0, 2):
-        sys.exit(__doc__)
-    home = os.path.expanduser('~/.claude')
-    roles, agents = args or (f'{home}/skills/orchestrate/roles', f'{home}/agents')
-    srcs = sorted(glob.glob(os.path.join(roles, 'orch-*.md')))
+    if len(args) != 2:
+        sys.stderr.write(__doc__)
+        sys.exit(2)
+    roles, agents = args
+    srcs = sorted(glob.glob(os.path.join(roles, '*.md')))
     if not srcs:
-        sys.exit(f"no orch-*.md sources in {roles}")
+        sys.exit(f"no *.md sources in {roles}")
     differ = 0
     for s in srcs:
         text = render(s, roles)
@@ -47,6 +57,10 @@ def main():
         if check:
             if not same:
                 print(f"DIFFERS {os.path.basename(s)}"); differ += 1
+            stem = os.path.splitext(os.path.basename(s))[0]
+            nm = name_of(text)
+            if nm != stem:
+                print(f"NAME {os.path.basename(s)}: name is {nm!r}, file stem is {stem!r}"); differ += 1
         elif not same:
             open(dst, 'w', encoding='utf-8').write(text); print(f"wrote {os.path.basename(s)}")
     print(f"{len(srcs)} roles, {differ if check else 0} differing")
