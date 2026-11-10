@@ -43,7 +43,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-CHECK="$HOME/.claude/bin/usage-check.sh"
+CHECK="$(cd "$(dirname "$0")" && pwd -P)/usage-check.sh"
 [ -x "$CHECK" ] || { echo "usage-watch: missing $CHECK" >&2; exit 66; }
 
 prev_state=""     # last state we announced

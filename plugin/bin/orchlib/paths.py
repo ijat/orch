@@ -26,19 +26,121 @@ class OrchError(Exception):
         self.code = code
 
 
+# One data root for everything orch stores; every orch-owned path below derives from it. ORCH_DATA moves the whole
+# root (tasks, logs, cache, the orch-index binary, private files); ORCH_DIR moves only the tasks root. The tasks root
+# holds repo folders, ACTIVE.md and LESSONS.md only. (Before the plugin, tasks lived in ~/.claude/orchestrations; a
+# compat link there points at TASKS during the migration.)
+def data_root():
+    return os.environ.get("ORCH_DATA") or os.path.join(os.path.expanduser("~"), ".claude", "orch-data")
+
+
 def orch_root():
-    return os.environ.get("ORCH_DIR") or os.path.join(os.path.expanduser("~"), ".claude", "orchestrations")
+    """TASKS: the tasks root. ORCH_DIR overrides it, even when ORCH_DATA is set."""
+    return os.environ.get("ORCH_DIR") or os.path.join(data_root(), "tasks")
+
+
+def logs_dir():
+    """LOGS: append-only logs (delegate-hook.jsonl, _agent-usage.jsonl)."""
+    return os.path.join(data_root(), "logs")
+
+
+def cache_dir():
+    """CACHE: derived state that can be rebuilt (usage pacing, orch-ui's format dir)."""
+    return os.path.join(data_root(), "cache")
+
+
+def data_bin():
+    """DATA_BIN: the orch shim and the orch-index binary."""
+    return os.path.join(data_root(), "bin")
+
+
+def pointer_path():
+    """POINTER: a link to the live plugin root, written only by the installed copy (update_pointer)."""
+    return os.path.join(data_root(), "plugin")
+
+
+def private_dir():
+    """PRIVATE: the denylist and the dashboard head file."""
+    return os.path.join(data_root(), "private")
+
+
+def backups_dir():
+    return os.path.join(data_root(), "backups")
+
+
+def denylist_path():
+    return os.path.join(private_dir(), "orch-export-denylist.txt")
+
+
+def plugins_cache():
+    """The tree Claude Code installs plugins into."""
+    return os.path.join(os.path.expanduser("~"), ".claude", "plugins", "cache")
+
+
+def _inside(path, root):
+    path, root = os.path.realpath(path), os.path.realpath(root)
+    return path != root and path.startswith(root.rstrip(os.sep) + os.sep)
 
 
 def is_live():
-    """True when this code runs from ~/.claude/bin (the installed copy)."""
-    live = os.path.realpath(os.path.join(os.path.expanduser("~"), ".claude", "bin"))
-    return os.path.realpath(BIN_DIR) == live
+    """True iff this code runs from the copy Claude Code installed (inside ~/.claude/plugins/cache/). Every other
+    copy (a checkout, a worktree, an archive, a copied tree, a --plugin-dir target) is a development copy."""
+    return _inside(BIN_DIR, plugins_cache())
+
+
+def writes_allowed():
+    """The one live-versus-dev decision: the installed copy, or a copy told where to write (ORCH_DIR or ORCH_DATA)."""
+    return is_live() or bool(os.environ.get("ORCH_DIR")) or bool(os.environ.get("ORCH_DATA"))
 
 
 def require_write_allowed():
-    if not is_live() and not os.environ.get("ORCH_DIR"):
-        raise OrchError("development copy: set ORCH_DIR (write commands refuse to touch the real orchestrations dir)", 1)
+    if not writes_allowed():
+        raise OrchError("development copy: set ORCH_DIR (only the plugin copy installed under ~/.claude/plugins/cache "
+                        "writes the real orch data unless told where to write)", 1)
+
+
+def update_pointer(root):
+    """Point POINTER at realpath(root), only when this copy is live and root is this copy's own plugin root.
+    A temp link plus os.replace, so readers never see the link missing. Returns True when the link changed."""
+    if not is_live():
+        return False
+    target = os.path.realpath(root)
+    if target != os.path.realpath(os.path.join(BIN_DIR, "..")):
+        return False
+    link = pointer_path()
+    try:
+        if os.readlink(link) == target:
+            return False
+    except OSError:
+        pass
+    os.makedirs(os.path.dirname(link), exist_ok=True)
+    tmp = "%s.tmp-%d" % (link, os.getpid())
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    os.symlink(target, tmp)
+    try:
+        os.replace(tmp, link)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return True
+
+
+AGENT_PREFIX_RE = re.compile(r"^orch:")
+
+
+def agent_key(agent_type):
+    """Plugin agent names (`orch:<role>`) in today's spelling (`orch-<role>`), before any agent-type comparison, so old
+    and new journals share every label. Anything else is returned unchanged (`foo:planner` and `orch:orch-planner`
+    match no role). role-cost.py keeps its own copy (it is loaded by path); a test pins the two together."""
+    if isinstance(agent_type, str):
+        return AGENT_PREFIX_RE.sub("orch-", agent_type, count=1)
+    return agent_type
 
 
 def now():

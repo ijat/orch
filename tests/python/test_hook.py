@@ -1,7 +1,7 @@
 """orch hook delegate: the PreToolUse hook that sends repo-wide searches to orch-explorer.
 
 Real throwaway git repos; the index binary is a fake script (ORCH_INDEX_BIN) that prints what a state file
-says and logs every call. TMPDIR (the cache) and ORCH_DIR (the decision log) are per-test temp dirs."""
+says and logs every call. TMPDIR (the cache) and ORCH_DATA (the decision log goes to its logs/) are per-test temp dirs."""
 import io
 import json
 import os
@@ -55,13 +55,15 @@ class HookCase(unittest.TestCase):
         with open(self.fake, "w") as f:
             f.write(FAKE)
         os.chmod(self.fake, 0o755)
-        self.orch_dir = os.path.join(self.tmp, "orchdir")
+        self.data_dir = os.path.join(self.tmp, "orchdata")
+        os.makedirs(self.data_dir)
+        self.orch_dir = os.path.join(self.data_dir, "logs")   # where delegate-hook.jsonl lands
         self.tmpdir = os.path.join(self.tmp, "tmpdir")
         os.makedirs(self.tmpdir)
         self.set_state(INDEXED)
         self.make_db()
         env = {"ORCH_INDEX_BIN": self.fake, "FAKE_STATE": self.state, "FAKE_CALLS": self.calls,
-               "ORCH_DIR": self.orch_dir, "TMPDIR": self.tmpdir}
+               "ORCH_DATA": self.data_dir, "ORCH_DIR": os.path.join(self.tmp, "tasks"), "TMPDIR": self.tmpdir}
         saved = dict((k, os.environ.get(k)) for k in env)
         os.environ.update(env)
 
@@ -220,8 +222,21 @@ class Scope(HookCase):
     def test_reviewer_enforced(self):
         self.assertDenied(self.bash("rg foo", agent="orch-code-reviewer"))
 
+    def test_plugin_agent_names_enforced(self):
+        """C3: `orch:<role>` is the same agent as `orch-<role>`."""
+        self.assertDenied(self.bash("rg foo", agent="orch:implementer"))
+        self.assertDenied(self.bash("rg foo", agent="orch:code-reviewer"))
+        recs = self.log()
+        self.assertEqual([r["agent_type"] for r in recs], ["orch:implementer", "orch:code-reviewer"])
+
+    def test_log_lands_under_the_data_root_not_the_tasks_root(self):
+        self.bash("rg foo")
+        self.assertTrue(os.path.isfile(os.path.join(self.data_dir, "logs", "delegate-hook.jsonl")))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "tasks")))
+
     def test_other_agent_types_allowed_and_unlogged(self):
-        for agent in ("orch-explorer", "orch-planner", "orch-security-reviewer", "general-purpose", "", None):
+        for agent in ("orch-explorer", "orch-planner", "orch-security-reviewer", "general-purpose", "", None,
+                      "foo:implementer", "orch:orch-implementer", "orch:explorer"):
             with self.subTest(agent=agent):
                 self.assertAllowed(self.bash("rg foo", agent=agent))
         self.assertEqual(self.log(), [])
@@ -289,7 +304,7 @@ class FailOpen(HookCase):
         self.assertEqual(self.n_calls(), 2)
 
     def test_log_failure_does_not_break_the_decision(self):
-        with open(self.orch_dir, "w") as f:  # ORCH_DIR is a file: the log cannot be written
+        with open(self.orch_dir, "w") as f:  # the logs dir is a file: the log cannot be written
             f.write("x")
         self.assertDenied(self.bash("rg foo"))
 

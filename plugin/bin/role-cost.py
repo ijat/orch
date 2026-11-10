@@ -55,6 +55,14 @@ def request_cost(usage, model):
             + (usage.get('output_tokens', 0) or 0) * po) / 1e6
 
 
+def agent_key(typ):
+    """Plugin agent names (`orch:<role>`) in today's spelling (`orch-<role>`), so both spellings share every label.
+    A copy of orchlib.paths.agent_key (this file is loaded by path through a link); a test pins the two together."""
+    if isinstance(typ, str):
+        return re.sub(r'^orch:', 'orch-', typ, count=1)
+    return typ
+
+
 def role_of(typ):
     m = re.match(r'(orch-planner|orch-implementer)\b', typ)
     return m.group(1) if m else typ
@@ -131,7 +139,7 @@ def main():
     for path in glob.glob(os.path.join(a.root, '**', 'subagents', 'agent-*.jsonl'), recursive=True):
         try:
             with open(path[:-len('.jsonl')] + '.meta.json') as fh:
-                typ = json.load(fh).get('agentType') or 'unknown'
+                typ = agent_key(json.load(fh).get('agentType') or 'unknown')
         except (OSError, ValueError):
             typ = 'unknown(no meta)'
         first, reqs, tier, split = read_run(path, stats)

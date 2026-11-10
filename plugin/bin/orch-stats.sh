@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # orch-stats.sh — aggregate orchestration journals (schema: ~/.claude/skills/orchestrate/templates/journal.md)
 # Usage: orch-stats.sh [--repo NAME] [--since YYYY-MM-DD]
-# Reads ~/.claude/orchestrations/*/*/journal.jsonl (override the root with ORCH_DIR). Local files only.
+# Reads <tasks root>/*/*/journal.jsonl (~/.claude/orch-data/tasks; ORCH_DIR overrides it, ORCH_DATA the data root). Local files only.
 set -euo pipefail
 
-root="${ORCH_DIR:-$HOME/.claude/orchestrations}"
+root="${ORCH_DIR:-${ORCH_DATA:-$HOME/.claude/orch-data}/tasks}"
 repo=""; since=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -39,8 +39,10 @@ for f in "${files[@]}"; do
              "orch-implementer":"sonnet/high","orch-implementer-sonnet":"sonnet/high",
              "orch-implementer-expert":"opus/medium","orch-implementer-opus":"opus/medium",
              "orch-implementer-fable":"fable/high"};
-    def nt: if type == "string" then (tm[.] // .) else . end;
+    def nt: if type == "string" then (sub("^orch:";"orch-") as $k | tm[$k] // $k) else . end;
+    def an: if type == "string" then sub("^orch:";"orch-") else . end;
     . + {repo: (.repo // $r), task: (.task // $t), kind: (.kind // .event)}
+    | if has("agent") then .agent |= an else . end
     | if has("tier") then .tier |= nt else . end
     | if has("from") then .from |= nt else . end
     | if has("to") then .to |= nt else . end' "$f"

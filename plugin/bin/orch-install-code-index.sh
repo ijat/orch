@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # orch-install-code-index.sh — install the pinned orch-index release binary (macOS and Linux).
-# Usage: orch-install-code-index.sh [--dest DIR] [--dry-run] [--print-target]   (default DIR: $HOME/.claude/bin)
+# Usage: orch-install-code-index.sh [--dest DIR] [--dry-run] [--print-target]   (default DIR: ${ORCH_DATA:-$HOME/.claude/orch-data}/bin)
 # Trust root: the SHA-256 pins below, committed in this repo; the release's own SHA256SUMS is not used.
 # Never overwrites an existing <DIR>/orch-index, never uses sudo, refuses to run as root.
 # ORCH_INDEX_AUTOINSTALL=0 disables it (exit 3, checked first, no network).
@@ -21,7 +21,7 @@ readonly MAX_BYTES=67108864   # 64 MiB, archive download limit
 
 usage() { sed -n 3p "$0" | sed 's/^# //' >&2; exit 2; }
 
-dest="$HOME/.claude/bin"; dry_run=0; print_target=0
+dest="${ORCH_DATA:-$HOME/.claude/orch-data}/bin"; dry_run=0; print_target=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dest) [ $# -ge 2 ] && [ -n "$2" ] || usage; dest="$2"; shift 2 ;;

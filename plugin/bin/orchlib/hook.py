@@ -6,7 +6,7 @@ a parse error, a missing binary, a `stats` timeout or any other surprise allows 
 Enforced only for the roles in ENFORCED. A call is denied when a search target is inside the agent's git work
 tree, the search is broad (a directory, or no path at all), and the repo has a built index (`orch-index stats`
 reports a commit and files > 0). A Bash command carrying `# orch-self-search: <reason>` is allowed and logged
-as a bypass. Every enforced decision that matters is appended to `<orch root>/delegate-hook.jsonl`, never
+as a bypass. Every enforced decision that matters is appended to `<orch data>/logs/delegate-hook.jsonl`, never
 with the command text."""
 import json
 import os
@@ -14,6 +14,8 @@ import re
 import subprocess
 import sys
 import zlib
+
+from .paths import agent_key, data_bin, logs_dir
 
 ENFORCED = ("orch-implementer", "orch-code-reviewer")
 REASON = ("orch: this repo has a code index — send repo-wide searches to orch-explorer "
@@ -339,7 +341,7 @@ def _binary():
         cand = os.path.join(d, "orch-index")
         if d and os.path.isfile(cand) and os.access(cand, os.X_OK):
             return cand
-    home = os.path.join(os.path.expanduser("~"), ".claude", "bin", "orch-index")
+    home = os.path.join(data_bin(), "orch-index")
     return home if os.path.isfile(home) and os.access(home, os.X_OK) else None
 
 
@@ -414,7 +416,7 @@ def _log(decision, payload, tool, form, repo):
     """One JSON line, never the command text. Never raises."""
     try:
         import datetime
-        root = os.environ.get("ORCH_DIR") or os.path.join(os.path.expanduser("~"), ".claude", "orchestrations")
+        root = logs_dir()
         os.makedirs(root, exist_ok=True)
         rec = {"ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                "decision": decision, "agent_type": payload.get("agent_type"), "tool": tool, "form": form,
@@ -427,7 +429,7 @@ def _log(decision, payload, tool, form, repo):
 
 def decide(payload):
     """Returns the deny dict, or None to allow."""
-    if not isinstance(payload, dict) or payload.get("agent_type") not in ENFORCED:
+    if not isinstance(payload, dict) or agent_key(payload.get("agent_type")) not in ENFORCED:
         return None
     tool = payload.get("tool_name")
     tool_input = payload.get("tool_input")
