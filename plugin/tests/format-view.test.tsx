@@ -98,6 +98,9 @@ async function boot($: Engine, on: On, seed: Record<string, unknown> = { 'opt:fo
   on('session.cwd', () => ({ value: '/proj' }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', (_, e) => {
+    // The plugin's other mod is not under test here: its start is refused (the one module goes on with orch-ui's), so no
+    // pane timers or status runs share the mock clock that the timeout tests move by minutes.
+    if (e.name === 'orch-pane') throw new Error('orch-pane is not under test')
     w.commands.push(e.name)
     return { value: { command: e.name } }
   })
@@ -193,7 +196,7 @@ async function boot($: Engine, on: On, seed: Record<string, unknown> = { 'opt:fo
   on('tool.register', (_, e) => {
     w.tools.push(e.name)
     w.descriptions.push(e.description)
-    return { value: { tool: `mcp__orch-ui__${e.name}` } }
+    return { value: { tool: `mcp__orch__${e.name}` } }
   })
   on('store.get', (_, e) => {
     w.storeOps.push(`get:${e.key}`)
@@ -231,14 +234,14 @@ async function finish($: Engine, b: Booted, answer: string, extra: Record<string
   await b.clock.settle()
 }
 const show = ($: Engine, text: string, extra: Record<string, unknown> = {}) =>
-  $.ui.mount({ plugin: 'orch-ui', surface: 'terminal', component: 'AssistantMessage', requestId: `m${text.length}-${Math.random()}`, props: { text, isFirstOfReply: true, ...extra } as never })
+  $.ui.mount({ plugin: 'orch', surface: 'terminal', component: 'AssistantMessage', requestId: `m${text.length}-${Math.random()}`, props: { text, isFirstOfReply: true, ...extra } as never })
 type Ui = Awaited<ReturnType<typeof show>>
 // The engine draws the message itself while no hook rewrites it.
 const isOriginal = async (ui: Ui) => (await ui.drawn()).type === 'engine'
 const texts = async (ui: Ui) => (await ui.findAll({ type: 'Text' })).map(t => t.text)
 
 const PANE = {
-  plugin: 'orch-ui', component: 'Pane', requestId: 'orch-ui', surface: 'terminal',
+  plugin: 'orch', component: 'Pane', requestId: 'orch-ui', surface: 'terminal',
   props: { title: 'orch-ui', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} },
 } as const
 async function settingsPane($: Engine) {
@@ -395,7 +398,7 @@ test('summary rows and other surfaces are left as they are', async ($, on) => {
   await finish($, b, options.source)
   const summary = await show($, options.source, { isSummary: true })
   expect(await isOriginal(summary)).toBe(true)
-  const desktop = await $.ui.mount({ plugin: 'orch-ui', surface: 'desktop', component: 'AssistantMessage', requestId: 'd1', props: { text: options.source, isFirstOfReply: true } })
+  const desktop = await $.ui.mount({ plugin: 'orch', surface: 'desktop', component: 'AssistantMessage', requestId: 'd1', props: { text: options.source, isFirstOfReply: true } })
   expect(await desktop.drawn()).toMatchObject({ type: 'engine' })
   await summary.unmount()
   await desktop.unmount()
@@ -631,7 +634,16 @@ test('the raw tool is registered when the session is marked, and not before', as
   expect(formatTools(b.w)).toEqual([FORMAT_TOOL])
   await orchestrate($)
   expect(formatTools(b.w)).toEqual([FORMAT_TOOL])
-  expect(FORMAT_TOOL_FULL).toBe('mcp__orch-ui__set_message_format')
+  expect(FORMAT_TOOL_FULL).toBe('mcp__orch__set_message_format')
+})
+
+test('the plugin skill orch:orchestrate marks the session too, other skills do not', async ($, on) => {
+  const b = await boot($, on)
+  await $.skill.prompt({ skill: 'commit', text: 'rules' })
+  await $.skill.prompt({ skill: 'orch:orch-init', text: 'rules' })
+  expect(formatTools(b.w)).toEqual([])
+  await $.skill.prompt({ skill: 'orch:orchestrate', text: 'rules' })
+  expect(formatTools(b.w)).toEqual([FORMAT_TOOL])
 })
 
 test('raw with the default scope shows only the newest formatted message as written, and the next reply is formatted again', async ($, on) => {
@@ -1147,7 +1159,7 @@ test('key file: the key reaches exactly one place, the child\'s ANTHROPIC_API_KE
   const ui = await show($, options.source)
   expect(await isOriginal(ui)).toBe(false)
   const seen = await visible($, b, ui)
-  expect(seen.includes('orch-ui-format') && seen.includes('--system-prompt')).toBe(true) // instrument: the haystack holds what it should
+  expect(seen.includes('orch-data/cache/ui-format') && seen.includes('--system-prompt')).toBe(true) // instrument: the haystack holds what it should
   expect(seen.includes(cli.KEY)).toBe(false)
   // the file was checked, then read once, by the paths of D28
   expect(b.w.stats).toEqual([KEY_PATH])
@@ -1293,8 +1305,8 @@ test('cloud providers: an empty value does not count', async ($, on) => {
 test('working directory: under the home folder, never TMPDIR, TEMP or /tmp', async ($, on) => {
   const b = await boot($, on, { 'opt:format': true }, { HOME: '/home/u', TMPDIR: '/tmp/x', TEMP: '/tmp/y' })
   await convertOne($, b)
-  expect(lastCall(b).cwd).toBe('/home/u/.claude/orch-ui-format')
-  expect(b.w.written).toEqual(['/home/u/.claude/orch-ui-format/.keep'])
+  expect(lastCall(b).cwd).toBe('/home/u/.claude/orch-data/cache/ui-format')
+  expect(b.w.written).toEqual(['/home/u/.claude/orch-data/cache/ui-format/.keep'])
   expect(b.w.envAsked).not.toContain('TMPDIR')
   expect(b.w.envAsked).not.toContain('TEMP')
 })
@@ -1302,9 +1314,9 @@ test('working directory: under the home folder, never TMPDIR, TEMP or /tmp', asy
 test('working directory: Windows uses USERPROFILE with forward slashes', async ($, on) => {
   const b = await boot($, on, { 'opt:format': true }, { OS: 'Windows_NT', USERPROFILE: 'C:\\home\\u' })
   await convertOne($, b)
-  expect(lastCall(b).cwd).toBe('C:/home/u/.claude/orch-ui-format')
+  expect(lastCall(b).cwd).toBe('C:/home/u/.claude/orch-data/cache/ui-format')
   // the kit resolves a path that is not absolute on this host against the session folder, so only its tail is the plugin's
-  expect(b.w.written.map(w => w.slice(-'C:/home/u/.claude/orch-ui-format/.keep'.length))).toEqual(['C:/home/u/.claude/orch-ui-format/.keep'])
+  expect(b.w.written.map(w => w.slice(-'C:/home/u/.claude/orch-data/cache/ui-format/.keep'.length))).toEqual(['C:/home/u/.claude/orch-data/cache/ui-format/.keep'])
 })
 
 test('working directory: no home folder is workdir-failed, a pause, and no run', async ($, on) => {
@@ -1510,7 +1522,7 @@ test('a marked row is drawn without its marker line when it is not converted: op
   await again.unmount()
   // a summary and a desktop row lose it too
   const summary = await show($, text, { isSummary: true })
-  const desktop = await $.ui.mount({ plugin: 'orch-ui', surface: 'desktop', component: 'AssistantMessage', requestId: 'd9', props: { text, isFirstOfReply: true } })
+  const desktop = await $.ui.mount({ plugin: 'orch', surface: 'desktop', component: 'AssistantMessage', requestId: 'd9', props: { text, isFirstOfReply: true } })
   expect(rowsOf(b).slice(2)).toEqual([done.source, done.source])
   await summary.unmount()
   await desktop.unmount()
@@ -2041,7 +2053,7 @@ test('unchanged: unmarked replies, normal sessions, subagent turns, summaries an
   // a summary and a desktop row never get the placeholder
   const summary = await show($, first(options.source), { isSummary: true })
   expect(await isOriginal(summary)).toBe(true)
-  const desktop = await $.ui.mount({ plugin: 'orch-ui', surface: 'desktop', component: 'AssistantMessage', requestId: 'd7', props: { text: first(options.source), isFirstOfReply: true } })
+  const desktop = await $.ui.mount({ plugin: 'orch', surface: 'desktop', component: 'AssistantMessage', requestId: 'd7', props: { text: first(options.source), isFirstOfReply: true } })
   expect(rowsOf(b).slice(-2)).toEqual([options.source, options.source])
   for (const ui of [normal, partial, sub, plain, summary, desktop]) await ui.unmount()
 })

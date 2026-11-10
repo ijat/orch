@@ -677,7 +677,7 @@ export const confirmedOf = (drafts: Record<string, Draft> | undefined) =>
 
 // The tool the model calls to ask for a compaction: `mcp__<plugin>__<name>`.
 export const COMPACT_TOOL = 'compact_when_idle'
-export const COMPACT_TOOL_FULL = `mcp__orch-pane__${COMPACT_TOOL}`
+export const COMPACT_TOOL_FULL = `mcp__orch__${COMPACT_TOOL}`
 
 // Fixed texts, none carrying a caller's words. After a requested compaction the agent is woken once, to re-read
 // its state from orch.

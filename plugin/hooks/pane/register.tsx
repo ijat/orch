@@ -91,10 +91,10 @@ async function setError($: EngineInterface, error: string) {
   await update($, snapshot, s => ({ ...(s ?? EMPTY), error, fetchedAt }))
 }
 
-// Runs `orch-index status --json` for the session folder. It is a native binary beside `orch`; a missing one
+// Runs `orch-index status --json` for the session folder. It is a native binary in orch's data folder; a missing one
 // or a failure leaves a note and the last good index stays out of sight (an old index would mislead).
 async function fetchIndex($: EngineInterface, home: string, windows: boolean, cwd: string) {
-  const bin = `${home.replace(/\\/g, '/')}/.claude/bin/orch-index${windows ? '.exe' : ''}`
+  const bin = `${home.replace(/\\/g, '/')}/.claude/orch-data/bin/orch-index${windows ? '.exe' : ''}`
   const set = (index: IndexStatus | null, indexNote: string | null) =>
     update($, snapshot, s => ({ ...(s ?? EMPTY), index, indexNote }))
   let ran
@@ -116,9 +116,10 @@ async function fetchIndex($: EngineInterface, home: string, windows: boolean, cw
 const PY = (windows: boolean) => (windows ? 'python' : 'python3')
 const PICK = 'import json,sys\nd=json.load(open(sys.argv[1]))\n'
 
-// Version and commit of the three parts: the orch skill (`orch --version`; the commit it was synced from is
-// in ~/.claude/.orch-sync/manifest.json), orch-index (`--version`; the binary records no commit) and this plugin
-// (installed_plugins.json). A part that does not run or is not listed is "not installed".
+// Version and commit of the two parts: orch (`orch --version`, run from this plugin's bin; the commit is the first 12
+// characters of `orch@orch`'s gitCommitSha in installed_plugins.json, read only, when that entry's installPath is this
+// plugin's root, otherwise "dev") and orch-index (`--version`; the binary records no commit). A part that does not run
+// is "not installed".
 async function fetchAbout($: EngineInterface, home: string, windows: boolean): Promise<About> {
   const h = home.replace(/\\/g, '/')
   const run = async (argv: string[]) => {
@@ -131,16 +132,19 @@ async function fetchAbout($: EngineInterface, home: string, windows: boolean): P
   }
   const ver = (out: string | null) => out?.match(/(\d+\.\d+\.\d+\S*)/)?.[1] ?? null
   const py = PY(windows)
-  const [skillV, skillC, indexV, pane] = await Promise.all([
-    run([...(windows ? ['python'] : []), `${h}/.claude/bin/orch`, '--version']),
-    run([py, '-c', `${PICK}print(d['rev'])`, `${h}/.claude/.orch-sync/manifest.json`]),
-    run([`${h}/.claude/bin/orch-index${windows ? '.exe' : ''}`, '--version']),
-    run([py, '-c', `${PICK}e=d['plugins'].get('orch-pane@orch-pane')\nif e: print(e[0]['version'], e[0].get('gitCommitSha',''))`, `${h}/.claude/plugins/installed_plugins.json`]),
+  const root = $.plugin.root.replace(/\\/g, '/')
+  const [orchV, indexV, installed] = await Promise.all([
+    run([...(windows ? ['python'] : []), `${root}/bin/orch`, '--version']),
+    run([`${h}/.claude/orch-data/bin/orch-index${windows ? '.exe' : ''}`, '--version']),
+    run([py, '-c', `${PICK}e=d['plugins'].get('orch@orch')\nif e: print(e[0].get('installPath','').replace(chr(92),'/'), e[0].get('gitCommitSha',''))`, `${h}/.claude/plugins/installed_plugins.json`]),
   ])
-  const [paneV, paneC] = pane ? pane.split(/\s+/) : [null, null]
+  // The sha is the last word; the path before it may hold spaces.
+  const cut = installed ? installed.lastIndexOf(' ') : -1
+  const [installPath, sha] = installed && cut > 0 ? [installed.slice(0, cut), installed.slice(cut + 1)] : [null, null]
+  const commit = installPath === root && sha ? sha.slice(0, 12) : 'dev'
   const part = (name: string, version: string | null, commit: string | null): AboutPart =>
-    ({ name, installed: version !== null, version, commit: version !== null && commit ? commit.slice(0, 7) : null })
-  return [part('orch skill', ver(skillV), skillC), part('orch-index', ver(indexV), null), part('orch-pane', paneV ?? null, paneC ?? null)]
+    ({ name, installed: version !== null, version, commit: version !== null ? commit : null })
+  return [part('orch', ver(orchV), commit), part('orch-index', ver(indexV), null)]
 }
 
 // `--session <id>`: this session's id, so orch marks the task this session drives (`this_session`). Read at each call:
@@ -185,7 +189,7 @@ async function fetchStatusOnce($: EngineInterface): Promise<StatusJson | null> {
       return null
     }
     const cwd = await $.session.cwd()
-    const orch = `${home.replace(/\\/g, '/')}/.claude/bin/orch`
+    const orch = `${$.plugin.root.replace(/\\/g, '/')}/bin/orch`
     let ran
     try {
       ran = await runStatus($, session => [...(windows ? ['python'] : []), orch, 'status', '--json', '--cwd', cwd, ...session])
@@ -286,7 +290,7 @@ async function whereIsOrch($: EngineInterface): Promise<Where | null> {
   const windows = (await $.env.get('OS')) === 'Windows_NT'
   const home = windows ? await $.env.get('USERPROFILE') : await $.env.get('HOME')
   if (!home) return null
-  return { windows, home, orch: `${home.replace(/\\/g, '/')}/.claude/bin/orch`, cwd: await $.session.cwd() }
+  return { windows, home, orch: `${$.plugin.root.replace(/\\/g, '/')}/bin/orch`, cwd: await $.session.cwd() }
 }
 
 // `orch status --json --question-group <label>` (from the `skip`-th question on in full): the data, or null.

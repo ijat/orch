@@ -487,7 +487,7 @@ A copy that is not the installed one is a development copy: it refuses to write 
 - Roles: edit `plugin/skills/orchestrate/roles/`, never `plugin/agents/` by hand, then render with
   `python3 scripts/build-agents.py plugin/skills/orchestrate/roles plugin/agents`.
 - Check: `python3 scripts/check.py` runs the agent render check, `claude plugin validate`, every Python test
-  class (in parallel) and the public-safety scan, one line each. `--only NAME,…` picks some.
+  class (in parallel), the orch-pane and orch-ui suites (`claude plugin test plugin`) and the public-safety scan, one line each. `--only NAME,…` picks some.
 - Public safety: `scripts/check-public.py` fails when a published file, path or commit message matches a private
   denylist. Link `githooks/pre-push` as `.git/hooks/pre-push` to run it on exactly the commits being pushed.
 - Release: push, then `claude plugin marketplace update orch && claude plugin update orch@orch`.

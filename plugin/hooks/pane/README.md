@@ -2,7 +2,7 @@
 
 A Claude Code pane beside the chat that shows the orch orchestration tasks of the current repo: what each task does, its state, what is running now, step progress and overall progress. Click a milestone or step to see its summary.
 
-Needs the `orch` CLI at `~/.claude/bin/orch` (the pane runs `orch status --json`). For the Index section it also runs `~/.claude/bin/orch-index status --json` (`orch-index.exe` on Windows) from [ijat/orch-index](https://github.com/ijat/orch-index), 0.2.0 or later; without it the section says so and nothing else changes.
+Runs the `orch` CLI of this plugin, `bin/orch` under the plugin root (the pane runs `orch status --json`). For the Index section it also runs `~/.claude/orch-data/bin/orch-index status --json` (`orch-index.exe` on Windows) from [ijat/orch-index](https://github.com/ijat/orch-index), 0.2.0 or later; without it the section says so and nothing else changes.
 
 Works on macOS, Linux and Windows. On Windows the pane runs `orch` as `python <path>` and finds `~` from `USERPROFILE` instead of `HOME`.
 
