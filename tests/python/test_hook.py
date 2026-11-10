@@ -89,7 +89,7 @@ class HookCase(unittest.TestCase):
         with open(self.db_path(), "w") as f:
             f.write(content)
 
-    def payload(self, tool, tool_input, agent="orch-implementer", cwd=None):
+    def payload(self, tool, tool_input, agent="orch:implementer", cwd=None):
         p = {"tool_name": tool, "tool_input": tool_input, "cwd": cwd or self.repo, "session_id": "s1"}
         if agent is not None:
             p["agent_type"] = agent
@@ -132,7 +132,7 @@ class ReasonText(HookCase):
     def test_exact_first_line(self):
         self.assertEqual(
             hook.REASON,
-            "orch: this repo has a code index — send repo-wide searches to orch-explorer "
+            "orch: this repo has a code index — send repo-wide searches to orch:explorer "
             "(batch your questions; ask for file:line). Searching one file is fine.")
 
 

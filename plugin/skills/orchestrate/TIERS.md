@@ -7,7 +7,7 @@ pilot, lite task) is routed with **§ Implementer routing** below.
 
 ## The models (facts from the Claude API model pages, cached 2026-11-04)
 
-Which model each alias resolves to is read from real transcripts (`~/.claude/bin/role-cost.py`), not assumed.
+Which model each alias resolves to is read from real transcripts (`role-cost.py`), not assumed.
 Keep the aliases in the agent files and spawn parameters (never pinned IDs) so each role
 follows the newest model. Aliases depend on the Claude Code version: `haiku` → Haiku 5.5 needs
 v2.1.293+ (confirmed on 2.1.294, 2026-10-08), and sessions on older versions got Haiku 4.5.

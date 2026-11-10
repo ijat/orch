@@ -103,7 +103,7 @@
 
 ### Final gate (once, alongside review)
 
-<!-- Exact full-suite, lint and build commands, run once after the last step via `orch-executor` (one
+<!-- Exact full-suite, lint and build commands, run once after the last step via `orch:executor` (one
      clean run), plus any manual check automation can't cover. -->
 
 ## Risks and unknowns

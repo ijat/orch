@@ -1,4 +1,4 @@
-<!-- Output of the orch-init agent in audit mode: ~/.claude/orchestrations/<repo-name>/audit.md.
+<!-- Output of the orch:init agent in audit mode: ~/.claude/orch-data/tasks/<repo-name>/audit.md.
 The agent never edits the repo. Every finding has evidence and a proposed diff. -->
 # Audit: {{repo-name}}
 

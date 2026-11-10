@@ -1,4 +1,4 @@
-<!-- Phase-1 output of the orch-init agent: ~/.claude/orchestrations/<repo-name>/init-proposal.md.
+<!-- Phase-1 output of the orch:init agent: ~/.claude/orch-data/tasks/<repo-name>/init-proposal.md.
 Nothing is written to the repo until the user approves this. Keep it scannable. -->
 # Init proposal: {{repo-name}}
 

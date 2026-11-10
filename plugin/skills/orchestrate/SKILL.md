@@ -9,6 +9,7 @@ You are the **orchestrator**: you coordinate specialist roles, keep all shared s
 files on disk, run the work in a dedicated git worktree so nothing lands on the user's branch until
 review and the final gate pass (step 10), and pace the work against the account's usage limits. Keep the model the user already
 has — never switch your own.
+Paths: this file and the role files name skill files by their full path under `${CLAUDE_PLUGIN_ROOT}/skills/`; in this skill's other files (`PROGRAM.md`, `TIERS.md`, `LITE.md`, `INTERACTIVE.md`, `VISUAL.md`, `templates/`) a relative path is relative to this skill's directory, `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/`.
 
 ## The one rule
 
@@ -20,13 +21,13 @@ extra, never the medium.
 
 ## The `orch` CLI
 
-Bookkeeping is one call per state transition: `~/.claude/bin/orch [-t <task>] <command>` (`orch --help`;
+Bookkeeping is one call per state transition: `orch [-t <task>] <command>` (`orch --help`;
 `<task>` is `<repo>/<slug>` or an absolute task dir). Exit 0 ok; 1 usage or validation error and 2 refused
 by a guard or policy (usage STOP, a merge condition) write nothing; 3 internal error (for `merge`: the merge
 commit exists): read the message.
 
 **Fallback:** `orch` missing, or failing in a way a corrected call won't fix → edit the files by hand
-per their templates (then `~/.claude/bin/orch-index.sh` refreshes `ACTIVE.md`) and say so in the log line.
+per their templates (then `orch-index.sh` refreshes `ACTIVE.md`) and say so in the log line.
 
 **Old-format tasks** (no `briefs/` or `questions.md`, journal lines keyed `event`, status.md missing
 newer fields) work as they are. A row `orch` can't parse (exit 1) is fixed by hand per the template; if
@@ -46,16 +47,16 @@ below it).
 
 | Role | `subagent_type` | Default tier | Escalation ladder |
 |---|---|---|---|
-| Planner | `orch-planner` | `opus/high` | → `opus/max`; `fable/max` only after an `opus/max` plan failed (or the user asks) |
-| Implementer | `orch-implementer` | `sonnet/high` | → `opus/medium` → `opus/high` → `opus/max` → `fable/high` (Fable only after a failed `opus/max` pass, or the user asks); `haiku/medium` for gated steps (`TIERS.md`) |
-| Code reviewer | `orch-code-reviewer` | `opus/high` | — |
-| Security reviewer | `orch-security-reviewer` | `opus/high` | — **by rule** (step 5) or on request; every run or skip journaled |
-| Plan reviewer | `orch-plan-reviewer` | `sonnet/high` | — roadmaps and `opus/max` plans only (`PROGRAM.md` §1) |
-| Director | `orch-director` | `opus/high` | → `opus/max` after the user reverses an accepted verdict — plan steps marked `visual:` only (step 7) |
-| Explorer | `orch-explorer` | `haiku/low` | read-only lookups and claim checks |
-| Graph | `orch-graph` | `haiku/low` | keeps the code index (orch-index) fresh (check; rebuild when stale or missing; install a missing binary once, only under its install conditions); you, the planner or the user call it, never the explorer. The explorer is the only role that queries the index |
-| Executor | `orch-executor` | `haiku/low` | runs builds/tests/lint, returns a digest |
-| Init | `orch-init` | `sonnet/high` | → `opus/medium` for an ecosystem with no `skills/orch-init/references/<ecosystem>.md`; sets up or audits a project's agent files for the `orch-init` skill (step 3a) |
+| Planner | `orch:planner` | `opus/high` | → `opus/max`; `fable/max` only after an `opus/max` plan failed (or the user asks) |
+| Implementer | `orch:implementer` | `sonnet/high` | → `opus/medium` → `opus/high` → `opus/max` → `fable/high` (Fable only after a failed `opus/max` pass, or the user asks); `haiku/medium` for gated steps (`TIERS.md`) |
+| Code reviewer | `orch:code-reviewer` | `opus/high` | — |
+| Security reviewer | `orch:security-reviewer` | `opus/high` | — **by rule** (step 5) or on request; every run or skip journaled |
+| Plan reviewer | `orch:plan-reviewer` | `sonnet/high` | — roadmaps and `opus/max` plans only (`PROGRAM.md` §1) |
+| Director | `orch:director` | `opus/high` | → `opus/max` after the user reverses an accepted verdict — plan steps marked `visual:` only (step 7) |
+| Explorer | `orch:explorer` | `haiku/low` | read-only lookups and claim checks |
+| Graph | `orch:graph` | `haiku/low` | keeps the code index (orch-index) fresh (check; rebuild when stale or missing; install a missing binary once, only under its install conditions); you, the planner or the user call it, never the explorer. The explorer is the only role that queries the index |
+| Executor | `orch:executor` | `haiku/low` | runs builds/tests/lint, returns a digest |
+| Init | `orch:init` | `sonnet/high` | → `opus/medium` for an ecosystem with no `skills/orch-init/references/<ecosystem>.md`; sets up or audits a project's agent files for the `orch-init` skill (step 3a) |
 
 Always pass both `model` and `effort` for planners and implementers, even at the default tier, so the
 spawn record states it. The ladders are the normal path; any other combination, including raising a
@@ -63,7 +64,7 @@ reviewer, is allowed after weighing **`TIERS.md`** (quality, ability, speed, cos
 history). Read it before every tier choice; each records a one-line `tradeoff`.
 
 Set the spawn's `description` to `<agent>-<model>[<effort>]: <task>`, e.g.
-`orch-planner-opus[max]: plan auth flow`, so `/tasks` shows the tier (the agent *type* stays `orch-planner`).
+`orch-planner-opus[max]: plan auth flow`, so `/tasks` shows the tier (the agent *type* stays `orch:planner`).
 
 Every spawn brief states `tier: <model>/<effort>` and `escalation: none | proactive | post-failure`;
 anything but `none` switches on the role file's **If escalated** section, and **requires an
@@ -73,14 +74,14 @@ Records before 2026-10-08 name tiers by agent file; map them when resuming (`orc
 `…-max` / `…-opus-max` → `opus/max`, `…-fable[-max]` → `fable/max`; `orch-implementer` / `…-sonnet` →
 `sonnet/high`, `…-expert` / `…-opus` → `opus/medium`, `…-fable` → `fable/high`).
 
-Every role (and you) may nest-call `orch-explorer` and `orch-executor`, and nothing else; you and `orch-planner`
-may also call `orch-graph` (instruction-enforced, not tool-gated: a real boundary; each role's file says so).
+Every role (and you) may nest-call `orch:explorer` and `orch:executor`, and nothing else; you and `orch:planner`
+may also call `orch:graph` (instruction-enforced, not tool-gated: a real boundary; each role's file says so).
 A role needing other help stops and reports to you.
 
-**Verify, don't assume — every role, you included.** State a claim only once you or `orch-explorer`
+**Verify, don't assume — every role, you included.** State a claim only once you or `orch:explorer`
 read the thing it's about. What genuinely can't be checked gets labelled an assumption.
 
-**Your own lookups go to `orch-explorer`** ("where is X", "does Y exist", "who uses Z"): your first search
+**Your own lookups go to `orch:explorer`** ("where is X", "does Y exist", "who uses Z"): your first search
 on any question that is not about one file you were handed is an explorer spawn (batch several per spawn). You read plan, status, brief and task files yourself.
 
 ### Tier selection
@@ -111,7 +112,7 @@ why** — it's the most expensive rung.
 ## Task directory
 
 ```
-~/.claude/orchestrations/<repo-name>/<task-slug>/
+~/.claude/orch-data/tasks/<repo-name>/<task-slug>/
   plan.md             # planner's output; Summary first
   status.md           # fixed-form fields + one row per role, rewritten in place
   log.md              # append-only, one line per event
@@ -129,22 +130,22 @@ why** — it's the most expensive rung.
 ```
 
 `<repo-name>` is the repo directory name; `<task-slug>` is short, lowercase, hyphenated. Beside the
-task dirs: `~/.claude/orchestrations/LESSONS.md` (global),
-`~/.claude/orchestrations/<repo-name>/LESSONS.md` (repo),
-`~/.claude/orchestrations/<repo-name>/security-ledger.md`, and optionally `<repo-name>/policy.md`
+task dirs: `~/.claude/orch-data/tasks/LESSONS.md` (global),
+`~/.claude/orch-data/tasks/<repo-name>/LESSONS.md` (repo),
+`~/.claude/orch-data/tasks/<repo-name>/security-ledger.md`, and optionally `<repo-name>/policy.md`
 (`- merge: auto | ask`, `- security: rule | always | ask`; absent = `auto`, `rule`). Never use
 `~/.claude/tasks/` or `~/.claude/plans/` — Claude Code owns those.
 
 The `orch-init` skill (step 3a) also keeps `<repo-name>/init.md` (its record), `<repo-name>/init-proposal.md` (the proposal) and `<repo-name>/audit.md` (an audit's findings) beside the task dirs.
 
-**Every file above has a template in `~/.claude/skills/orchestrate/templates/`** — the single definition of its format, including
+**Every file above has a template in `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/templates/`** — the single definition of its format, including
 state vocabularies and round rules. Nobody invents another layout or
 another file. Anything that doesn't fit a template's sections goes in `notes.md`.
 
 ## Checkpointing contract (give this to every subagent)
 
-Every `orch-*` role must, one call each (the brief's *Checkpoint commands* have them filled in):
-`~/.claude/bin/orch -t <task> role <role> <state> --step <step> --note "<note>" --log "<what>"`.
+Every `orch:*` role must, one call each (the brief's *Checkpoint commands* have them filled in):
+`orch -t <task> role <role> <state> --step <step> --note "<note>" --log "<what>"`.
 
 - set its `status.md` row to `in_progress` with a UTC timestamp **before** starting;
 - append a `log.md` line at each meaningful step boundary, and update `last completed step` as it
@@ -217,7 +218,7 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
    spawn, 5 minutes after the row went final, whatever check-ins came before; it is not one of the 4 silence check-ins;
    a `waiting` row never fires it.
 
-**Index rebuild pause.** Two triggers call `orch-graph`.
+**Index rebuild pause.** Two triggers call `orch:graph`.
 
 - **Pre-plan call (yours):** once before each plan, in every mode: step 4's planning (standard, lite,
   interactive) and each program milestone's detail plan. Ask it for a `pre-plan` run on the
@@ -227,23 +228,23 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
   It is also the call that may install a missing `orch-index` binary. Log the result:
   `orch set --log "pre-plan index: <state>"`.
 - **Stale hint:** when the explorer's reply says the index is stale
-  (`index unavailable: stale … (refresh: orch-graph)`) on a repository that has an index. Never for
+  (`index unavailable: stale … (refresh: orch:graph)`) on a repository that has an index. Never for
   `no index`, `binary not found`, an index that is only behind HEAD (`index at <sha> + delta search`)
   or a stale line without the refresh hint (the explorer omits it in a linked worktree, where a rebuild
   would make the main checkout's index stale). Only the pre-plan call handles those states.
 
 Never at any other time or automatically. Never two at once, and never while another index run is in progress (a live
-`<git-common-dir>/orch-index/indexing` marker, or a running `orch-graph` spawn).
-`orch-graph` installs a missing binary only when the caller did not ask for check only,
+`<git-common-dir>/orch-index/indexing` marker, or a running `orch:graph` spawn).
+`orch:graph` installs a missing binary only when the caller did not ask for check only,
 `ORCH_INDEX_AUTOINSTALL` is not `0`, `ORCH_INDEX_BIN` is unset or empty, no `orch-index` is on `PATH`,
-and `~/.claude/bin/orch-index` does not exist; it then runs `~/.claude/bin/orch-install-code-index.sh`
+and `~/.claude/orch-data/bin/orch-index` does not exist; it then runs `orch-install-code-index.sh`
 once (Bash timeout 300 s) and, if `stats` still fails after that, reports the script's last line and
 stops. Point it at the repository's main checkout, never a task worktree (from a linked worktree it
 does not rebuild). Spawn it in the **foreground** (it writes
 `<git-common-dir>/orch-index/indexing` for the rebuild, removes it after, and the explorer's first
-command waits on that marker). While an `orch-graph` spawn runs, spawn nothing else (no explorer, no
-implementer, no reviewer) and do no exploring of your own. The same binds `orch-planner` when it calls
-`orch-graph`. This is instruction-level: another person's session, or a role that never reads this
+command waits on that marker). While an `orch:graph` spawn runs, spawn nothing else (no explorer, no
+implementer, no reviewer) and do no exploring of your own. The same binds `orch:planner` when it calls
+`orch:graph`. This is instruction-level: another person's session, or a role that never reads this
 rule, is not blocked.
 
 ### Pause on STOP
@@ -269,7 +270,7 @@ choice, unconfirmable fact — stops, sets `blocked`, writes what it needs into 
 `log.md`, and returns. You then work down, in order, without skipping:
 
 1. **Answer it yourself** if you know or can check it in a moment.
-2. **Spawn for it** — usually `orch-explorer`; or a planner revision, a targeted reviewer question, a
+2. **Spawn for it** — usually `orch:explorer`; or a planner revision, a targeted reviewer question, a
    fresh side-investigation.
 3. **Ask the user** only when 1 and 2 produced no real answer. A blocker that is a **reversible**
    choice, **outside every sensitive area** (step 5 list) and contradicts **no recorded user
@@ -293,7 +294,7 @@ is written**, and the other files point here.
 | Code review fix-and-check cycles (step 9) | 3 per round | any finding left open (blocker or should-fix, routed or new) at the review or at a check: one more fix batch, then a check by the same reviewer. Checks are not rounds | a blocker still open: never raised; step 9's stop, a parked question (`orch ask`) for the user, whose answer lets round N+1 be briefed; only should-fix open: parked with `orch follow-up` first, then the check journaled with the parked findings not counted, and the review passes (below) |
 | Security review (step 9) | 3 rounds | any routed security finding; all are routed, nits too (`orch merge` needs 0 nits) | same stop |
 | Lite mode (`LITE.md`) | 2 rounds | as code review | switch to standard and go on from round 3 |
-| Director, per item (`orch-director`) | 2 redo rounds | a redo verdict, or a `stuck` | record both variants; pick or escalate (the director's file); never a third |
+| Director, per item (`orch:director`) | 2 redo rounds | a redo verdict, or a `stuck` | record both variants; pick or escalate (the director's file); never a third |
 | Plan reviewer (`PROGRAM.md` §1.3) | 3 passes | a `blocker` finding | a parked question: the open blockers go to the user |
 
 - **Raising a cap** (a loop that is converging, one more round is cheaper than a restart): an orchestrator running
@@ -379,7 +380,7 @@ only when nothing independent is left, `orch checkpoint --ask` lists the first 1
 parked: tell the user, in a line, that they are waiting in orch-pane, end the turn, and when the answers arrive (the panel
 runs `orch answers`) repeat for the rest.
 
-**Requested compaction (optional).** Only at a checkpoint, only if the orch-pane tool `mcp__orch-pane__compact_when_idle` is in
+**Requested compaction (optional).** Only at a checkpoint, only if the orch-pane tool `mcp__orch__compact_when_idle` is in
 your tool list (ToolSearch it if deferred), and only when no subagent runs and no spawn is in flight. Call it with `instructions`
 naming what the summary must keep (the task directory, the current step, open decisions), then end the turn: the pane compacts
 once, between turns, and wakes you. Afterwards re-read the state from `orch` (`orch resume`, `orch status --json`, `status.md`,
@@ -387,7 +388,7 @@ once, between turns, and wakes you. Afterwards re-read the state from `orch` (`o
 changes nothing: carry on as without it.
 
 **Message formatting (optional).** orch-ui can redraw your finished replies for the user in a structured layout. All of this
-applies only while `mcp__orch-ui__set_message_format` is in your tool list, loaded or deferred; without it, do none of it. **Mark
+applies only while `mcp__orch__set_message_format` is in your tool list, loaded or deferred; without it, do none of it. **Mark
 important replies:** when your final reply is a plan or gate summary, a question or blocker that needs the user, step or task
 results (also when nothing is waiting on them), the final digest, a benchmark or review result, or a status overview the user
 asked for, start it with the line `<!-- orch-ui -->` on its own, before any other text. Leave progress notes, acknowledgements and
@@ -435,7 +436,7 @@ in doubt, route it through the pipeline.
 ## Security ledger
 
 `<repo-name>/security-ledger.md` holds the repo's security findings across all tasks; the reviewer owns it
-(`templates/security-ledger.md`). Give its path to every `orch-security-reviewer` spawn (it may not exist yet), in the `--extra` file of `orch brief security`.
+(`templates/security-ledger.md`). Give its path to every `orch:security-reviewer` spawn (it may not exist yet), in the `--extra` file of `orch brief security`.
 
 ## Lessons learned
 
@@ -457,8 +458,8 @@ it's tied to this repo (prefer repo when unsure).
 ```
 
 **Promote, don't just log.** If the lesson changes a role's standing behaviour, edit it into that
-role's source, `~/.claude/skills/orchestrate/roles/<role>.md` (or this skill, for orchestrator behaviour), and run
-`~/.claude/bin/orch-build-agents.py` in the same change — never `agents/orch-*.md`, which are generated and
+role's source, `plugin/skills/orchestrate/roles/<role>.md` in the orch repository (or this skill, for orchestrator behaviour), and run
+`scripts/build-agents.py plugin/skills/orchestrate/roles plugin/agents` in the same change — never `plugin/agents/*.md`, which are generated and
 overwritten by the next build; and in
 `LESSONS.md` replace the entry with a one-line row in the *Promoted* table pointing at where it now
 lives. `LESSONS.md` should only hold lessons not yet promoted anywhere; if it grows past about a
@@ -467,8 +468,8 @@ screen, consolidate.
 ## Procedure
 
 Every spawn below follows the **Dispatch protocol**. In lite mode, read
-`~/.claude/skills/orchestrate/LITE.md` first and apply its differences at steps 3, 4, 5, 7 and 9; in interactive
-mode, read `~/.claude/skills/orchestrate/INTERACTIVE.md` first and apply its differences.
+`${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/LITE.md` first and apply its differences at steps 3, 4, 5, 7 and 9; in interactive
+mode, read `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/INTERACTIVE.md` first and apply its differences.
 
 ### 1. Confirm the mode
 
@@ -511,23 +512,23 @@ seeds `status.md` (`task_state: planning`) and `log.md`, journals `task_start`, 
 Applies only when the repo is new or empty, by the `orch-init` skill's *When it runs* test (do not
 restate it here). For any other repo skip this step: nothing below changes its flow, and nothing about
 init is logged or journaled (only an offered-and-answered init gets `init: set up` / `init: skipped`). Load the
-`orch-init` skill (`~/.claude/skills/orch-init/SKILL.md`) and run its mode `new` through its hand-off:
+`orch-init` skill (`${CLAUDE_PLUGIN_ROOT}/skills/orch-init/SKILL.md`) and run its mode `new` through its hand-off:
 it restates the project, offers the setup with a strong "don't skip" line, asks one question batch,
-shows the proposal, and has the `orch-init` agent write the files in the repo's main checkout on the
+shows the proposal, and has the `orch:init` agent write the files in the repo's main checkout on the
 base branch with one commit. The user may skip; journal the choice (`override` if they skipped against
 the recommendation, else `judgement`) and log `init: set up` or `init: skipped`. Then go on to step 4:
 if set up, the planner's brief names `CLAUDE.md`, `docs/STATE.md`, `docs/DECISIONS.md` and
-`~/.claude/orchestrations/<repo-name>/init.md` as required reading, and the init commit is the base the
+`~/.claude/orch-data/tasks/<repo-name>/init.md` as required reading, and the init commit is the base the
 plan is made against; after a skip those files do not exist and the brief omits them.
 
 ### 4. Plan
 
-Read both lessons files (`~/.claude/orchestrations/LESSONS.md`, `~/.claude/orchestrations/<repo-name>/LESSONS.md`)
-— each independently, so a missing one can't skip the other. Also read `~/.claude/orchestrations/<repo-name>/follow-ups.md`
+Read both lessons files (`~/.claude/orch-data/tasks/LESSONS.md`, `~/.claude/orch-data/tasks/<repo-name>/LESSONS.md`)
+— each independently, so a missing one can't skip the other. Also read `~/.claude/orch-data/tasks/<repo-name>/follow-ups.md`
 if it exists: should-fix and nit findings earlier tasks parked (`orch follow-up`, § Review loops). They are planning
 input, not work: offer one to the user only when it touches the request, and give the planner the rows that do.
 
-Then the pre-plan `orch-graph` call (Index rebuild pause), before any planner spawn or planning.
+Then the pre-plan `orch:graph` call (Index rebuild pause), before any planner spawn or planning.
 
 Spawn the chosen planner tier with: the user's request verbatim; absolute repo path and branch;
 absolute task dir and `plan.md` path; the tier and one-line reason for the header; anything relevant
@@ -536,7 +537,7 @@ from the lessons files; and that it's read-only on the codebase (writes only `pl
 
 **Shape.** Every plan states `shape: single | roadmap` (first Summary line of `plan.md`, header of
 `roadmap.md`). A `roadmap` (or a planner
-returning `need: shape_roadmap`) → read `~/.claude/skills/orchestrate/PROGRAM.md` and follow it from
+returning `need: shape_roadmap`) → read `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/PROGRAM.md` and follow it from
 here. A single plan written at `opus/max` gets the plan reviewer (`PROGRAM.md` §1.3) before the gate.
 Journal `plan_shape`; show the shape line at the gate, and if the user overrules it, journal
 `override` and send it back to the planner.
@@ -637,7 +638,7 @@ branch and worktree off the task branch (own brief and row, `implementer:<part>`
 You merge the part-branches into `orch/<task-slug>` yourself **before** review, then remove each
 part worktree and delete its branch. Log each part-branch, merge, and removal.
 
-**Visual steps and pilots:** a step with `visual:` or `pilot:` → read `~/.claude/skills/orchestrate/VISUAL.md` first and follow it.
+**Visual steps and pilots:** a step with `visual:` or `pilot:` → read `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/VISUAL.md` first and follow it.
 
 **Shared devices** (a GUI VM, a phone, a test board other sessions may use): before briefing work on
 one, run a control-checked idle probe (known processes found, open remote connections, recent writes).
@@ -661,11 +662,11 @@ in `status.md` (row `skipped`) and journal an `override` whose `what` says "revi
 `<base>...orch/<task-slug>`, from round 2 `<last reviewed sha>..<tip>` — and the exact `git diff <range>` command to
 read it with, the plan's steps, decisions and revisions, the absolute `review.md` path). It refuses (exit 2) while the
 worktree has uncommitted changes: the range sees only commits. Spawn
-`orch-code-reviewer` with the spawn prompt `orch brief` printed, unchanged. If step 5 said it runs, `orch brief security` and spawn
-`orch-security-reviewer` the same way, with `security-review.md` and the security-ledger path (in its `--extra` file). The two
+`orch:code-reviewer` with the spawn prompt `orch brief` printed, unchanged. If step 5 said it runs, `orch brief security` and spawn
+`orch:security-reviewer` the same way, with `security-review.md` and the security-ledger path (in its `--extra` file). The two
 may run concurrently.
 
-**Gate alongside review.** In the same turn, start `orch-executor` in the background on the plan's Verification
+**Gate alongside review.** In the same turn, start `orch:executor` in the background on the plan's Verification
 commands at the same tip; it reads the tree and changes nothing. A failure is a finding: route it with the
 review's findings (step 9). Every fix batch repeats this at its new tip, beside its check or re-review. The pass that
 stands at the final tip is step 10's gate, so it doesn't run again. With review skipped, the gate runs at step 10.
@@ -690,7 +691,7 @@ A fix-batch check (step 9) is journaled the same way with `check:=true`, `cycle:
    finding, or per batch of one class).
 2. **Code review: check the fix batch, cycle by cycle.** After a review (or a check) with something open and its batch
    committed, `orch brief review --check` (with `--tier`, `--escalation` and `--tradeoff`, spawn prompt unchanged)
-   briefs the same `orch-code-reviewer` (step 7) on the fix commits only, the range from the previous line's sha
+   briefs the same `orch:code-reviewer` (step 7) on the fix commits only, the range from the previous line's sha
    to the tip, and names the closed findings (resolved, or disputed and ruled on) so it doesn't re-raise them.
    The reviewer appends a `## Check of round N` section to `review.md` (`## Check K of round N` from cycle 2).
    Journal it with `check:=true` and `cycle:=K`, the counts open after the check
@@ -735,7 +736,7 @@ embed a whole file, say where it must and must not land.
 
 When review passes (no routed finding still open):
 
-1. Journal the final gate — the plan's Verification commands, once, via `orch-executor`, passed at the
+1. Journal the final gate — the plan's Verification commands, once, via `orch:executor`, passed at the
    task-branch tip. Step 8's run counts when no commit followed it; any later commit means running it again:
    `orch journal final_gate verdict=pass sha=<tip> command="<gate command>"`.
 2. `orch merge --recheck-ok` checks its conditions in code and fails closed (`--check` lists them: the
@@ -762,7 +763,7 @@ git -C <repo> worktree list                  # confirm no orch-<task-slug>* rema
 
 Keep the task directory — it's the record.
 
-**Init refresh.** After this merge, if `~/.claude/orchestrations/<repo-name>/init.md` says `refresh: pending`, run the `orch-init` skill's mode `refresh` once (a proposal the user approves, one commit), then it reads `refresh: done`; if the user skips it, the session sets `refresh: skipped` and it is not offered again (only `pending` fires). In program mode this runs after the first milestone's merge (`PROGRAM.md` §2).
+**Init refresh.** After this merge, if `~/.claude/orch-data/tasks/<repo-name>/init.md` says `refresh: pending`, run the `orch-init` skill's mode `refresh` once (a proposal the user approves, one commit), then it reads `refresh: done`; if the user skips it, the session sets `refresh: skipped` and it is not offered again (only `pending` fires). In program mode this runs after the first milestone's merge (`PROGRAM.md` §2).
 
 **Every task end — merged, declined, failed merge, abandoned, or handed to the user — gets a
 `task_end` journal line and a `retro.md`**, before you report back: write `retro.md`, then
@@ -785,7 +786,7 @@ worktree and task directory plus the branch name.
 - Spawn without the pre-flight (`orch spawn`); treat `STALE`/`UNKNOWN` as safe; let a subagent run
   past `STOP`; poll usage on a timer while a wait is armed; arm `usage-watch.sh`; leave a `Monitor` armed past
   its subagent, or run one as a keep-alive (`sleep N; echo tick`) instead of a filter on a real process or log; claim a crash will auto-resume.
-- Let a role spawn anything but `orch-explorer`/`orch-executor` (the planner and you also `orch-graph`), or guess inside a sensitive area.
+- Let a role spawn anything but `orch:explorer`/`orch:executor` (the planner and you also `orch:graph`), or guess inside a sensitive area.
 - Assert what could have been verified; go to the user before trying rungs 1 and 2.
 - Let a subagent write to `LESSONS.md`; log non-critical findings as lessons; leave a
   behaviour-changing lesson unpromoted.

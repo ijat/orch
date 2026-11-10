@@ -11,7 +11,7 @@
 - milestone: n/a | M<n> — <detail-plan | implementing | testing | reviewing | awaiting_merge>   (roadmap only)
 - reviewed_through: none | <sha>   (roadmap only)
 - merged_through: none | <sha>   (roadmap only)
-- task_dir: ~/.claude/orchestrations/<repo>/<slug>
+- task_dir: ~/.claude/orch-data/tasks/<repo>/<slug>
 - repo: /abs/path/to/repo
 - base_branch: <branch>
 - task_branch: orch/<task-slug>

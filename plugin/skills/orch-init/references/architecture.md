@@ -1,6 +1,6 @@
 # Architecture reference: swappable interfaces at every boundary
 
-Language-neutral. Used by the `orch-init` agent to name boundaries for a project and to write the
+Language-neutral. Used by the `orch:init` agent to name boundaries for a project and to write the
 `Architecture rules` section of its CLAUDE.md (<= 10 lines). Ecosystem commands, layouts and idioms live
 in `references/<ecosystem>.md`, not here. Examples describe patterns seen in earlier projects, generically,
 as illustrations and not as requirements. Claims marked `[unsourced]` are working judgement with no primary source.

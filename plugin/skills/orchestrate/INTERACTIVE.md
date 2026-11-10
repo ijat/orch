@@ -8,7 +8,7 @@ and implementers, reviewers and the merge run exactly as in standard mode. Use i
 
 **The boundary is the point of the mode: you never write product code.** Not while planning, not after
 the gate, not in fix rounds. Your writes are the task directory (the planner's files plus your
-bookkeeping); every code change goes to an `orch-implementer` (steps 7 and 9). *Direct edits* still
+bookkeeping); every code change goes to an `orch:implementer` (steps 7 and 9). *Direct edits* still
 applies after the gate and nowhere else.
 
 **Tier.** You plan at the session's own model and effort (write `unknown` for an effort you can't
@@ -21,7 +21,7 @@ mode (a spawned planner at that tier), or go on here (journal `override`). Recor
 **Flow** — the standard procedure with these differences:
 
 - **Step 3:** `orch init … --mode interactive`.
-- **Step 4:** after the pre-plan `orch-graph` call, you do the planner's job. Read `~/.claude/agents/orch-planner.md` once and follow it as
+- **Step 4:** after the pre-plan `orch:graph` call, you do the planner's job. Read `../../agents/planner.md` once and follow it as
   the planner, except: the user's conversation is your brief; a question it
   would return `blocked` with goes straight to the user after rungs 1–2 of the escalation ladder;
   `need: shape_roadmap` below `opus/max` → tell the user and continue only if they agree (else
@@ -36,7 +36,7 @@ mode (a spawned planner at that tier), or go on here (journal `override`). Recor
 - **Program mode:** you write `roadmap.md`; milestone `plan.md`s are spawned per `PROGRAM.md` unless
   the user asks you to write one.
 - **Later plan revisions** (an implementer's `plan_flag`, a blocker, user feedback): you append them.
-  A plan whose own design kept failing escalates as in standard: spawn an `orch-planner` at the ladder
+  A plan whose own design kept failing escalates as in standard: spawn an `orch:planner` at the ladder
   tier (`escalation: post-failure`).
 
 **Switching to standard:** the user asks for it, or the tier check above sends it there. Journal a

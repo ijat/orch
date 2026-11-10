@@ -69,7 +69,7 @@ class TestSpawn(FlowBase):
                  (4, "state=UNKNOWN 5h=? 5h_age=? reason=no-cache-sample", True)]
         for code, line, warns in cases:
             before = len(self.journal())
-            out, err = self.spawn("implementer", "--agent", "orch-implementer", "--tier", "sonnet/high",
+            out, err = self.spawn("implementer", "--agent", "orch:implementer", "--tier", "sonnet/high",
                                   env=self.fake_usage(code, line))
             self.assertIn("usage: " + line, out)
             self.assertEqual(err.count("warning:") if warns else err, 1 if warns else "", (code, err))
@@ -85,20 +85,20 @@ class TestSpawn(FlowBase):
     def test_stop_refuses_and_writes_only_a_log_line(self):
         journal_before = self.read(self.d, "journal.jsonl")
         status_before = self.read(self.d, "status.md")
-        err = self.refuse(2, "spawn", "implementer", "--agent", "orch-implementer", "--tier", "sonnet/high",
+        err = self.refuse(2, "spawn", "implementer", "--agent", "orch:implementer", "--tier", "sonnet/high",
                           "--reason", "r", "--tradeoff", "t",
                           env=self.fake_usage(2, "state=STOP 5h=96 5h_age=2 7d=70 7d_age=2"))
         self.assertIn("spawn refused: usage STOP (5h 96%) est=? line=?", err)
         self.assertEqual(self.read(self.d, "journal.jsonl"), journal_before)
         self.assertEqual(self.read(self.d, "status.md"), status_before)
         self.assertTrue(self.log_lines()[-1].endswith("orchestrator: spawn refused: usage STOP (5h 96%) est=? line=?"))
-        err = self.refuse(2, "spawn", "implementer", "--agent", "orch-implementer", "--tier", "sonnet/high",
+        err = self.refuse(2, "spawn", "implementer", "--agent", "orch:implementer", "--tier", "sonnet/high",
                           env=self.fake_usage(2, "state=STOP 5h=96 5h_age=2 7d=70 7d_age=2 reset_5h=1 "
                                                  "reset_in=1h0m est=97.2 line=96.5"))
         self.assertIn("spawn refused: usage STOP (5h 96%) est=97.2 line=96.5 — state=STOP", err)
 
     def test_usage_command_that_cannot_run_is_unknown_not_fatal(self):
-        out, err = self.spawn("planner", "--agent", "orch-planner", "--tier", "opus/high",
+        out, err = self.spawn("planner", "--agent", "orch:planner", "--tier", "opus/high",
                               env={"ORCH_USAGE_CMD": os.path.join(self.tmp, "no-such-script")})
         self.assertIn("state=UNKNOWN", out)
         self.assertIn("warning: usage UNKNOWN", err)
@@ -113,7 +113,7 @@ class TestSpawn(FlowBase):
         env = {"ORCH_USAGE_HOME": home, "ORCH_USAGE_STATE": os.path.join(self.tmp, "usage-state")}
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("ORCH_USAGE_CMD", None)
-            out, _ = self.ok("spawn", "planner", "--agent", "orch-planner", "--tier", "opus/high", env=env)
+            out, _ = self.ok("spawn", "planner", "--agent", "orch:planner", "--tier", "opus/high", env=env)
         rec = self.journal()[-1]
         self.assertEqual((rec["usage_5h"], rec["usage_7d"]), (12, 34))
         self.assertIn("usage: state=OK 5h=12 ", out)
@@ -125,7 +125,7 @@ class TestSpawn(FlowBase):
             self.assertEqual(flow.run_usage(), (4, None, None, "state=UNKNOWN reason=RuntimeError"))
 
     def test_tier_choice_escalation_spawn_in_that_order(self):
-        out, _ = self.spawn("implementer", "--agent", "orch-implementer", "--tier", "opus/high", "--steps", "3,4",
+        out, _ = self.spawn("implementer", "--agent", "orch:implementer", "--tier", "opus/high", "--steps", "3,4",
                             "--reason", "concurrency in step 3", "--alt", "sonnet/high, opus/medium",
                             "--tradeoff", "slower, fewer reviews", "--escalation", "post-failure",
                             "--from", "sonnet/high", "--trigger", "prior_tier_failed", "--note", "round 2")
@@ -138,26 +138,26 @@ class TestSpawn(FlowBase):
                          ("sonnet/high", "opus/high", "prior_tier_failed", "slower, fewer reviews"))
         self.assertEqual(esc["alternatives"], ["sonnet/high", "opus/medium"])
         self.assertTrue(esc["reason"])
-        self.assertEqual((sp["agent"], sp["steps"], sp["usage_5h"], sp["usage_7d"]), ("orch-implementer", [3, 4], 31, 60))
+        self.assertEqual((sp["agent"], sp["steps"], sp["usage_5h"], sp["usage_7d"]), ("orch:implementer", [3, 4], 31, 60))
         self.assertIn("journal tier_choice, escalation, spawn", out)
         self.assertLessEqual(len(out.splitlines()), 3)
         self.assertIn("round 2", self.log_lines()[-1])
 
     def test_no_reason_means_no_tier_choice_and_none_means_no_escalation(self):
-        self.spawn("director", "--agent", "orch-director", "--tier", "opus/high", "--escalation", "none")
+        self.spawn("director", "--agent", "orch:director", "--tier", "opus/high", "--escalation", "none")
         self.assertEqual(self.kinds(), ["task_start", "spawn"])
         self.assertEqual(self.journal()[-1]["steps"], None)
         self.assertEqual(self.journal()[-1]["alternatives"] if "alternatives" in self.journal()[-1] else [], [])
 
     def test_alt_may_be_empty_and_steps_may_be_strings(self):
-        self.spawn("implementer", "--agent", "orch-implementer", "--tier", "sonnet/high", "--steps", "M1 phase 1",
+        self.spawn("implementer", "--agent", "orch:implementer", "--tier", "sonnet/high", "--steps", "M1 phase 1",
                    "--reason", "default", "--tradeoff", "none")
         self.assertEqual(self.journal()[-2]["alternatives"], [])
         self.assertEqual(self.journal()[-1]["steps"], ["M1 phase 1"])
 
     def test_validation_errors_write_nothing(self):
         before = self.snapshot()
-        base = ["spawn", "implementer", "--agent", "orch-implementer", "--tier", "sonnet/high"]
+        base = ["spawn", "implementer", "--agent", "orch:implementer", "--tier", "sonnet/high"]
         env = self.ok_usage
         for extra in (["--reason", "r"],                                         # reason needs tradeoff
                       ["--escalation", "proactive", "--trigger", "plan_flag", "--tradeoff", "t"],   # no --from
@@ -176,24 +176,24 @@ class TestSpawn(FlowBase):
 
     def test_program_spawn_carries_the_milestone(self):
         self.ok("set", "shape=roadmap", "milestone=M2 — implementing", "-t", T)
-        self.spawn("implementer", "--agent", "orch-implementer", "--tier", "sonnet/high")
+        self.spawn("implementer", "--agent", "orch:implementer", "--tier", "sonnet/high")
         self.assertEqual(self.journal()[-1]["milestone"], 2)
 
 
 class TestReturn(FlowBase):
     def test_outcome_defaults_to_the_row_state(self):
-        self.spawn("implementer", "--agent", "orch-implementer", "--tier", "sonnet/high", "--steps", "1")
+        self.spawn("implementer", "--agent", "orch:implementer", "--tier", "sonnet/high", "--steps", "1")
         for state in ("done", "blocked", "failed"):
             self.ok("role", "implementer", state, "--step", "1", "--note", "need: a decision" if state == "blocked" else "n", "-t", T)
             out, _ = self.ok("return", "implementer", "--tokens", "5000", "--tool-uses", "40", "--duration-ms", "90000", "-t", T)
             rec = self.journal()[-1]
             self.assertEqual((rec["kind"], rec["outcome"], rec["agent"], rec["tokens"], rec["tool_uses"], rec["duration_ms"]),
-                             ("return", state, "orch-implementer", 5000, 40, 90000))
+                             ("return", state, "orch:implementer", 5000, 40, 90000))
             self.assertIn("row: %s | step: 1" % state, out)
             self.assertEqual("need: a decision" in out, state == "blocked")
 
     def test_a_row_still_working_is_refused_unless_outcome_is_given(self):
-        self.spawn("implementer", "--agent", "orch-implementer", "--tier", "sonnet/high")
+        self.spawn("implementer", "--agent", "orch:implementer", "--tier", "sonnet/high")
         for state in ("in_progress", "waiting", "pending"):
             self.ok("role", "implementer", state, "-t", T)
             before = self.snapshot()
@@ -219,7 +219,7 @@ class TestReturn(FlowBase):
         self.assertEqual(self.journal()[-1]["agent"], "agent-two")
 
     def test_lists_files_changed_since_the_spawn_minute(self):
-        self.spawn("implementer", "--agent", "orch-implementer", "--tier", "sonnet/high", now="2026-03-01T10:30Z")
+        self.spawn("implementer", "--agent", "orch:implementer", "--tier", "sonnet/high", now="2026-03-01T10:30Z")
         old = os.path.join(self.d, "plan.md")
         new = os.path.join(self.d, "notes.md")
         deep = os.path.join(self.d, "artifacts", "out.txt")
@@ -247,7 +247,7 @@ class TestReturn(FlowBase):
     def test_haiku_return_prints_the_contract_check_blocks_verbatim(self):
         with open(os.path.join(self.d, "notes.md"), "w") as fh:
             fh.write(self.NOTES)
-        self.spawn("implementer", "--agent", "orch-implementer", "--tier", "haiku/medium", "--steps", "3")
+        self.spawn("implementer", "--agent", "orch:implementer", "--tier", "haiku/medium", "--steps", "3")
         self.ok("role", "implementer", "done", "-t", T)
         out, _ = self.ok("return", "implementer", "-t", T)
         self.assertIn("contract-check: step 3\n- [x] item one — evidence one\n- [ ] item two — not done\n", out)
@@ -257,12 +257,12 @@ class TestReturn(FlowBase):
     def test_haiku_return_says_when_a_block_is_missing_and_other_tiers_print_none(self):
         with open(os.path.join(self.d, "notes.md"), "w") as fh:
             fh.write(self.NOTES)
-        self.spawn("implementer", "--agent", "orch-implementer", "--tier", "haiku/medium", "--steps", "3,9")
+        self.spawn("implementer", "--agent", "orch:implementer", "--tier", "haiku/medium", "--steps", "3,9")
         self.ok("role", "implementer", "done", "-t", T)
         out, _ = self.ok("return", "implementer", "-t", T)
         self.assertIn("contract-check: step 3", out)
         self.assertIn("no contract-check block in notes.md for step 9", out)
-        self.spawn("implementer", "--agent", "orch-implementer", "--tier", "sonnet/high", "--steps", "3")
+        self.spawn("implementer", "--agent", "orch:implementer", "--tier", "sonnet/high", "--steps", "3")
         out, _ = self.ok("return", "implementer", "-t", T)
         self.assertNotIn("contract-check", out)
 
@@ -318,10 +318,10 @@ class TestEnd(FlowBase):
 
     def test_digest_content_and_size(self):
         self.write_retro()
-        self.spawn("implementer", "--agent", "orch-implementer", "--tier", "sonnet/high",
+        self.spawn("implementer", "--agent", "orch:implementer", "--tier", "sonnet/high",
                    env=self.fake_usage(0, "state=OK 5h=20 5h_age=1 7d=50 7d_age=1"))
         self.ok("return", "implementer", "--outcome", "done", "--tokens", "1000", "-t", T)
-        self.spawn("code-reviewer", "--agent", "orch-code-reviewer", "--tier", "sonnet/high",
+        self.spawn("code-reviewer", "--agent", "orch:code-reviewer", "--tier", "sonnet/high",
                    env=self.fake_usage(1, "state=WARN 5h=92 5h_age=1 7d=61 7d_age=1"))
         self.ok("return", "code-reviewer", "--outcome", "done", "--tokens", "2500", "-t", T)
         self.ok("journal", "auto_merge", "sha=abc1234567890", "base=main", "branch=orch/add-login",
@@ -1051,7 +1051,7 @@ class TestRegistered(FlowBase):
 
 
 class TestReuse(FlowBase):
-    BASE = ("implementer", "--agent", "orch-implementer")
+    BASE = ("implementer", "--agent", "orch:implementer")
 
     def at(self, ts):
         env = dict(self.ok_usage)
@@ -1102,7 +1102,7 @@ class TestReuse(FlowBase):
         self.ok("return", role, "--outcome", "done", env=self.at("2026-03-01T10:10Z"))
 
     def test_a_warm_reviewer_is_reused_and_its_return_is_journaled_normally(self):
-        for role, agent in (("code-reviewer", "orch-code-reviewer"), ("security-reviewer", "orch-security-reviewer")):
+        for role, agent in (("code-reviewer", "orch:code-reviewer"), ("security-reviewer", "orch:security-reviewer")):
             self.setUp()
             self.reviewer_first(role, agent)
             self.ok("spawn", role, "--agent", agent, "--tier", "opus/high", "--reused", env=self.at("2026-03-01T11:05Z"))
@@ -1113,15 +1113,15 @@ class TestReuse(FlowBase):
             self.assertEqual((ret["role"], ret["outcome"], ret["agent"]), (role, "done", agent))
 
     def test_a_reviewer_refusal_names_the_role_and_writes_nothing(self):
-        self.reviewer_first("code-reviewer", "orch-code-reviewer")
+        self.reviewer_first("code-reviewer", "orch:code-reviewer")
         before = self.snapshot()
-        err = self.refuse(1, "spawn", "code-reviewer", "--agent", "orch-code-reviewer", "--tier", "opus/high", "--reused",
+        err = self.refuse(1, "spawn", "code-reviewer", "--agent", "orch:code-reviewer", "--tier", "opus/high", "--reused",
                           env=self.at("2026-03-01T11:06Z"))
         self.assertIn("idle", err)
-        err = self.refuse(1, "spawn", "code-reviewer", "--agent", "orch-code-reviewer", "--tier", "sonnet/high", "--reused",
+        err = self.refuse(1, "spawn", "code-reviewer", "--agent", "orch:code-reviewer", "--tier", "sonnet/high", "--reused",
                           env=self.at("2026-03-01T10:20Z"))
         self.assertIn("last code-reviewer ran at opus/high", err)
-        err = self.refuse(1, "spawn", "security-reviewer", "--agent", "orch-security-reviewer", "--tier", "opus/high",
+        err = self.refuse(1, "spawn", "security-reviewer", "--agent", "orch:security-reviewer", "--tier", "opus/high",
                           "--reused", env=self.at("2026-03-01T10:20Z"))
         self.assertIn("no returned security-reviewer", err)
         self.assertEqual(self.snapshot(), before)
@@ -1173,16 +1173,16 @@ class TestDriverSession(FlowBase):
             self.assertIsNone(self.field(d2), bad)
 
     def test_spawn_records_and_last_writer_wins(self):
-        self.spawn("planner", "--agent", "orch-planner", "--tier", "opus/high", env=dict(self.ok_usage, CLAUDE_CODE_SESSION_ID=SID))
+        self.spawn("planner", "--agent", "orch:planner", "--tier", "opus/high", env=dict(self.ok_usage, CLAUDE_CODE_SESSION_ID=SID))
         self.assertEqual(self.field(), SID)
-        self.spawn("implementer", "--agent", "orch-implementer", "--tier", "sonnet/high",
+        self.spawn("implementer", "--agent", "orch:implementer", "--tier", "sonnet/high",
                    env=dict(self.ok_usage, CLAUDE_CODE_SESSION_ID=SID2))
         self.assertEqual(self.field(), SID2)
         self.assertEqual(self.read(self.d, "status.md").count(b"\n- driver_session:"), 1)
 
     def test_spawn_without_the_variable_leaves_the_field_alone(self):
-        self.spawn("planner", "--agent", "orch-planner", "--tier", "opus/high", env=dict(self.ok_usage, CLAUDE_CODE_SESSION_ID=SID))
-        self.spawn("implementer", "--agent", "orch-implementer", "--tier", "sonnet/high",
+        self.spawn("planner", "--agent", "orch:planner", "--tier", "opus/high", env=dict(self.ok_usage, CLAUDE_CODE_SESSION_ID=SID))
+        self.spawn("implementer", "--agent", "orch:implementer", "--tier", "sonnet/high",
                    env=dict(self.ok_usage, CLAUDE_CODE_SESSION_ID=""))
         self.assertEqual(self.field(), SID)
 

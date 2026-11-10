@@ -164,7 +164,7 @@ flowchart TD
     Y -->|none| N[Says so, lists other repos' tasks]
     A([You: orchestrate this]) --> B[Resume check:<br/>unfinished task for this repo?]
     B -->|yes| R[Resume from status.md + log.md]
-    B -->|no| C[Create task dir<br/>~/.claude/orchestrations/repo/task/]
+    B -->|no| C[Create task dir<br/>~/.claude/orch-data/tasks/repo/task/]
     C --> P[Planner writes plan.md<br/>shape: single plan or roadmap<br/>+ guides for steps that copy a pattern]
     P --> PR{Roadmap or<br/>opus/max plan?}
     PR -->|yes| PRV[Plan reviewer] --> G1
@@ -297,22 +297,22 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `skills/orchestrate/TIERS.md` | Guide for choosing each role's model and effort, including the implementer routing procedure (guided Haiku, Sonnet default, when Opus) |
 | `skills/orch-init/` | Project initialization skill: sets up a new or empty repo (short canonical `CLAUDE.md`, `AGENTS.md` pointer, `docs/STATE.md`, `docs/DECISIONS.md`, offered extras), audits an existing one on request, refreshes once after the first merge. `templates/` and per-ecosystem `references/`, with one architecture guide (swappable interfaces at every boundary) |
 | `skills/orchestrate/templates/` | One template per task file: plan, status, log, review, journal, sketch, guide, … |
-| `agents/orch-*.md` | Roles: planner, implementer, code reviewer, security reviewer, plan reviewer, director (visual judgement), explorer, graph (code-index maintainer), executor, init (project setup, for the `orch-init` skill). **Generated**, do not edit |
+| `agents/*.md` | Roles: planner, implementer, code reviewer, security reviewer, plan reviewer, director (visual judgement), explorer, graph (code-index maintainer), executor, init (project setup, for the `orch-init` skill). **Generated**, do not edit |
 | `skills/orchestrate/roles/` | Role sources; `_shared/` holds blocks every role includes |
 | `scripts/build-agents.py` | Renders `roles/` into the agent files. Agent files can't import other files at runtime, so shared rules are inlined at build time; `--check` fails when an agent file differs from its role |
-| `bin/orchlib/hook.py` (`orch hook delegate`) | A PreToolUse hook that denies repo-wide searches on an indexed repository. **Not wired into any role** since 2026-11-01 (it blocked Sonnet implementer work); the roles are told to prefer `orch-explorer` instead. Kept as a tool, see Code index below |
-| `agents/orch-explorer.md`, `agents/orch-graph.md`, `agents/orch-executor.md` | Cheap helpers that any role (or any session) can call: read-only lookups (using an optional code index when there is one, see Code index below), keeping that index fresh (`orch-graph`: the orchestrator, the planner or you call it, not the other roles), and builds/tests that report a digest. Named `explorer`/`executor` before 2026-10-22 |
+| `bin/orchlib/hook.py` (`orch hook delegate`) | A PreToolUse hook that denies repo-wide searches on an indexed repository. **Not wired into any role** since 2026-11-01 (it blocked Sonnet implementer work); the roles are told to prefer `orch:explorer` instead. Kept as a tool, see Code index below |
+| `agents/explorer.md`, `agents/graph.md`, `agents/executor.md` | Cheap helpers that any role (or any session) can call: read-only lookups (using an optional code index when there is one, see Code index below), keeping that index fresh (`orch:graph`: the orchestrator, the planner or you call it, not the other roles), and builds/tests that report a digest. Named `explorer`/`executor` before 2026-10-22 |
 | `bin/usage-check.sh`, `bin/usage-watch.sh` | One-shot wrapper around `orch usage` (the live estimate and dynamic stop line), and a legacy fixed-threshold watchdog. Local files only, no network |
 | `bin/orch-ratelimit-cache.sh` | Writes that cache, and the shared sample log, from the statusline input |
-| `bin/orch-index.sh`, `bin/orch-index-hook.sh` | Keep `~/.claude/orchestrations/ACTIVE.md`, the list of unfinished tasks |
+| `bin/orch-index.sh`, `bin/orch-index-hook.sh` | Keep `~/.claude/orch-data/tasks/ACTIVE.md`, the list of unfinished tasks |
 | `bin/orch-stats.sh`, `bin/role-cost.py` | Analytics over the journals and transcripts |
 | `bin/orch-program-check.py` | Checks a program roadmap against its rules |
-| `bin/orch-install-code-index.sh` | Installs the pinned `orch-index` release binary (macOS and Linux) for `orch-graph`, see Code index below |
+| `bin/orch-install-code-index.sh` | Installs the pinned `orch-index` release binary (macOS and Linux) for `orch:graph`, see Code index below |
 | `bin/orch`, `bin/orchlib/` | The `orch` command: one call per state change (`spawn`, `return`, `role`, `journal`, `ask`), role briefs, plan checks (including guides), the guarded `merge`, and `migrate` for old task directories. Python 3.9+ standard library only; `orchlib/tests/` holds its tests |
 | `bin/orchlib/dashboard.py`, `bin/orchlib/dashboard.html` | `orch dashboard`: a read-only page of active tasks, questions waiting for you and recent events, served on 127.0.0.1 only |
 | `bin/orchlib/current.py` | `orch current`: maps a directory or worktree to its task and prints `resume`, `ask` or `none`. Read-only |
 | `bin/orchlib/instructions.py`, `skills/orchestrate/templates/claude-md-block.md` | `orch install-instructions`: writes, updates or removes the rules block in `~/.claude/CLAUDE.md` |
-| `skills/orchestrate/templates/policy.md`, `…/questions.md` | Per-repo stop policy (`~/.claude/orchestrations/<repo>/policy.md`) and the queue of parked questions in a task |
+| `skills/orchestrate/templates/policy.md`, `…/questions.md` | Per-repo stop policy (`~/.claude/orch-data/tasks/<repo>/policy.md`) and the queue of parked questions in a task |
 
 ## Code index (optional)
 
@@ -325,7 +325,7 @@ query replaces many text searches (per `orch-index`'s own benchmark).
 
 Two roles use it, and only two:
 
-- **`orch-explorer` queries it.** Its first command is `orch-index stats`; when the index is current it
+- **`orch:explorer` queries it.** Its first command is `orch-index stats`; when the index is current it
   answers structural questions from it, and it searches with `git grep` / `rg` for everything else
   (other languages, rows marked as uncertain). When the index commit is `HEAD`'s ancestor (for
   example in a task worktree after its first commit), the index is still used: the explorer also
@@ -334,11 +334,11 @@ Two roles use it, and only two:
   query is expected there, not a stale signal. When the index is stale (its commit is not an ancestor
   of `HEAD`, or its commit equals `HEAD` and the query note says `index built by an older orch-index`;
   `orch-index` shows that note only when the commit equals `HEAD`), the reply opens with
-  `index unavailable: stale (<reason>) (refresh: orch-graph)`, without the refresh hint in a linked
+  `index unavailable: stale (<reason>) (refresh: orch:graph)`, without the refresh hint in a linked
   worktree (the index is shared with the main checkout); when the binary is missing
   or the repository has no index, it opens with a bare `index unavailable: <reason>`. In both cases the
   answer comes from scoped search, so answers are the same without an index; the first command adds about one call per request (in this task's probes on small repositories: +15-30% tokens without an index, and +20-50% with one, where grep alone is cheaper). The explorer never builds or refreshes the index.
-- **`orch-graph` keeps it fresh.** It checks the index (`fresh`, `fresh-enough` when the index commit
+- **`orch:graph` keeps it fresh.** It checks the index (`fresh`, `fresh-enough` when the index commit
   is an ancestor of `HEAD`, `stale`, `missing`, or `binary not found`) and, when it is stale or
   missing, rebuilds it (incremental when an index exists), then reports the state before and after.
   When the binary is missing it may install it once (conditions below).
@@ -352,9 +352,9 @@ Two roles use it, and only two:
     The orchestrator logs the state (`pre-plan index: <state>`). This is the call that may install a
     missing binary.
   - **On a stale hint,** the orchestrator or planner, when the explorer reports a stale index
-    (`… (refresh: orch-graph)`) on a repository that has one.
+    (`… (refresh: orch:graph)`) on a repository that has one.
 
-While `orch-graph` rebuilds, it writes a marker file, `<git-common-dir>/orch-index/indexing`, and
+While `orch:graph` rebuilds, it writes a marker file, `<git-common-dir>/orch-index/indexing`, and
 removes it afterwards, only if the file still holds its own line; if a live marker from another run
 is already there, it reports `index busy` and stops. During the rebuild the orchestrator and the planner start no other agent and
 do no exploring of their own, and the explorer's first command waits (up to five minutes) for a live
@@ -371,21 +371,21 @@ The command and its tests remain; wire it back by adding a PreToolUse `Grep|Glob
 You do not need the index. The binary is `$ORCH_INDEX_BIN` if set, else `orch-index` on `PATH`, else
 `$HOME/.claude/bin/orch-index`.
 
-**Automatic install.** `orch-graph` installs a missing binary only when the caller did not ask for check only,
+**Automatic install.** `orch:graph` installs a missing binary only when the caller did not ask for check only,
 `ORCH_INDEX_AUTOINSTALL` is not `0`, `ORCH_INDEX_BIN` is unset or empty, no `orch-index` is on `PATH`,
-and `~/.claude/bin/orch-index` does not exist; it then runs `~/.claude/bin/orch-install-code-index.sh`
+and `~/.claude/orch-data/bin/orch-index` does not exist; it then runs `orch-install-code-index.sh`
 once (Bash timeout 300 s) and, if `stats` still fails after that, reports the script's last line and
 stops. The calls that can install are the orchestrator's pre-plan call (before any plan, on a repository
 with at least one tracked file in a supported language) and your own. The script supports macOS and Linux (x86_64 and arm64). It downloads the
 pinned release over HTTPS from `github.com/ijat/orch-index`, checks the archive's SHA-256
 against hashes committed in this repository (it does not trust the release's own checksum file), accepts
 only the one expected binary from the archive, checks that `--version` matches the pin, and writes it to
-`~/.claude/bin/orch-index` (no `sudo`, an existing binary is never overwritten). If `gh` is present it
+`~/.claude/orch-data/bin/orch-index` (no `sudo`, an existing binary is never overwritten). If `gh` is present it
 also reports whether the archive's build attestation verifies. A repository with no tracked file in a
 supported language is not touched, and the explorer never installs anything. To avoid the install: set `ORCH_INDEX_AUTOINSTALL=0` (the script
-then exits 3 without network access and `orch-graph` reports `install disabled`), or provide your own
+then exits 3 without network access and `orch:graph` reports `install disabled`), or provide your own
 binary (`ORCH_INDEX_BIN` set to a working path, `orch-index` on `PATH`, or a file at
-`~/.claude/bin/orch-index`, which is never overwritten). `ORCH_INDEX_AUTOINSTALL=0` only stops
+`~/.claude/orch-data/bin/orch-index`, which is never overwritten). `ORCH_INDEX_AUTOINSTALL=0` only stops
 installs; an existing binary is still used. Your own check-only calls never install, but the
 orchestrator's pre-plan call is not check only. The installer does not handle Windows: each orch-index release carries
 a prebuilt Windows zip, which you download and unzip yourself (the orch-index README has a PowerShell
@@ -396,8 +396,8 @@ Manual steps:
 1. Download the archive for your platform from the release page at `github.com/ijat/orch-index`
    (Windows: the zip) and unpack it.
 2. Put the binary on `PATH`, or set `ORCH_INDEX_BIN` to its full path (or place it at
-   `~/.claude/bin/orch-index`).
-3. Ask for `orch-graph` once per repository (or run `orch-index index` yourself inside it); later
+   `~/.claude/orch-data/bin/orch-index`).
+3. Ask for `orch:graph` once per repository (or run `orch-index index` yourself inside it); later
    calls only re-read changed files.
 
 ## Install
@@ -453,7 +453,7 @@ rules, the command refuses rather than duplicate them: check `--dry-run --replac
 
 Say "orchestrate this" (or "lite mode" for a small task, or "orchestrate interactive" to plan it with
 the session) and describe the work. Task files go to
-`~/.claude/orchestrations/<repo>/<task>/`.
+`~/.claude/orch-data/tasks/<repo>/<task>/`.
 
 To pick work back up, open a new session in the repo or its worktree and say "resume", "continue", "start"
 or the same thing in other words. This needs the rules from `orch install-instructions`. Claude runs

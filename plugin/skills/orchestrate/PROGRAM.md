@@ -24,10 +24,10 @@ says so; each milestone adds its own dirs with `sparse-checkout add`.
    `plan_shape` and an `escalation` (`trigger: plan_shape`), re-spawn at `opus/max` with its
    `notes.md` as starting findings. Under a user cap that forbids it, send the same planner back to
    write the roadmap at its tier, and say at the gate what the cap costs.
-2. **Checker.** Run `~/.claude/bin/orch-program-check.py <roadmap.md>` yourself — don't trust the
+2. **Checker.** Run `orch-program-check.py <roadmap.md>` yourself — don't trust the
    planner's report of it. Any FAIL → back to the planner (a revision), then re-run. Journal
    `checker`.
-3. **Plan reviewer.** Spawn `orch-plan-reviewer` (default `sonnet/high`; `opus/medium` if any
+3. **Plan reviewer.** Spawn `orch:plan-reviewer` (default `sonnet/high`; `opus/medium` if any
    milestone is sensitive) with the roadmap path, repo path, and `plan-review.md` path. `blocker`
    findings → one planner revision → re-run the checker and re-review only what changed; at most 3 passes in all
    (SKILL.md § Review loops), then the open blockers park as a question. Journal
@@ -35,7 +35,7 @@ says so; each milestone adds its own dirs with `sparse-checkout add`.
 4. **Security decision** (SKILL.md step 5 rule) for every milestone, once, at this gate: one line each,
    `orch journal auto_security milestone:=<N> areas:='[…]' ran:=true rule=step5` (`ran:=false` for a skip).
 5. **Budget.** Run `orch usage` (`7d_proj` for the 7d budget). Estimate the program from the milestone sizes and past runs per tier
-   (`~/.claude/bin/role-cost.py --by tier`; it has no per-size grouping,
+   (`role-cost.py --by tier`; it has no per-size grouping,
    so give a range); say whether it fits the 5h/7d headroom.
 6. **Gate.** Show the user: the shape line, Summary, the Milestones table as is, every checker WARN
    with the planner's justification, plan-review findings and how they were handled, the security
@@ -50,8 +50,8 @@ Journal `milestone_start` and set `milestone: M<n> — <phase>` in `status.md`:
 security-reviewer row from that milestone's `auto_security` line — `pending`, or `not_offered` with the
 reason — every time (`orch merge` reads the row, so last milestone's value must not carry over).
 
-1. **Detail plan**, written now against what's actually built (first the pre-plan `orch-graph` call, SKILL.md Index rebuild pause, so the index is current for this milestone):
-   - `standard`: an `orch-planner` at the row's planner tier, briefed `shape: single (milestone)`,
+1. **Detail plan**, written now against what's actually built (first the pre-plan `orch:graph` call, SKILL.md Index rebuild pause, so the index is current for this milestone):
+   - `standard`: an `orch:planner` at the row's planner tier, briefed `shape: single (milestone)`,
      writes `m<NN>-<slug>/plan.md` from the plan template, scoped to the milestone, citing the roadmap's contracts. A milestone too small
      to deserve its own planner should have been `lite` — that's a roadmap revision, not a shortcut.
    - `lite`: the lite agent's phase 1 (SKILL.md "Lite mode"), scoped to the milestone.
@@ -60,7 +60,7 @@ reason — every time (`orch merge` reads the row, so last milestone's value mus
      roadmap revision (§3), not a detail-plan approval.
 2. **Implement** as SKILL.md step 7, on the program worktree. That includes the continue gate: you approve a detail
    plan yourself, so the planner is still warm and the gate wait is short.
-3. **Tests after every milestone**, review point or not: `orch-executor` runs the plan's verification
+3. **Tests after every milestone**, review point or not: `orch:executor` runs the plan's verification
    command(s); a failure is fixed before the next milestone starts.
 4. **If the row is a review point:** (a `skip` row is not one — no reviewer runs) code review (plus security review where the step 5 rule scheduled it)
    over `git diff <reviewed_through>..HEAD` — every milestone since the previous review point.
