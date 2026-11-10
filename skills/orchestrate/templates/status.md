@@ -1,7 +1,9 @@
 # Status: <task-slug>
 
 <!-- Written by `orch` (`orch set`, `orch role`); hand edits are the fallback. Keep every field on one line in exactly this form; notes go in the table or log.md.
-     task_state holds EXACTLY one enum value, nothing after it (orch-index.sh parses it). -->
+     task_state holds EXACTLY one enum value, nothing after it (orch-index.sh parses it).
+     An optional `driver_session` field line (the Claude Code session id) is added by `orch init`, `orch resume` and `orch spawn`
+     (from CLAUDE_CODE_SESSION_ID, last writer wins); `orch status --json --session <id>` uses it. Never write it by hand. -->
 
 - task_state: planning | awaiting_approval | implementing | reviewing | awaiting_merge | paused_usage_limit | done | abandoned
 - mode: standard | lite | interactive

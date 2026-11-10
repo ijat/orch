@@ -14,6 +14,8 @@ PATH_FIELDS = ("repo", "task_dir", "worktree")
 WORKTREE_LITERALS = ("not yet created", "none", "removed after merge")
 
 FIELD_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+DRIVER_FIELD = "driver_session"
+DRIVER_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 FIELD_RE = re.compile(r"^- ([A-Za-z_][A-Za-z0-9_]*): ?(.*)$", re.S)
 
 COLUMN_NAMES = {
@@ -30,6 +32,12 @@ INDEX_ENUM = {"planning", "awaiting_approval", "implementing", "reviewing", "awa
 INDEX_TERMINAL = {"done", "abandoned", "merged"}
 
 Clean = namedtuple("Clean", "value missing")
+
+
+def driver_session_id():
+    """The Claude Code session id of the caller (CLAUDE_CODE_SESSION_ID), or None when unset, empty or odd."""
+    sid = (os.environ.get("CLAUDE_CODE_SESSION_ID") or "").strip()
+    return sid if DRIVER_ID_RE.match(sid) else None
 
 
 def split_ending(line):
