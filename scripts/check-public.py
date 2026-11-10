@@ -17,7 +17,7 @@
 
 Hits: `[<commit12>:]<path>:<line>: pattern #k`; a path hit is `<path>:path`, a message hit `<commit12>:message:<line>`.
 Exit 0 clean, 1 hits, 2 bad input or any git/file error (nothing checked is never a pass). LICENSE is exempt.
-Matching is export.py's: one case-insensitive alternation over each line (UTF-8, errors=replace).
+Matching follows the retired export gate: one case-insensitive alternation over each line (UTF-8, errors=replace).
 """
 import argparse
 import hashlib
@@ -94,7 +94,7 @@ def load_denylist(explicit):
             lines = fh.read().splitlines()
     except (OSError, UnicodeDecodeError) as exc:
         raise Fail("cannot read the denylist (%s): %s" % (used or "explicit", exc.__class__.__name__))
-    patterns = [l.strip() for l in lines if l.strip() and not l.startswith("#")]  # export.py:238-239
+    patterns = [l.strip() for l in lines if l.strip() and not l.startswith("#")]  # as the retired export gate did
     if not patterns:
         raise Fail("the denylist holds no patterns: nothing checked (not a pass)")
     if used:
