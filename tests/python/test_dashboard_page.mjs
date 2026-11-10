@@ -7,7 +7,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const htmlPath = path.join(here, "..", "dashboard.html");
+const htmlPath = path.join(here, "..", "..", "plugin", "bin", "orchlib", "dashboard.html");
 const html = fs.readFileSync(htmlPath, "utf8");
 const golden = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "dash", "expected.json"), "utf8"));
 const viewGolden = JSON.parse(fs.readFileSync(path.join(here, "fixtures", "dash", "view.json"), "utf8"));
