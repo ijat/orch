@@ -1144,3 +1144,78 @@ class TestReuse(FlowBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+SID = "9f2c1a6e-3b7d-4c58-8a10-5d2e7b4f6a01"
+SID2 = "11111111-2222-3333-4444-555555555555"
+
+
+class TestDriverSession(FlowBase):
+    """driver_session in status.md: written by init, spawn and resume from CLAUDE_CODE_SESSION_ID."""
+
+    def field(self, d=None):
+        return st.Status.load(os.path.join(d or self.d, "status.md")).get("driver_session")
+
+    def test_init_without_the_variable_writes_nothing(self):
+        self.assertIsNone(self.field())
+        self.assertNotIn(b"\n- driver_session:", self.read(self.d, "status.md"))
+        d2 = self.init(slug="other")
+        self.assertIsNone(self.field(d2))
+
+    def test_init_with_the_variable_writes_it(self):
+        d2 = self.init(slug="other", env={"CLAUDE_CODE_SESSION_ID": SID})
+        self.assertEqual(self.field(d2), SID)
+        self.assertEqual(self.field(), None)   # the setUp task was made without it
+
+    def test_odd_ids_are_not_written(self):
+        for bad in ("two words", "a\nb", "-lead", "x" * 200):
+            d2 = self.init(slug="s%d" % abs(hash(bad)), env={"CLAUDE_CODE_SESSION_ID": bad})
+            self.assertIsNone(self.field(d2), bad)
+
+    def test_spawn_records_and_last_writer_wins(self):
+        self.spawn("planner", "--agent", "orch-planner", "--tier", "opus/high", env=dict(self.ok_usage, CLAUDE_CODE_SESSION_ID=SID))
+        self.assertEqual(self.field(), SID)
+        self.spawn("implementer", "--agent", "orch-implementer", "--tier", "sonnet/high",
+                   env=dict(self.ok_usage, CLAUDE_CODE_SESSION_ID=SID2))
+        self.assertEqual(self.field(), SID2)
+        self.assertEqual(self.read(self.d, "status.md").count(b"\n- driver_session:"), 1)
+
+    def test_spawn_without_the_variable_leaves_the_field_alone(self):
+        self.spawn("planner", "--agent", "orch-planner", "--tier", "opus/high", env=dict(self.ok_usage, CLAUDE_CODE_SESSION_ID=SID))
+        self.spawn("implementer", "--agent", "orch-implementer", "--tier", "sonnet/high",
+                   env=dict(self.ok_usage, CLAUDE_CODE_SESSION_ID=""))
+        self.assertEqual(self.field(), SID)
+
+    def test_resume_records_and_keeps_the_file_times(self):
+        path = os.path.join(self.d, "status.md")
+        old = flow.ts_epoch("2026-03-01T10:00Z") - 4 * 3600   # ORCH_NOW fixes the packet's clock
+        for name in ("status.md", "log.md", "journal.jsonl"):
+            os.utime(os.path.join(self.d, name), (old, old))
+        before = os.stat(path)
+        out, _ = self.ok("resume", T, env={"CLAUDE_CODE_SESSION_ID": SID})
+        self.assertEqual(self.field(), SID)
+        after = os.stat(path)
+        self.assertEqual((after.st_mtime_ns, after.st_atime_ns), (before.st_mtime_ns, before.st_atime_ns))
+        self.assertIn("last activity: 4 h", out)   # the write did not make the task look freshly active
+        self.assertNotIn("another session may be active", out)
+        self.assertNotIn(SID, out)
+        # the second resume changes nothing (same id), the third (other id) takes over
+        self.ok("resume", T, env={"CLAUDE_CODE_SESSION_ID": SID})
+        self.ok("resume", T, env={"CLAUDE_CODE_SESSION_ID": SID2})
+        self.assertEqual(self.field(), SID2)
+        self.assertEqual(os.stat(path).st_mtime_ns, before.st_mtime_ns)
+
+    def test_resume_writes_only_status_md(self):
+        names = lambda: sorted((os.path.relpath(os.path.join(a, f), self.d), core.sha(os.path.join(a, f)))
+                               for a, _, fs in os.walk(self.d) for f in fs if f != ".orch.lock")
+        before = dict(names())
+        self.ok("resume", T, env={"CLAUDE_CODE_SESSION_ID": SID})
+        after = dict(names())
+        self.assertEqual([k for k in after if after[k] != before.get(k)], ["status.md"])
+
+    def test_resume_without_the_variable_stays_read_only(self):
+        os.unlink(os.path.join(self.d, ".orch.lock"))
+        before = core.tree_hash(self.root)
+        self.ok("resume", T, env={"CLAUDE_CODE_SESSION_ID": ""})
+        self.assertEqual(core.tree_hash(self.root), before)
+        self.assertFalse(os.path.exists(os.path.join(self.d, ".orch.lock")))

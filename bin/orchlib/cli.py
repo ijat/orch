@@ -11,7 +11,7 @@ from . import __version__
 from . import journal as jr
 from . import status as st
 from .paths import (OrchError, TaskLock, TEMPLATES_DIR, append_bytes, ends_with_newline, now, orch_root,
-                    refresh_index, require_write_allowed, resolve_task, task_names, tilde, warn_stderr,
+                    is_live, refresh_index, require_write_allowed, resolve_task, task_names, tilde, warn_stderr,
                     write_atomic)
 
 SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -98,6 +98,33 @@ def program_info(status):
     return program, (int(m.group(1)) if m else None)
 
 
+def record_driver(status):
+    """Write the driving session (CLAUDE_CODE_SESSION_ID) into status.md's driver_session field; last writer wins.
+    Returns True if a line changed. Nothing is written when the variable is unset or empty."""
+    sid = st.driver_session_id()
+    return bool(sid) and status.set_field(st.DRIVER_FIELD, sid, add=True)
+
+
+def record_driver_keep_times(task_dir):
+    """`orch resume`'s only write: driver_session in status.md, with the file's atime/mtime put back so `last activity`
+    and the updated ordering (orch current, orch status) still mean the last real change. Never fails the caller."""
+    if not st.driver_session_id() or not (is_live() or os.environ.get("ORCH_DIR")):
+        return False
+    path = status_path(task_dir)
+    try:
+        with TaskLock(task_dir):
+            before = os.stat(path)
+            status = load_status(task_dir)
+            if not record_driver(status):
+                return False
+            write_atomic(path, status.render())
+            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        return True
+    except (OSError, OrchError) as exc:
+        warn_stderr("driver_session not recorded: %s" % exc)
+        return False
+
+
 def get_task(ns, must_exist=True):
     return resolve_task(getattr(ns, "task_sub", None) or ns.task, must_exist)
 
@@ -140,6 +167,7 @@ def cmd_init(ns, extra):
         ("implementer_tier", "per step (TIERS.md routing)"), ("review_round", "0/3"), ("usage_override", "none"),
     ]
     apply_sets(status, ["%s=%s" % kv for kv in values], False, enum)
+    record_driver(status)
     status.set_role("orchestrator", ts=ts, validate=False)
     if ns.mode == "lite":
         status.set_role("planner", state="n/a (lite)", validate=False)

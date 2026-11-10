@@ -509,14 +509,21 @@ def in_cwd(cwd, status):
     return False
 
 
+def this_session(session, status):
+    """null without --session; else true only when the task's driver_session is exactly that id."""
+    if session is None:
+        return None
+    return bool(session) and status.get(st.DRIVER_FIELD) == session
+
+
 # -- the data ----------------------------------------------------------------------------------------
 
-KEYS = ("id", "repo", "slug", "task_dir", "repo_path", "worktree", "in_cwd", "state", "state_words", "mode",
+KEYS = ("id", "repo", "slug", "task_dir", "repo_path", "worktree", "in_cwd", "this_session", "state", "state_words", "mode",
         "shape", "program", "milestone", "milestone_no", "summary", "updated", "last_log", "questions_open", "questions",
         "running", "steps", "milestones", "overall", "error")
 
 
-def build(repo, slug, d, text, state, cwd, question_group=None, question_skip=0):
+def build(repo, slug, d, text, state, cwd, question_group=None, question_skip=0, session=None):
     jtext = db.read_text(os.path.join(d, "journal.jsonl"))
     journal = db.Journal(jtext, "%s/%s" % (repo, slug))
     base, _ = db.build_task(repo, slug, d, text, state, journal)
@@ -536,6 +543,7 @@ def build(repo, slug, d, text, state, cwd, question_group=None, question_skip=0)
         t["error"] = db.cell("%s: %s" % (type(exc).__name__, exc), 200)
     try:
         t["in_cwd"] = in_cwd(cwd, status)
+        t["this_session"] = this_session(session, status)
         try:
             rows = status.roles()
         except OrchError:
@@ -562,7 +570,7 @@ def build(repo, slug, d, text, state, cwd, question_group=None, question_skip=0)
     return t
 
 
-def compute(root, cwd=None, question_group=None, question_skip=0):
+def compute(root, cwd=None, question_group=None, question_skip=0, session=None):
     cwd = os.path.realpath(cwd) if cwd else None
     found = []
     for repo, slug, d in db.task_dirs(root):
@@ -573,7 +581,7 @@ def compute(root, cwd=None, question_group=None, question_skip=0):
         if state in db.FINISHED:
             continue
         mtimes = [i.st_mtime for i in (db.stat_regular(os.path.join(d, n)) for n in ("status.md", "log.md")) if i]
-        found.append((-(max(mtimes) if mtimes else 0), "%s/%s" % (repo, slug), build(repo, slug, d, text, state, cwd, question_group, question_skip)))
+        found.append((-(max(mtimes) if mtimes else 0), "%s/%s" % (repo, slug), build(repo, slug, d, text, state, cwd, question_group, question_skip, session)))
     found.sort(key=lambda f: (f[0], f[1]))
     return {"schema": SCHEMA, "generated": now(), "cwd": cwd, "tasks": [f[2] for f in found]}
 
@@ -583,7 +591,7 @@ def cmd_status(ns, extra):
         raise OrchError("status lists every active task; -t is not supported", 1)
     if not ns.json_out:
         raise OrchError("status needs --json", 1)
-    sys.stdout.write(json.dumps(compute(orch_root(), ns.cwd, ns.question_group, ns.question_skip), indent=1) + "\n")
+    sys.stdout.write(json.dumps(compute(orch_root(), ns.cwd, ns.question_group, ns.question_skip, ns.session), indent=1) + "\n")
     return 0
 
 
@@ -597,3 +605,5 @@ def register(add):
                     help="in that group, the first N open questions come as minimal entries and the full ones start at "
                          "the next (the pane's way to read the options of a question past the first ~50)")
     sp.add_argument("--cwd", default=None, help="mark tasks whose repo or worktree holds this directory (in_cwd)")
+    sp.add_argument("--session", default=None, metavar="ID",
+                    help="mark tasks whose driver_session is this Claude Code session id (this_session; null without the flag)")
