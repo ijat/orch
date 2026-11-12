@@ -265,6 +265,32 @@ class TestPaused(Base):
         self.assertEqual(code, 13)
 
 
+class TestRolledAtLaunch(Base):
+    """A task-less wait launched after the reset on a stale sample (no sample of the new window yet): the reset has
+    passed and the estimate is below the line, so it is RESET at once, not a silent STOP watch (2026-11-12 bug)."""
+    def test_rolled_below_line_resets_at_once(self):
+        for state in ('OK', 'WARN', 'STALE'):
+            with self.subTest(state):
+                self.clock = Clock(BASE)
+                code, line = self.run_wait(lambda: est(state, 0.0, window=BASE - 1, rolled=True))
+                self.assertEqual((code, self.clock.t), (10, BASE))
+                self.assertTrue(line.startswith('RESET reason=rolled state=%s ' % state))
+                self.assertEqual(line.count('reason='), 1)
+                self.assertFalse(os.path.exists(self.pidfile()))
+
+    def test_rolled_over_line_still_stops(self):
+        code, line = self.run_wait(lambda: est('STOP', 0.0, e=97.0, line=96, window=BASE - 1, rolled=True))
+        self.assertEqual((code, self.clock.t), (2, BASE))
+
+    def test_task_wait_and_rolled_mid_wait_unchanged(self):
+        d = self.task()
+        code, line = self.run_wait(lambda: est(window=BASE - 1, rolled=True), task_dir=d, max_sec=600)
+        self.assertEqual((code, self.clock.t), (13, BASE + 600))
+        self.clock = Clock(BASE)
+        code, line = self.run_wait(lambda: est(window=R5, rolled=self.clock.t >= BASE + 60), max_sec=600)
+        self.assertEqual((code, self.clock.t), (13, BASE + 600))
+
+
 class TestCheckin(Base):
     def spawned(self, **kw):
         return self.task(journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer'}] + kw.pop('more', []), **kw)
@@ -560,6 +586,19 @@ class TestCli(unittest.TestCase):
         self.assertTrue(out.startswith('ENDED reason=max state=OK 5h=10 '))
         self.assertEqual(len(out.splitlines()), 1)
         self.assertLess(time.time() - t, 1.8)
+        self.assertEqual(os.listdir(self.state) if os.path.isdir(self.state) else [], [])
+
+    def test_after_reset_on_stale_stop_sample_resets(self):
+        # the 2026-11-12 incident through the real log reader: the last sample is a 4482 s old STOP (95%) whose
+        # reset_5h passed a second ago; a wait launched now used to stay silent until --max
+        now = int(time.time())
+        with open(os.path.join(self.home, '.statusline-usage-log'), 'w') as fh:
+            fh.write('%d 95 %d - - %s\n' % (now - 4482, now - 1, SID))
+        t = time.time()
+        rc, out, _ = self.main('usage', 'wait', '--interval', '0.05', '--max', '2', '--parent-pid', str(os.getpid()))
+        self.assertEqual(rc, 10, out)
+        self.assertTrue(out.startswith('RESET reason=rolled state=OK 5h=0 '), out)
+        self.assertLess(time.time() - t, 1.5)
         self.assertEqual(os.listdir(self.state) if os.path.isdir(self.state) else [], [])
 
     def test_unresolvable_task_bad_args_and_launch_errors_are_4(self):

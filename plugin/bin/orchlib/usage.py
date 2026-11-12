@@ -62,7 +62,7 @@ PROJ7_SPAN = 20 * 3600  # 7d_proj only from >= 20 h of same-window 7d samples (a
 
 # $/MTok input, output, cache-read multiplier (TIERS.md rows; older ids for history). Longest id prefix wins.
 PRICES = {
-    'claude-fable-5-1': (10, 50, 0.025), 'claude-fable-5': (10, 50, 0.1),
+    'claude-fable-5-2': (8, 40, 0.025), 'claude-fable-5-1': (10, 50, 0.025), 'claude-fable-5': (10, 50, 0.1),
     'claude-opus-5-5': (4, 20, 0.05), 'claude-opus-5': (5, 25, 0.1),
     'claude-opus-4-8': (5, 25, 0.1), 'claude-opus-4-7': (5, 25, 0.1),
     'claude-sonnet-5-5': (2, 10, 0.1), 'claude-sonnet-5': (2, 10, 0.1),
@@ -1235,6 +1235,12 @@ class Wait:
         paused = self.until_reset or task_state(self.task_dir) == 'paused_usage_limit'
         if not paused and e.state == 'STOP':
             return 2, self.line('STOP', e)
+        # A task-less wait launched after the last known window's reset, before any sample of the new window: the
+        # reset has passed and the estimate is below the line, which is the event its caller waits for. Watching for
+        # STOP instead kept it silent until --max (a caller that saw STOP on the old window just before the reset).
+        # A task wait is the orchestrator's STOP watcher (its 10 means "resume a paused task"): unchanged.
+        if not paused and self.task_dir is None and getattr(e, 'rolled', False):
+            return 10, self.line('RESET', e, reason='rolled')
         r5_0, p_0, t_pause = getattr(e, 'window', None), e.p5, start
         degraded = None
         first = True

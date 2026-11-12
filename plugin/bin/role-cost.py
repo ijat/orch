@@ -32,7 +32,7 @@ from collections import Counter, defaultdict
 # Source: Claude API model pages (checked 2026-11-04). Update when prices change — audit step 5a.
 # Haiku 5.5 is priced here at its rate up to 100K tokens; above that every rate is 5x, which this table doesn't model.
 PRICES = {
-    'claude-fable-5-1': (10, 50, 0.025), 'claude-fable-5': (10, 50, 0.1),
+    'claude-fable-5-2': (8, 40, 0.025), 'claude-fable-5-1': (10, 50, 0.025), 'claude-fable-5': (10, 50, 0.1),
     'claude-opus-5-5': (4, 20, 0.05), 'claude-opus-5': (5, 25, 0.1),
     'claude-opus-4-8': (5, 25, 0.1), 'claude-opus-4-7': (5, 25, 0.1),
     'claude-sonnet-5-5': (2, 10, 0.05), 'claude-sonnet-5': (2, 10, 0.1),

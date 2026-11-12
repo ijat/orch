@@ -9,7 +9,7 @@ stop policy (step 5 rule, assumed decisions, parked questions, step 10's automat
 **Eligible only if all hold** (judge from the request plus a quick look; when unsure, standard):
 about ≤ 5 files and ≤ 3 steps; no sensitive area (step 5 list); no concurrency, performance-
 sensitive algorithm, migration or other hard-to-undo change; one obvious design (nothing that would
-earn an `opus/max` planner). The user may force lite anyway — journal it as `override`.
+earn an escalated planner tier). The user may force lite anyway — journal it as `override`.
 
 **Tier:** `opus/medium` by default (it must plan as well as code; `sonnet/high` plans worse).
 `opus/high` if the task is at the edge of eligibility. Never Fable — that need means standard mode.
