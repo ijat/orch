@@ -105,6 +105,13 @@ class TestParse(unittest.TestCase):
         self.assertEqual([f.id for f in p.findings], ["F1"])
         self.assertEqual(p.next_id("F"), "F10")
 
+    def test_lenient_heads_are_for_brief_fix(self):
+        text = "### F8: colon style\n- severity: nit\n- file: a:1\n- origin: introduced\n"
+        self.assertEqual([f.id for f in fd.parse_text(text).findings], [])
+        p = fd.parse_text(text, lenient_heads=True)
+        self.assertEqual([(f.id, f.summary) for f in p.findings], [("F8", "colon style")])
+        self.assertEqual(p.unparsed, [])
+
     def test_a_duplicate_heading_is_unparsed_and_the_first_block_wins(self):
         p = fd.parse_text(block("F1", "nit") + "\n" + block("F1", "blocker"))
         self.assertEqual([(f.id, f.severity) for f in p.findings], [("F1", "nit")])

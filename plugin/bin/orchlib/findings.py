@@ -23,6 +23,7 @@ WRITE_LIMIT = 1024 * 1024
 SUMMARY_CHARS = 80
 
 HEAD_RE = re.compile(r"^###[ \t]+([FS]\d+)(?:[ \t]+[—–-]+(?:[ \t]+(.*?))?|[ \t]*)[ \t]*$")
+OLD_HEAD_RE = re.compile(r"^###[ \t]+([FS]\d+)\b[ \t]*[:\u2014\u2013-]*[ \t]*(.*?)[ \t]*$")     # what `brief fix` always accepted
 LOOSE_HEAD_RE = re.compile(r"^#{1,6}\s*([FS]\d+)\b")
 BOLD_HEAD_RE = re.compile(r"^\s*(?:[-*]\s+)?\*\*([FS]\d+)\b")
 BLOCK_END_RE = re.compile(r"^#{1,3}\s")
@@ -124,7 +125,8 @@ def phrase_state(phrase):
     return "unknown"
 
 
-def parse_text(text, security=False):
+def parse_text(text, security=False, lenient_heads=False):
+    """`lenient_heads` (for `brief fix`, which must still find `### F1: summary` blocks): any `### F<n>` heading is a block."""
     lines = text.split("\n")
     mask = comment_mask(lines, pl.fence_mask(lines))
     p = Parsed(lines, mask, security)
@@ -135,7 +137,7 @@ def parse_text(text, security=False):
     for i, l in enumerate(lines):
         if mask[i]:
             continue
-        m = HEAD_RE.match(l)
+        m = (OLD_HEAD_RE if lenient_heads else HEAD_RE).match(l)
         if m:
             fid = m.group(1)
             p.heads.append((fid, i))
@@ -204,13 +206,13 @@ def parse_text(text, security=False):
     return p
 
 
-def parse(path, security=False):
+def parse(path, security=False, lenient_heads=False):
     try:
         with open(path, "rb") as fh:
             raw = fh.read()
     except OSError as exc:
         raise OrchError("cannot read %s: %s" % (path, exc), 1)
-    return parse_text(raw.decode("utf-8", "surrogateescape"), security)
+    return parse_text(raw.decode("utf-8", "surrogateescape"), security, lenient_heads)
 
 
 def mark_parked(parsed, records, milestone):
