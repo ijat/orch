@@ -46,9 +46,9 @@ def milestone_dir(task_dir, ms):
     return hits[0]
 
 
-def load_ctx(ns):
+def load_ctx(ns, infer=False):
     c = Ctx()
-    c.task_dir = cli.get_task(ns)
+    c.task_dir = cli.get_task(ns, infer=infer)
     c.repo_name, c.slug = task_names(c.task_dir)
     c.status = cli.load_status(c.task_dir)
     c.program, c.ms = cli.program_info(c.status)
@@ -665,21 +665,27 @@ def narrow_range(c, tip, start=None):
     return "%s..%s" % (sha, tip), None
 
 
+def check_range(repo, text):
+    """(left, op, right, right's sha) for a --range A..B or A...B; the refusals `orch brief review` and `orch diff` share."""
+    m = RANGE_RE.match(text)
+    if not m:
+        raise OrchError("--range must look like A..B or A...B, got %r" % text, 1)
+    left, op, right = m.groups()
+    for side in (left, right):
+        if merge.bad_ref(side):
+            raise OrchError("--range: %r is %s" % (side, merge.bad_ref(side)), 1)
+    sha = merge.commit_of(repo, right)
+    base_sha = merge.commit_of(repo, left)
+    if not sha or not base_sha:
+        raise OrchError("--range %s does not resolve in %s" % (text, repo), 1)
+    return left, op, right, sha
+
+
 def review_range(c, ns, tip, reviewer="code", rnd=1, check=False, start=None):
     """(range text, reviewed sha). From round 2 (and for a check) the code review covers only what changed
     since the last reviewed sha; security and round 1 keep the whole branch."""
     if ns.range:
-        m = RANGE_RE.match(ns.range)
-        if not m:
-            raise OrchError("--range must look like A..B or A...B, got %r" % ns.range, 1)
-        left, op, right = m.groups()
-        for side in (left, right):
-            if merge.bad_ref(side):
-                raise OrchError("--range: %r is %s" % (side, merge.bad_ref(side)), 1)
-        sha = merge.commit_of(c.repo_path, right)
-        base_sha = merge.commit_of(c.repo_path, left)
-        if not sha or not base_sha:
-            raise OrchError("--range %s does not resolve in %s" % (ns.range, c.repo_path), 1)
+        left, op, _, sha = check_range(c.repo_path, ns.range)
         return "%s%s%s" % (left, op, sha), sha
     if reviewer == "code" and (rnd >= 2 or check):
         rng, why = narrow_range(c, tip, start)

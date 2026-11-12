@@ -467,7 +467,7 @@ def build_parser():
     sp.add_argument("--as", dest="as_role", default=None)
 
     sp = add("show", cmd_show, "one-screen task view (no -t: active tasks)")
-    from . import brief, cont, current, dashboard, flow, hook, instructions, merge, migrate, questions, resume, statusjson  # here, not at the top: they import this module
+    from . import brief, cont, current, dashboard, flow, hook, instructions, merge, migrate, questions, resume, statusjson, views  # here, not at the top: they import this module
     flow.register(add)
     merge.register(add)
     questions.register(add)
@@ -475,6 +475,7 @@ def build_parser():
     current.register(add)
     instructions.register(add)
     brief.register(add)
+    views.register(add)
     cont.register(add)
     migrate.register(add)
     dashboard.register(add)
