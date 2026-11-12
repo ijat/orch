@@ -74,20 +74,26 @@ def log_line(ts, role, text):
     return "- %s %s: %s\n" % (ts, role, text)
 
 
-def append_log(task_dir, line):
-    path = os.path.join(task_dir, "log.md")
-    data = line.encode("utf-8", "surrogateescape")
+def append_file(task_dir, name, text):
+    """Append `text` to TASK/<name> in one O_APPEND write. The first write creates the file from templates/<name>;
+    a file without a final newline gets one first. Writers that share the file take TaskLock around the call."""
+    path = os.path.join(task_dir, name)
+    data = text.encode("utf-8", "surrogateescape")
     if not os.path.exists(path):
         slug = os.path.basename(task_dir)
         try:
-            with open(os.path.join(TEMPLATES_DIR, "log.md"), encoding="utf-8") as fh:
+            with open(os.path.join(TEMPLATES_DIR, name), encoding="utf-8") as fh:
                 head = fh.read()
         except OSError as exc:
-            raise OrchError("cannot read log template: %s" % exc, 3)
+            raise OrchError("cannot read %s template: %s" % (name, exc), 3)
         data = (head.replace("<task-slug>", slug).rstrip("\n") + "\n").encode("utf-8") + data
     elif not ends_with_newline(path):
         data = b"\n" + data
     append_bytes(path, data)
+
+
+def append_log(task_dir, line):
+    append_file(task_dir, "log.md", line)
 
 
 def program_info(status):
@@ -125,8 +131,23 @@ def record_driver_keep_times(task_dir):
         return False
 
 
-def get_task(ns, must_exist=True):
-    return resolve_task(getattr(ns, "task_sub", None) or ns.task, must_exist)
+def get_task(ns, must_exist=True, infer=False):
+    """The task dir: an explicit -t decides alone. With infer=True (the subagent verbs only), no -t means `infer.resolve`
+    (the cwd, this session and ORCH_TASK; it refuses what they do not settle) and `ns.inferred` holds the task label,
+    which the verb prints so a wrong inference shows."""
+    arg = getattr(ns, "task_sub", None) or ns.task
+    if arg or not infer:
+        return resolve_task(arg, must_exist)
+    from . import infer as inf  # infer imports current, which imports this module
+    task_dir, _ = inf.resolve(os.getcwd(), st.driver_session_id(), (os.environ.get("ORCH_TASK") or "").strip(), orch_root())
+    ns.inferred = inf.label(task_dir)
+    return task_dir
+
+
+def tag(ns):
+    """' [<repo>/<slug>]' when the task was inferred, else ''."""
+    label = getattr(ns, "inferred", None)
+    return " [%s]" % label if label else ""
 
 
 # -- commands ------------------------------------------------------------------------------------
@@ -218,7 +239,7 @@ def cmd_set(ns, extra):
 
 def cmd_role(ns, extra):
     require_write_allowed()
-    task_dir = get_task(ns)
+    task_dir = get_task(ns, infer=True)
     ts_cell = now() if ns.ts is None else st.single_line(ns.ts, "--ts")
     pct = None
     if ns.pct is not None:
@@ -238,17 +259,48 @@ def cmd_role(ns, extra):
             ", ".join(skipped), "; run `orch migrate` to add the progress column" if "pct" in skipped else ""))
     if changed:
         refresh_index(warn_stderr)
-    print("role %s -> %s%s" % (ns.role, ns.state, "" if changed else " (no change)"))
+    print("role %s -> %s%s%s" % (ns.role, ns.state, "" if changed else " (no change)", tag(ns)))
     return 0
 
 
 def cmd_log(ns, extra):
     require_write_allowed()
-    task_dir = get_task(ns)
+    task_dir = get_task(ns, infer=True)
     line = log_line(now(), ns.as_role or "orchestrator", ns.text)
     with TaskLock(task_dir):
         append_log(task_dir, line)
-    print("logged")
+    print("logged%s" % tag(ns))
+    return 0
+
+
+NOTES_LIMIT = 65536      # bytes of one entry's body; larger material goes in the task's artifacts/ dir
+TOPIC_CHARS = 60
+
+
+def cmd_append(ns, extra):
+    """`orch append notes --as ROLE`: one notes.md entry, body from stdin (or --text), path-free. Refusals write nothing."""
+    require_write_allowed()
+    task_dir = get_task(ns, infer=True)
+    if not ROLE_NAME_RE.match(ns.as_role):
+        raise OrchError("bad role name for the notes heading: %r" % ns.as_role, 1)
+    if ns.text is not None:
+        raw = ns.text.encode("utf-8", "surrogateescape")
+    else:
+        raw = sys.stdin.buffer.read(NOTES_LIMIT + 1)     # one byte past the limit is enough to refuse
+    if len(raw) > NOTES_LIMIT:
+        raise OrchError("the body is over %d bytes: write the material to %s and link it from the entry"
+                        % (NOTES_LIMIT, os.path.join(task_dir, "artifacts")), 1)
+    body = raw.decode("utf-8", "surrogateescape").rstrip("\r\n")
+    if not body.strip():
+        raise OrchError("nothing to append (the body is empty)", 1)
+    if ns.topic is not None and one_line(ns.topic):
+        topic = one_line(ns.topic)
+    else:
+        topic = next(l.strip() for l in body.splitlines() if l.strip())[:TOPIC_CHARS].rstrip()
+    entry = "\n## %s — %s — %s\n\n%s\n" % (ns.as_role, now(), topic, body)
+    with TaskLock(task_dir):
+        append_file(task_dir, "notes.md", entry)
+    print("notes.md: +%d lines (%s — %s)%s" % (entry.count("\n"), ns.as_role, topic, tag(ns)))
     return 0
 
 
@@ -443,6 +495,12 @@ def build_parser():
     sp.add_argument("text")
     sp.add_argument("--as", dest="as_role", default=None)
 
+    sp = add("append", cmd_append, "append a notes.md entry: `append notes --as ROLE`, body on stdin or --text")
+    sp.add_argument("target", choices=["notes"])
+    sp.add_argument("--as", dest="as_role", required=True)
+    sp.add_argument("--topic", default=None)
+    sp.add_argument("--text", default=None)
+
     sp = add("journal", cmd_journal, "append a validated journal line")
     sp.add_argument("kind")
     sp.add_argument("items", nargs="*", metavar="k=v | k:=json")
@@ -452,7 +510,7 @@ def build_parser():
     sp.add_argument("--as", dest="as_role", default=None)
 
     sp = add("show", cmd_show, "one-screen task view (no -t: active tasks)")
-    from . import brief, cont, current, dashboard, flow, hook, instructions, merge, migrate, questions, resume, statusjson  # here, not at the top: they import this module
+    from . import brief, cont, current, dashboard, findings, flow, hook, instructions, merge, migrate, questions, resume, statusjson, views  # here, not at the top: they import this module
     flow.register(add)
     merge.register(add)
     questions.register(add)
@@ -460,6 +518,8 @@ def build_parser():
     current.register(add)
     instructions.register(add)
     brief.register(add)
+    views.register(add)
+    findings.register(add)
     cont.register(add)
     migrate.register(add)
     dashboard.register(add)

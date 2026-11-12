@@ -308,7 +308,7 @@ and `bin/orch-stats.sh` aggregates the journals across tasks.
 | `bin/orch-stats.sh`, `bin/role-cost.py` | Analytics over the journals and transcripts |
 | `bin/orch-program-check.py` | Checks a program roadmap against its rules |
 | `bin/orch-install-code-index.sh` | Installs the pinned `orch-index` release binary (macOS and Linux) for `orch:graph`, see Code index below |
-| `bin/orch`, `bin/orchlib/` | The `orch` command: one call per state change (`spawn`, `return`, `role`, `journal`, `ask`), role briefs, plan checks (including guides), the guarded `merge`, and `migrate` for old task directories. Python 3.9+ standard library only; `orchlib/tests/` holds its tests |
+| `bin/orch`, `bin/orchlib/` | The `orch` command: one call per state change (`spawn`, `return`, `role`, `journal`, `ask`), role briefs, plan checks (including guides), the guarded `merge`, and `migrate` for old task directories. The roles' verbs infer the task from the session or worktree: `role`, `log`, `plan`, `diff`, `append notes`, `write review`, `finding`, `findings`. Python 3.9+ standard library only; `orchlib/tests/` holds its tests |
 | `bin/orchlib/dashboard.py`, `bin/orchlib/dashboard.html` | `orch dashboard`: a read-only page of active tasks, questions waiting for you and recent events, served on 127.0.0.1 only |
 | `bin/orchlib/current.py` | `orch current`: maps a directory or worktree to its task and prints `resume`, `ask` or `none`. Read-only |
 | `bin/orchlib/instructions.py`, `skills/orchestrate/templates/claude-md-block.md` | `orch install-instructions`: writes, updates or removes the rules block in `~/.claude/CLAUDE.md` |

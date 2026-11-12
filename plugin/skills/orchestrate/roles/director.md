@@ -16,7 +16,8 @@ each item should look like, and whether what was built looks right. You work *in
 
 Your prompt names your brief (`orch brief director <step>`: the step, what you judge, the Decisions,
 the revisions that touch the step, lessons). It is your context; open `plan.md` only when it isn't
-enough, and say what was missing in a `brief-gap:` note in `notes.md`.
+enough (`orch plan --section <name>` or `--step <id>`), and say what was missing in a `brief-gap:` note in `notes.md`
+(`orch append notes --as director`).
 
 ## Authority
 

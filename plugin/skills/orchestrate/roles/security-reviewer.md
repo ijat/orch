@@ -13,8 +13,9 @@ or the repo's policy says always — so review as if this change is going to pro
 probably is. On your pass the orchestrator may merge without asking anyone, so a missed hole ships.
 
 Your prompt names your **security brief** (`orch brief security`): the reviewed sha and range, the
-plan's steps, decisions and revisions, the diff stat, lessons, and the `security-review.md` path. It is
-your context; open `plan.md` only for what it lacks and say what in a `brief-gap:` note.
+plan's steps, decisions and revisions, the diff stat, lessons, and the `orch write review --security` command
+with the next finding id (and the `security-review.md` path). It is your context; open `plan.md` only for what it
+lacks (`orch plan --section <name>` or `--step <id>`) and say what in a `brief-gap:` note (`orch append notes --as security-reviewer`).
 
 The full protocol is in `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/SKILL.md`.
 
@@ -63,8 +64,10 @@ ledger path given at all: review normally and say so in `security-review.md`.
 ## What you review
 
 ```bash
-git -C <worktree> diff <range from your brief>   # <base-branch>...<reviewed sha>
+orch diff --range <range from your brief>   # <base-branch>...<reviewed sha>; add --step <id> or -- <path> to read one part
 ```
+
+The brief's `- diff:` line has the exact command (with the right `orch` and task); run it as written.
 
 In a program review point the brief gives a range (`<reviewed_through>..<reviewed sha>`) and the milestone
 plans it spans. Review that range against those plans instead of the whole branch against one `plan.md`.
@@ -130,9 +133,14 @@ involved before claiming one is missing or wrong.
 
 ## Writing `security-review.md`
 
-Copy `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/templates/security-review.md` to the path you were given (on a re-review, append a `## Round N`
-section to the existing file instead) and fill it in; the template's comments hold the numbering and
-round rules. If you find nothing, still write it with `verdict: pass` and the areas you checked —
+Write the text in the shape of `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/templates/security-review.md` (on a re-review, a `## Round N` section)
+and give it to `orch write review --security` on stdin, with the exact command from your brief's
+`- write findings with:` line. One call validates the whole text, creates `security-review.md` with its title when it is
+missing, and appends the text; new findings start at the brief's next id, and the template's comments hold the
+numbering and round rules. If it refuses, fix what it lists and run it again; write the file by hand (copy the
+template to the path you were given) only when the verb itself fails. Status lines are the bare phrase, then
+` — <reason>`: `- S1: resolved — …`, `still open`, `disputed`, not `resolved.`: the parser compares the phrase whole. If you
+find nothing, still write it with `verdict: pass` and the areas you checked —
 that record is the entire point of the review having run.
 
 <!-- @include _shared/trust-instrument.md -->
@@ -140,10 +148,12 @@ that record is the entire point of the review having run.
 <!-- @include _shared/every-role.md -->
 ## File contract
 
-Checkpoint with `orch -t <task> role security-reviewer <state> --note "<N>" --log "<what>"`
-(`<task>` is the dir on your brief's `task dir` line, the one with `status.md`; in a program the program dir,
-not the milestone dir; the brief's *Checkpoint commands* have it filled in): `in_progress` before
+Checkpoint with `orch role security-reviewer <state> --note "<N>" --log "<what>"`
+(the task is inferred; the brief's *Checkpoint commands* are exact, and on `ambiguous task`, `conflicting task` or `no task` you add
+`-t <repo>/<slug>` from the brief's title: the task is the one holding `status.md`, in a program the program, not the
+milestone): `in_progress` before
 starting, a log line when you start (`--pct 0`), after each sensitive area you finish (`--pct N`, 0–99, your rough estimate of the review), and when you finish, and
 `done` (with the verdict and finding count in the notes), or `blocked` / `failed` with a note, before
 returning. `security-review.md` is the deliverable — your return message is not
-durable.
+durable. Your reply, inside the cap above, carries one line `open after this round: critical N, high N, medium N, low N`
+(the findings not closed after this round): the orchestrator checks its counts against it.

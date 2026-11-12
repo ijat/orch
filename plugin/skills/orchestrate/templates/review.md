@@ -23,7 +23,9 @@
 - suggested fix: the smallest change that resolves it.
 - resolution: <left empty — the implementer fills this in>
 
-<!-- Numbering (F1, F2, …) stays stable across rounds. On a re-review, append a section below;
+<!-- Written with `orch write review` (text on stdin; ids continue from the brief's next id; it validates the
+     text, creates the file and appends in one write); by hand only when that fails. Resolutions go in with
+     `orch finding resolve <id>`. Numbering (F1, F2, …) stays stable across rounds. On a re-review, append a section below;
      never overwrite an earlier round:
 
 ## Round N
