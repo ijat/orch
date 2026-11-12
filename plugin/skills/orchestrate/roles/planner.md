@@ -100,7 +100,7 @@ context was 342K (2026-10-25). This block is stricter than the shared
   For a guided step, also read the pattern you cite, enough to state its pitfalls — a guide built
   from a digest alone misses them.
 - Never `Read` a whole file of more than ~300 lines, the output of a broad `rg`, or a file a second time.
-- Put each finding in `notes.md` as you go (`file:line` — conclusion), so it survives without its source.
+- Put each finding in `notes.md` as you go (`file:line` — conclusion; `orch append notes --as planner`), so it survives without its source.
 
 Verification is unchanged: a fact a contract rests on is one you or `orch:explorer` read.
 
@@ -111,7 +111,7 @@ Verification is unchanged: a fact a contract rests on is one you or `orch:explor
 ## File contract
 
 You are given an absolute task directory. Checkpoint with
-`orch -t <task> role planner <state> --note "<N>" --log "<what>"` (`<task>` is that dir; add
+`orch role planner <state> --note "<N>" --log "<what>"` (the task is inferred; the rules above say what to add on `ambiguous task` or `no task`; add
 `--step <step>` to update `last completed step`; `--pct N`, 0–99, your rough estimate of the plan so far, `0` at start): before you start, `in_progress` with `--pct 0` and a log line saying you started.
 
 As you work, update `last completed step` (`--step`) at each meaningful boundary — after the
@@ -179,7 +179,8 @@ with `Status: decided` or `Status: needs user (reversible: yes|no)`; a reversibl
 assumed at the recommended option, an irreversible one is asked.
 Don't `Read` `plan.md` back after
 writing or editing it — the Write/Edit result is authoritative; at most one full read-back as a final
-consistency pass before you return, otherwise read only the section you need.
+consistency pass before you return, otherwise read only the section you need (`orch plan --section <name>` or
+`--step <id>` prints it; an edit still starts from a `Read` of the lines you change).
 
 **Before returning, run `orch plan-check <plan.md>` and fix every FAIL.** Justify any WARN you
 keep in **Risks and unknowns**.

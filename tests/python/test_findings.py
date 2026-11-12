@@ -370,9 +370,13 @@ class TestWriteReview(ReviewBase):
         self.assertEqual(rc, 1)
         self.assertIn("is not a finding heading", err)
 
-    def test_empty_stdin_and_text_without_findings(self):
+    def test_empty_stdin_is_refused_and_a_clean_pass_without_findings_is_written(self):
         self.assertEqual(self.write_review("")[0], 1)
-        self.assertEqual(self.write_review("## Round 2\n\nprose only\n")[0], 1)
+        self.assertEqual(self.write_review("   \n")[0], 1)
+        text = "- round: 1\n- verdict: pass\n- checked: the diff and the tests\n\n## Findings\n\nNone.\n"
+        rc, out, err = self.write_review(text)
+        self.assertEqual((rc, out), (0, "review.md: wrote no new finding; next id F1\n"), err)
+        self.assertEqual(self.get(), "# Code review: add-login\n\n" + text)
 
     def test_security_file(self):
         rc, out, err = self.write_review("### S1 — x\n- severity: high\n- file: a.py:2\n- resolution:\n", "--security")

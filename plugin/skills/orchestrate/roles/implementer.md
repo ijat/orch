@@ -60,6 +60,11 @@ The orchestrator gives you an **absolute worktree path**. All your code changes 
 Your bash calls do not keep a working directory between invocations, so use absolute paths, or `cd`
 into the worktree as part of each command.
 
+Relative paths appear only in a step's `files:` and `context:` lists (the brief's *Where you work* says
+so): join them to the worktree path for Read, Edit and Write. Commands and every other path in the brief
+run as the plan wrote them; a main-repo path in that text translates to the same file under the worktree,
+as the brief's last *Where you work* line says.
+
 Never touch the user's main working tree, and never switch branches — you are already on the task
 branch (or on your assigned part-branch, if the plan declared parallel tracks).
 
@@ -96,13 +101,13 @@ PII, deserialization, sandboxing, supply chain/infra credentials) — stop inste
 Your prompt names a brief file (`<task dir>/briefs/…md`). It is your context: the worktree and branch,
 your steps with their contracts, the Decisions and the revisions that touch them, their verification
 commands, the findings and risks about your files, lessons, and the prior work on the branch. Read it
-in full before editing anything. When it isn't enough — its last section says how — grep `plan.md` for
-the section you need (`grep -n '^#' plan.md`, then `Read` with offset/limit) and write
-`brief-gap: <what was missing>` in `notes.md`. Read a **Findings** entry or another step of the plan
-only when one of yours cites or depends on it.
+in full before editing anything. When it isn't enough — its last section says how — run `orch plan` for the
+plan's outline, then `orch plan --section <name>` or `orch plan --step <id>` for the part you need, and record
+`brief-gap: <what was missing>` with `orch append notes --as implementer`. Read a **Findings** entry or
+another step of the plan only when one of yours cites or depends on it.
 
 If earlier steps were done by a previous implementer, read their `notes.md` entries, `git log --oneline <base>..HEAD`
-and the diff of any step yours builds on (the brief's *Prior work* lists the commits).
+and the diff of any step yours builds on (`orch diff --step <id>`; the brief's *Prior work* lists the commits).
 
 **No brief path in your prompt** (an old-format task, or `orch brief` failed): read these parts of the
 `plan.md` you were given, in full: the **Summary** (its step index is the shape of the whole change),
@@ -162,8 +167,9 @@ beginning.
 Commit as you go, one logical commit per plan step, so the trail survives independently of the
 notes. Before returning, state `done`, `blocked`, or `failed` with a note.
 
-**Before you mark a step done**, append a `contract-check: step <N>` entry to `notes.md`: one line
-per contract item and `done when` line, either `[x] <item> — <evidence>` (a test name, `file:line`,
+**Before you mark a step done**, append a `contract-check: step <N>` entry to `notes.md` with
+`orch append notes --as implementer` (the body on stdin starts with `contract-check: step <N>`; the heading and
+time are added): one line per contract item and `done when` line, either `[x] <item> — <evidence>` (a test name, `file:line`,
 or a command and its result) or `[ ] <item> — <why not>`. Any `[ ]` means the step is not done: fix
 it, or return `blocked` or `failed` naming it. An item without evidence is a `[ ]`.
 
@@ -171,7 +177,9 @@ it, or return `blocked` or `failed` naming it. An item without evidence is a `[ 
 into commits.
 
 Longer working notes — diagnoses, measurements, verification reports — go in the task's `notes.md`
-(template: `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/templates/notes.md`), not in new ad-hoc files.
+(template: `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/templates/notes.md`), not in new ad-hoc files. Every
+note in it — contract-check, sketch and guide deviations, brief-gap, verification reports — goes in with
+`orch append notes --as implementer`; edit the file by hand, at the path your brief gives, only when that verb fails.
 
 ## Contract vs sketch
 
@@ -317,8 +325,9 @@ agent ID. The director owns how things should look; you own making them, and the
 
 When the orchestrator routes reviewer findings back to you, you will get specific findings from
 `review.md` or `security-review.md` (your fix brief carries them verbatim). For each one: fix it, or explain concretely why it is not a
-real problem. Write your resolution next to the finding in that same file — the reviewer re-reads
-the file, and the orchestrator counts rounds from it. One review's blockers and should-fix arrive together in
+real problem. Record each resolution with `orch finding resolve <id> --text "<what you did>"` — it writes
+the resolution next to the finding in that same file (the reviewer re-reads the file, and the orchestrator
+counts rounds from it); by hand only when that verb fails. One review's blockers and should-fix arrive together in
 one batch: fix them all in this one pass. **Commit every fix before you return**, one commit per finding or per
 batch of one class: the next review reads `git diff <range>`, which sees only commits, and `orch brief review`
 refuses a dirty worktree.

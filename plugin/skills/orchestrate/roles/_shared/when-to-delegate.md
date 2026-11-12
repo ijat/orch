@@ -24,5 +24,9 @@ read the source yourself.
   in a non-code file).
 - **Do it yourself instead:** a single file or symbol named in your brief or diff (one `Read`/`grep` is
   cheaper than a spawn), the diff or files you were handed, anything you will edit, security-sensitive reading, and any decision.
+- **Read ranges, not whole files.** Locate first (the explorer or the index for structure, `grep -n` inside one
+  file), then `Read` with `offset` and `limit`. Read a whole file only when it is short (about 300 lines or
+  fewer), you will change most of it, or you must judge it whole. Don't re-read a range you already have
+  unless it changed.
 - **Batch:** one spawn with several questions beats several spawns.
 
