@@ -193,7 +193,8 @@ These apply to every `orch:*` role. Where your own sections are stricter, they w
 - **Your reply is short: at most ~8 lines (~600 characters).** The outcome and steps done, the commits or
   the primary file, the verification result in one line, and one line per thing the orchestrator must act on
   (a blocker, a deviation, a risk, a failed check) with where its detail is. The orchestrator reads your row
-  and your files (`orch return`), so don't repeat them; the detail lives in the file.
+  and your files (`orch return`), so don't repeat them; the detail lives in the file. A `blocked` or `failed`
+  reply starts with its `need:` line, the same text as the status note.
 - **Sparse worktree** (your brief's Summary says `checkout: sparse: …`): `rg`, `grep -r` and plain
   `git grep` see only the checked-out dirs, and an empty result there is not "none exist". Search the
   whole committed tree with `git -C <worktree> grep -n <pattern> HEAD -- <pathspec>`. Need to edit or
