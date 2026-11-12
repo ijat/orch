@@ -545,6 +545,13 @@ class TestCompute(unittest.TestCase):
         self.assertEqual(usage.price('claude-opus-5-5-20261001'), (4, 20, 0.05))
         self.assertEqual(usage.price('claude-opus-5-20250101'), (5, 25, 0.1))
 
+    def test_fable_5_2_priced_at_its_own_row(self):
+        # $8 in / $40 out, cache read $0.20 (platform pricing page, 2026-11-12); not the 5.1 or the bare `claude-fable-5` row
+        self.assertEqual(usage.price('claude-fable-5-2'), (8, 40, 0.025))
+        self.assertEqual(usage.price('claude-fable-5-1'), (10, 50, 0.025))
+        r = usage.Req(0, 'claude-fable-5-2', 1000000, 0, 0, 1000000, 1000000, 'x')
+        self.assertAlmostEqual(usage.cost(r), 8 + 0.20 + 40)
+
     def test_cost_formula(self):
         r = usage.Req(0, OPUS, 1000, 2000, 3000, 4000, 500, 'x')
         want = (1000 * 4 + (2000 * 1.25 + 3000 * 2) * 4 + 4000 * 4 * 0.05 + 500 * 20) / 1e6

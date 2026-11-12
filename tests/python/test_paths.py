@@ -134,6 +134,12 @@ class AgentNames(unittest.TestCase):
             with self.subTest(given=given):
                 self.assertEqual(rc.agent_key(given), paths.agent_key(given))
 
+    def test_role_cost_prices_fable_5_2(self):
+        rc = load_role_cost()
+        u = {'input_tokens': 1000000, 'cache_read_input_tokens': 1000000, 'output_tokens': 1000000}
+        self.assertAlmostEqual(rc.request_cost(u, 'claude-fable-5-2'), 8 + 0.20 + 40)
+        self.assertAlmostEqual(rc.request_cost(u, 'claude-fable-5-1'), 10 + 0.25 + 50)
+
     def test_no_role_for_other_prefixes(self):
         rc = load_role_cost()
         roles = ("orch-planner", "orch-implementer")
