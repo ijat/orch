@@ -5,11 +5,14 @@ import glob
 import os
 import re
 import shlex
+import shutil
 import sys
 
 from . import cli
+from . import current
 from . import findings as fd
 from . import flow
+from . import infer
 from . import lessons as ls
 from . import merge
 from . import plan as pl
@@ -25,8 +28,9 @@ STAT_LIMIT = 200
 CHECK_CYCLES = 3          # fix-and-check cycles per code review round (SKILL.md, Review loops)
 GUARD_RE = re.compile(r"^(- (?:reviewed sha|round|milestone):)", re.M)
 FIX_ID_RE = re.compile(r"^[FS]\d+$")
-FALLBACK = ("Grep plan.md for the section you need (`grep -n '^#' <plan>`), read only that section, and write "
-            "`brief-gap: <what was missing>` in notes.md so the next brief can include it.")
+SUMMARY_GATE_RE = re.compile(r"^- (?:shape|decisions needing the user|implementer tier|sketched steps|guided steps|visual steps):")
+ENTRY_RE = re.compile(r"^(?:-[ \t]+\*\*|###[ \t]+)(D\d+)(?![A-Za-z0-9_])")
+BOUNDARY = r"(?<![^\s(\[<{'\"`=,:;])"      # start of text, whitespace, or one of ( [ < { ' " ` = , : ;
 SIM_FILES = ("size", "files", "do", "contract", "done when")
 REVIEW_FIELDS = ("files", "do", "contract", "done when")
 
@@ -99,8 +103,25 @@ def to_worktree(c, path):
 
 
 def orch_cli():
-    """The running CLI's own absolute path, shell-quoted only when it needs it: briefs name the copy that wrote them."""
-    return shlex.quote(os.path.join(BIN_DIR, "orch"))
+    """`orch` when PATH resolves to the copy writing this brief (D3), else that copy's absolute path, shell-quoted only
+    when it needs it: a dev session's PATH holds the installed copy first, which lacks newer verbs."""
+    mine = os.path.join(BIN_DIR, "orch")
+    found = shutil.which("orch")
+    if found and os.path.realpath(found) == os.path.realpath(mine):
+        return "orch"
+    return shlex.quote(mine)
+
+
+def orch_head(c):
+    """`<orch>` or `<orch> -t '<repo>/<slug>'`: the task is named only when a bare call from the role's shell would not
+    land on it (the cwd, this session and ORCH_TASK, through the one resolver `orch role` uses). Never the absolute dir."""
+    try:
+        found, _ = infer.resolve(os.getcwd(), st.driver_session_id(), (os.environ.get("ORCH_TASK") or "").strip(), orch_root())
+        if current.same_dir(found, c.task_dir):
+            return orch_cli()
+    except OrchError:
+        pass
+    return "%s -t %s" % (orch_cli(), sq("%s/%s" % task_names(c.task_dir)))
 
 
 def sq(text):
@@ -165,12 +186,101 @@ def assumed_text(c):
     return "\n\n".join(out)
 
 
+def fallback_text(c):
+    head = orch_head(c)
+    return ("Run %s plan for the plan's outline, then %s plan --section <name> or --step <id> for the part you need, "
+            "and record brief-gap: <what was missing> with %s append notes." % (head, head, head))
+
+
+def summary_slice(text):
+    """Work and director briefs: drop the Summary's gate-only lines (and their indented continuation)."""
+    out, skipping = [], False
+    for line in text.split("\n"):
+        if SUMMARY_GATE_RE.match(line):
+            skipping = True
+            continue
+        if skipping and line[:1] in (" ", "\t") and line.strip():
+            continue
+        skipping = False
+        out.append(line)
+    return "\n".join(out)
+
+
+def decisions_slice(c, text, keys, cited_text):
+    """Work and director briefs: in a decision entry that matches none of the brief's step keys and whose id the steps do
+    not cite, `Rejected:` up to `Status:` (or the entry's end) becomes a pointer to `orch plan --decision`."""
+    lines = text.split("\n")
+    mask = pl.fence_mask(lines)
+    starts = [i for i, l in enumerate(lines) if not mask[i] and ENTRY_RE.match(l)]
+    if not starts:
+        return text
+    out, pos = [], 0
+    for i in starts:
+        end = i + 1
+        while end < len(lines) and (mask[end] or not (pl.HEAD_RE.match(lines[end]) or ENTRY_RE.match(lines[end]))):
+            end += 1
+        did = ENTRY_RE.match(lines[i]).group(1)
+        entry = "\n".join(lines[i:end])
+        cited = re.search(r"(?<![A-Za-z0-9])%s(?![A-Za-z0-9])" % did, cited_text)
+        rej = re.search(r"Rejected:", entry)
+        if rej and not cited and not keys.matches(entry):
+            stat = re.search(r"Status:", entry[rej.end():])
+            tail_end = rej.end() + stat.start() if stat else len(entry)
+            ptr = "(alternatives: %s plan --decision %s)" % (orch_head(c), did)
+            line_start = entry.rfind("\n", 0, tail_end) + 1
+            if stat and re.match(r"^[ \t]*(?:[-*][ \t]+)?$", entry[line_start:tail_end]) and line_start > rej.start():
+                entry = entry[:rej.start()] + ptr + "\n" + entry[line_start:]
+            else:
+                entry = entry[:rej.start()] + ptr + (" " + entry[tail_end:] if stat else "")
+            out.extend(lines[pos:i])
+            out.extend(entry.split("\n"))
+            pos = end
+    out.extend(lines[pos:])
+    return "\n".join(out)
+
+
+def path_mode(c):
+    """'wt' (paths relative to the worktree), 'repo' (no worktree, the repo itself) or None (nothing is rewritten)."""
+    if c.wt:
+        return "wt"
+    if c.no_wt_mode and c.repo_path != "unknown":
+        return "repo"
+    return None
+
+
+def rel_fields(c, text):
+    """Step blocks a brief prints: the values of `files:` and `context:` fields (as the plan parser delimits a field:
+    up to the next known field line or heading) lose their `<worktree>/` and `<repo>/` prefixes and expand `~/`.
+    Every other line is returned byte for byte. Paths outside both roots stay absolute."""
+    mode = path_mode(c)
+    if mode is None:
+        return text
+    roots = [r for r in ((c.wt if mode == "wt" else None), c.repo_path if c.repo_path != "unknown" else None) if r]
+    home = os.path.expanduser("~").rstrip("/") + "/"
+    lines = text.split("\n")
+    mask = pl.fence_mask(lines)
+    cur = None
+    for i, l in enumerate(lines):
+        if not mask[i]:
+            if pl.HEAD_RE.match(l):
+                cur = None
+            else:
+                m = pl.FIELD_LINE_RE.match(l)
+                if m and m.group(1).strip().lower() in pl.KNOWN:
+                    cur = m.group(1).strip().lower()
+        if cur in ("files", "context"):
+            l = re.sub(BOUNDARY + r"~/", lambda _: home, l)
+            for r in roots:
+                l = re.sub(BOUNDARY + re.escape(r.rstrip("/") + "/"), "", l)
+            lines[i] = l
+    return "\n".join(lines)
+
+
 EST_PCT = "<0-99: your rough estimate of this assignment>"
 
 
 def checkpoint_text(c, role, ids_text, last_id):
-    t, r = sq(c.task_dir), sq(role)
-    head = "%s -t %s role %s" % (orch_cli(), t, r)
+    head = "%s role %s" % (orch_head(c), sq(role))
     return "\n".join([
         "Run these as written (replace only the quoted placeholders):",
         "",
@@ -187,9 +297,9 @@ def checkpoint_text(c, role, ids_text, last_id):
 
 
 def review_checkpoint_text(c, role):
-    """The reviewer's checkpoint commands. `-t` names the task dir, the one holding status.md: in a program
-    that is the program dir, not the milestone dir the plan and review file sit in."""
-    head = "%s -t %s role %s" % (orch_cli(), sq(c.task_dir), sq(role))
+    """The reviewer's checkpoint commands. The task is the one holding status.md: in a program that is the program
+    dir, not the milestone dir the plan and review file sit in."""
+    head = "%s role %s" % (orch_head(c), sq(role))
     return "\n".join([
         "Run these as written (replace only the quoted placeholders):",
         "",
@@ -218,7 +328,8 @@ def where_text(c, role, tier, escalation, steps, extra_lines=()):
     out.append("- branch: %s" % c.branch)
     out.append("- base: %s" % c.base)
     out.append("- plan: %s" % c.plan_path)
-    out.append("- notes: %s (contract-check entries and brief-gap notes go here)" % os.path.join(c.task_dir, "notes.md"))
+    out.append("- notes: %s (read earlier entries here; append with %s append notes --as %s)"
+               % (os.path.join(c.task_dir, "notes.md"), orch_head(c), role))
     for s in steps:
         sk = s.field_text("sketch")
         if sk and not re.match(r"^none\b", sk, re.I):
@@ -236,8 +347,13 @@ def where_text(c, role, tier, escalation, steps, extra_lines=()):
     out.append("- role row: %s" % role)
     out.append("- tier: %s" % (tier or "not stated here (the spawn message names it)"))
     out.append("- escalation: %s" % (escalation or "none"))
-    if c.wt and c.repo_path != "unknown":
-        out.append("- plan paths under %s are main-repo paths; the same file in your worktree is under %s" % (c.repo_path, c.wt))
+    mode = path_mode(c)
+    if mode == "wt":
+        out.append("- step files: and context: paths are relative to the worktree root above (Read/Edit/Write take %s/<path>); "
+                   "all other plan text is as written: a path under %s there is a main-repo path, the same file in your "
+                   "worktree is under %s" % (c.wt, c.repo_path if c.repo_path != "unknown" else "<repo>", c.wt))
+    elif mode == "repo":
+        out.append("- step files: and context: paths are relative to the repo root above")
     out.extend(extra_lines)
     return "\n".join(out)
 
@@ -496,8 +612,9 @@ def build_work_brief(c, ns, ids, role, kind):
         out.append(legacy_note(c))
     out.append(section("Where you work", where_text(c, role, ns.tier, ns.escalation, steps)))
     out.append(section("Checkpoint commands", checkpoint_text(c, role, ids_text, ids[-1])))
-    out.append(section("Summary", summary_text(plan)))
-    out.append(section("Decisions", decisions_text(plan)))
+    out.append(section("Summary", summary_slice(summary_text(plan))))
+    decisions_at = len(out)
+    out.append(None)       # Decisions: sliced below, once the steps' text says which entries they cite
     out.append(section("Assumed decisions", assumed_text(c)))
     sup, other = ([], [])
     if not legacy:
@@ -509,8 +626,9 @@ def build_work_brief(c, ns, ids, role, kind):
         if sup:
             blocks.append("Later revisions win over the plan and over earlier revisions.\n\n" + "\n\n".join(sup))
         blocks.extend(s.text() for s in steps)
-        mine = "\n\n".join(blocks)
+        mine = rel_fields(c, "\n\n".join(blocks))
     out.append(section("Your steps", mine))
+    out[decisions_at] = section("Decisions", decisions_slice(c, decisions_text(plan), keys, mine))
     if kind == "director":
         vis = "\n\n".join("Step %s: %s" % (s.id, s.field_text("visual") or "(no `visual:` line)") for s in steps)
         out.append(section("What you judge (visual)", vis if steps else "(legacy plan: read the step text)"))
@@ -528,7 +646,7 @@ def build_work_brief(c, ns, ids, role, kind):
     out.append(section("Lessons", lessons_text(c, "director" if kind == "director" else "implementer", keys)))
     out.append(section("Prior work", prior_text(c)))
     out.append(section("From the orchestrator", read_extra(ns.extra)))
-    out.append(section("If this brief is not enough", FALLBACK))
+    out.append(section("If this brief is not enough", fallback_text(c)))
     return "\n\n".join(out)
 
 
@@ -820,6 +938,9 @@ def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fre
     keys = pl.Keys([], all_files, c.roots)
     role = "%s-reviewer" % reviewer
     fname = "review.md" if reviewer == "code" else "security-review.md"
+    rpath = os.path.join(c.review_dir, fname)
+    prefix = "F" if reviewer == "code" else "S"
+    next_id = fd.parse(rpath, reviewer != "code").next_id(prefix) if os.path.isfile(rpath) else prefix + "1"
     head = ["# Brief: %s review%s, round %d — %s/%s" % (reviewer, " fix-batch check" if check else "", rnd,
                                                       c.repo_name, c.slug),
             "- reviewed sha: %s" % sha,
@@ -827,7 +948,8 @@ def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fre
     if c.program:
         head.append("- milestone: %d" % c.ms)
     head.append("- range: %s" % rng)
-    head.append("- diff: git diff %s" % rng)
+    cli_head = orch_head(c)
+    head.append("- diff: %s diff --range %s  (add --step <id> or -- <path> to read one part)" % (cli_head, rng))
     if check:
         head.append("- check: true")
         head.append("- cycle: %d" % cycle)
@@ -848,7 +970,8 @@ def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fre
            "- branch: %s   base: %s" % (c.branch, c.base),
            "- plan: %s" % c.plan_path,
            "- task dir (status.md, log.md): %s" % c.task_dir,
-           "- write your findings to: %s" % os.path.join(c.review_dir, fname)]
+           "- write findings with: %s write review%s (next id: %s)" % (cli_head, "" if reviewer == "code" else " --security", next_id),
+           "- write your findings to: %s (the fallback; the verb checks the format)" % os.path.join(c.review_dir, fname)]
     body = []
     if plan.legacy:
         body.append(legacy_note(c))
@@ -936,7 +1059,7 @@ def cmd_brief_review(ns, c, reviewer):
 
 def finding_blocks(path, wanted):
     """{id: verbatim finding block} and {id: [round-note texts]} from a review file (the parser `orch findings` uses)."""
-    parsed = fd.parse(path)
+    parsed = fd.parse(path, lenient_heads=True)     # the old reader's headings: `### F1: x` still names a finding here
     found = dict((f.id, f.block) for f in parsed.findings if f.id in wanted)
     return found, dict((w, list(parsed.notes.get(w, []))) for w in wanted)
 
@@ -976,9 +1099,12 @@ def cmd_brief_fix(ns, c):
     plan = c.plan
     steps = []
     repo = c.repo_path if c.repo_path != "unknown" else None
+    # the steps whose files a selected finding names on its `- file:` line; no such line: any mention in the findings
+    file_lines = "\n".join(m.group(1) for w in wanted for m in re.finditer(r"^- file:[ \t]*(.*)$", blocks[w], re.M))
+    haystack = file_lines if file_lines.strip() else findings_text
     for s in plan.steps:
         keys = pl.Keys([], s.files(repo), c.roots)
-        if keys.re and keys.re.search(findings_text):
+        if keys.re and keys.re.search(haystack):
             steps.append(s)
     role = ns.role or "implementer"
     if not flow.ROLE_RE.match(role):
@@ -990,12 +1116,12 @@ def cmd_brief_fix(ns, c):
         out.append(legacy_note(c))
     out.append(section("Where you work", where_text(c, role, ns.tier, ns.escalation, steps)))
     out.append(section("Checkpoint commands", checkpoint_text(c, role, "fix round %d" % rnd, "fix round %d" % rnd)))
-    out.append(section("Findings to fix (verbatim; write each resolution under the finding in its review file)", findings_text))
-    out.append(section("Steps whose files the findings cite", "\n\n".join(s.text() for s in steps) if steps else
+    out.append(section("Findings to fix (verbatim; record each resolution with %s finding resolve <id>)" % orch_head(c), findings_text))
+    out.append(section("Steps whose files the findings cite", rel_fields(c, "\n\n".join(s.text() for s in steps)) if steps else
                        ("(legacy plan: read the Steps section of %s)" % c.plan_path if plan.legacy else "")))
     out.append(section("Lessons", lessons_text(c, role, keys)))
     out.append(section("From the orchestrator (class and invariant)", read_extra(ns.extra)))
-    out.append(section("If this brief is not enough", FALLBACK))
+    out.append(section("If this brief is not enough", fallback_text(c)))
     text = "\n\n".join(out)
     with TaskLock(c.task_dir):
         os.makedirs(os.path.join(c.task_dir, "briefs"), exist_ok=True)

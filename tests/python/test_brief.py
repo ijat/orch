@@ -53,9 +53,21 @@ def sec(text, title):
     return m.group(1).rstrip("\n")
 
 
+def path_without_orch():
+    """The running PATH minus every entry that holds an `orch`: a brief then names the CLI by its absolute path, whatever
+    the developer's own PATH says."""
+    keep = [e for e in os.environ.get("PATH", "").split(os.pathsep) if e and not os.access(os.path.join(e, "orch"), os.X_OK)]
+    return os.pathsep.join(keep)
+
+
+SESSION = "bd0dbcca-0000-4000-8000-0000000000b6"
+
+
 class BriefBase(GitBase):
     def setUp(self):
         GitBase.setUp(self)
+        self.env["PATH"] = path_without_orch()
+        self.env["ORCH_TASK"] = ""
         self.setup_task()
         self.base_sha = self.git(self.repo, "rev-parse", "main")
         self.plan_text = self.fixture_plan("standard.md")
@@ -175,17 +187,22 @@ class TestImplementBrief(BriefBase):
         self.assertEqual(heads(text), list(SHEADS))
         self.assertTrue(text.endswith("\n") and not text.endswith("\n\n"))
 
-    def test_your_steps_and_decisions_are_byte_identical(self):
+    def test_your_steps_and_decisions_differ_from_the_plan_only_where_the_contract_says(self):
         p = pl.parse_plan(self.plan_text)
         _, text = self.brief("implement", "1")
-        self.assertEqual(sec(text, "Your steps"), p.step("1").text())
-        self.assertEqual(sec(text, "Decisions"), p.body(p.find("decisions")))
-        self.assertEqual(sec(text, "Summary"), p.body(p.find("summary")))
+        # step block: only the files:/context: values lose the repo prefix (step 1 has no other repo path)
+        self.assertEqual(sec(text, "Your steps"), p.step("1").text().replace(self.repo + "/", ""))
+        # D1's Rejected clause belongs to no step of this brief: it becomes a pointer; D2 has none
+        want = p.body(p.find("decisions")).replace("Rejected: sha256 (no salt). ", "(alternatives: %s -t 'myapp/add-login' plan --decision D1) " % CLI)
+        self.assertEqual(sec(text, "Decisions"), want)
+        # the Summary's gate-only line is gone, every other line is as written
+        want = "\n".join(l for l in p.body(p.find("summary")).split("\n") if not l.startswith("- shape:"))
+        self.assertEqual(sec(text, "Summary"), want)
 
     def test_fenced_block_survives_inside_a_step(self):
         p = pl.parse_plan(self.plan_text)
         _, text = self.brief("implement", "2")
-        self.assertIn(p.step("2").text(), sec(text, "Your steps"))
+        self.assertIn(p.step("2").text().replace(self.repo + "/", ""), sec(text, "Your steps"))
         self.assertIn("  ### Step 99 — not a step (inside a fence)", text)
 
     def test_names_never_overwrite(self):
@@ -230,11 +247,15 @@ class TestImplementBrief(BriefBase):
         self.assertIn("- branch: orch/add-login", w)
         self.assertIn("- base: main", w)
         self.assertIn("- plan: %s" % os.path.join(self.d, "plan.md"), w)
-        self.assertIn("- notes: %s" % os.path.join(self.d, "notes.md"), w)
+        self.assertIn("- notes: %s (read earlier entries here; append with %s -t 'myapp/add-login' append notes --as implementer)"
+                      % (os.path.join(self.d, "notes.md"), CLI), w)
         self.assertIn("- sketch for step 1 (non-binding): %s" % os.path.join(self.d, "sketches", "step-1.md"), w)
         self.assertIn("- tier: sonnet/high", w)
         self.assertIn("- escalation: proactive", w)
-        self.assertIn("main-repo paths; the same file in your worktree is under %s" % self.wt, w)
+        self.assertIn("- step files: and context: paths are relative to the worktree root above (Read/Edit/Write take %s/<path>); "
+                      "all other plan text is as written: a path under %s there is a main-repo path, the same file in your "
+                      "worktree is under %s" % (self.wt, self.repo, self.wt), w)
+        self.assertNotIn("plan paths under", w)
         self.assertNotIn("(missing)", w)
 
     def test_guide_path_in_brief(self):
@@ -272,7 +293,8 @@ class TestImplementBrief(BriefBase):
     def test_checkpoint_commands_are_quoted(self):
         _, text = self.brief("implement", "1,2")
         c = sec(text, "Checkpoint commands")
-        q = "'%s'" % self.d
+        q = "'myapp/add-login'"        # never the absolute task dir
+        self.assertNotIn(self.d, c)
         self.assertIn(CLI + " -t %s role 'implementer' in_progress --note 'working on step(s) 1, 2' --log 'started step(s) 1, 2'" % q, c)
         self.assertIn("role 'implementer' done --step '2' --note '<one line>' --log 'done: <one line>'", c)
         self.assertIn("role 'implementer' blocked --note 'need: <what>' --log 'blocked: <what>'", c)
@@ -291,7 +313,8 @@ class TestImplementBrief(BriefBase):
         rc, out, err = self.run_orch("brief", "implement", "1", "-t", "My App/add-menu")
         self.assertEqual(rc, 0, err)
         text = rd(out.splitlines()[0])
-        self.assertIn("-t '%s' role" % d, text)
+        self.assertIn("-t 'My App/add-menu' role", text)
+        self.assertNotIn(d, sec(text, "Checkpoint commands"))
 
     def test_depends_contract_and_done_when_only(self):
         _, text = self.brief("implement", "3")
@@ -452,9 +475,9 @@ class TestImplementBrief(BriefBase):
     def test_fallback_text(self):
         _, text = self.brief("implement", "1")
         f = sec(text, "If this brief is not enough")
-        self.assertIn("grep -n '^#'", f)
-        self.assertIn("brief-gap: <what was missing>", f)
-        self.assertIn("notes.md", f)
+        self.assertEqual(f, "Run %s -t 'myapp/add-login' plan for the plan's outline, then %s -t 'myapp/add-login' plan --section <name> "
+                            "or --step <id> for the part you need, and record brief-gap: <what was missing> with "
+                            "%s -t 'myapp/add-login' append notes." % (CLI, CLI, CLI))
 
     def test_size_is_a_fraction_of_the_plan(self):
         out, _ = self.cmd_ok("brief", "implement", "10")
@@ -777,7 +800,8 @@ class TestReviewBrief(BriefBase):
         _, text = self.brief("review")
         self.assertIn("- task dir (status.md, log.md): %s" % self.d, text)
         c = sec(text, "Checkpoint commands")
-        self.assertIn(CLI + " -t '%s' role 'code-reviewer' in_progress --note 'reviewing' --log 'started review'" % self.d, c)
+        self.assertIn(CLI + " -t 'myapp/add-login' role 'code-reviewer' in_progress --note 'reviewing' --log 'started review'", c)
+        self.assertNotIn(self.d, c)
         self.assertIn("role 'code-reviewer' done --note '<verdict>, <N> findings' --log 'done: <verdict>'", c)
         self.assertIn("--log 'started review' --pct 0\n", c)
         self.assertIn("--log 'reviewed <file group>' --pct '<0-99: your rough estimate of this assignment>'\n", c)
@@ -882,7 +906,7 @@ class TestProgramReviewBrief(BriefBase):
                                .replace("<what>", "x"))
             self.assertEqual(argv[0], os.path.join(paths.BIN_DIR, "orch"))
             self.assertTrue(os.path.isabs(argv[0]))
-            self.assertEqual(argv[1:3], ["-t", self.d])      # the program dir, never the milestone dir
+            self.assertEqual(argv[1:3], ["-t", "myapp/add-login"])      # the program's task name, never the milestone dir
             self.assertEqual(argv[3:5], ["role", role])
             self.ok(*argv[1:])
         return cmds
@@ -975,7 +999,8 @@ class TestNarrowReviewAndCheck(BriefBase):
         _, text = self.brief("review")
         sha = self.tip()
         self.assertIn("- range: main...%s" % sha, text)
-        self.assertIn("- diff: git diff main...%s" % sha, text)
+        self.assertIn("- diff: %s -t 'myapp/add-login' diff --range main...%s  (add --step <id> or -- <path> to read one part)" % (CLI, sha), text)
+        self.assertIn("- write findings with: %s -t 'myapp/add-login' write review (next id: F1)" % CLI, text)
         self.assertNotIn("whole range", self.last_err)
 
     def test_round_two_reads_only_what_changed_since_the_last_reviewed_sha(self):
@@ -984,7 +1009,7 @@ class TestNarrowReviewAndCheck(BriefBase):
         two = self.tip()
         _, text = self.brief("review", "--round", "2")
         self.assertIn("- range: %s..%s" % (one, two), text)
-        self.assertIn("- diff: git diff %s..%s" % (one, two), text)
+        self.assertIn("- diff: %s -t 'myapp/add-login' diff --range %s..%s  (add" % (CLI, one, two), text)
         stat = text.split("## Diff stat")[1].split("## Lessons")[0]
         self.assertIn("fix.txt", stat)
         self.assertNotIn("feature.txt", stat)
@@ -1025,7 +1050,7 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.assertEqual(head[1:3], ["- reviewed sha: %s" % two, "- round: 1"])
         self.assertIn("- range: %s..%s" % (one, two), head)
         self.assertIn("- check: true", head)
-        self.assertIn("- diff: git diff %s..%s" % (one, two), head)
+        self.assertTrue(any(l.startswith("- diff: %s -t 'myapp/add-login' diff --range %s..%s" % (CLI, one, two)) for l in head), head)
         self.assertEqual(merge.brief_header(path, 1, False, None), two)
         self.assertTrue(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1.md")))
         # journaling the check binds the check brief, not the round's
@@ -1419,6 +1444,221 @@ class TestFixBrief(BriefBase):
         _, text = self.brief("fix", "1", "--findings", "F1")
         self.assertIn("### F1 — session is unsigned", text)
         self.assertIn("### Step 1 — Session store", sec(text, "Steps whose files"))
+
+
+class TestBriefCommands(BriefBase):
+    """(a) bare `orch` only when PATH resolves to the writing copy; (b) `-t` only when a bare call would not land here."""
+
+    def test_the_cli_is_named_bare_only_when_path_resolves_to_this_copy(self):
+        _, text = self.brief("implement", "1")
+        self.assertIn(CLI + " -t 'myapp/add-login' role 'implementer' in_progress", sec(text, "Checkpoint commands"))
+        self.env["PATH"] = paths.BIN_DIR + os.pathsep + path_without_orch()
+        _, text = self.brief("implement", "1")
+        c = sec(text, "Checkpoint commands")
+        self.assertIn("\norch -t 'myapp/add-login' role 'implementer' in_progress", c)
+        self.assertNotIn(paths.BIN_DIR, c)
+        self.env["PATH"] = path_without_orch() + os.pathsep + paths.BIN_DIR
+        _, text = self.brief("implement", "1")
+        self.assertIn("\norch -t 'myapp/add-login' role", sec(text, "Checkpoint commands"))     # last on PATH still resolves here
+
+    def test_a_session_match_drops_t(self):
+        self.env["PATH"] = paths.BIN_DIR + os.pathsep + path_without_orch()
+        self.env["CLAUDE_CODE_SESSION_ID"] = SESSION
+        self.ok("set", "driver_session=%s" % SESSION, "--add", "-t", T)
+        for args in (("implement", "1"), ("fix", "1", "--findings", "F1"), ("review",)):
+            if args[0] == "fix":
+                wr(os.path.join(self.d, "review.md"), "### F1 \u2014 x\n- severity: nit\n- file: %s/src/auth.py:1\n" % self.repo)
+            _, text = self.brief(*args)
+            c = sec(text, "Checkpoint commands")
+            self.assertIn("\norch role '", c, args)
+            self.assertNotIn(" -t ", c, args)
+        self.assertIn("- diff: orch diff --range ", text)
+        self.assertIn("append with orch append notes --as implementer)", self.brief("implement", "1")[1])
+        self.assertIn("Run orch plan for the plan's outline, then orch plan --section", self.brief("implement", "1")[1])
+
+    def test_a_signal_that_does_not_settle_it_keeps_t(self):
+        self.env["PATH"] = paths.BIN_DIR + os.pathsep + path_without_orch()
+        self.env["CLAUDE_CODE_SESSION_ID"] = SESSION
+        self.ok("set", "driver_session=%s" % SESSION, "--add", "-t", T)
+        self.ok("init", "myapp", "other", "--repo-path", self.repo, "--base", "main", "--request", "x")
+        # ORCH_TASK names another active task: a bare call would refuse, so the brief names its task
+        self.env["ORCH_TASK"] = "myapp/other"
+        _, text = self.brief("implement", "1")
+        self.assertIn("\norch -t 'myapp/add-login' role 'implementer'", sec(text, "Checkpoint commands"))
+        # the session drives two tasks: ambiguous
+        self.env["ORCH_TASK"] = ""
+        self.ok("set", "driver_session=%s" % SESSION, "--add", "-t", "myapp/other")
+        _, text = self.brief("implement", "1")
+        self.assertIn("\norch -t 'myapp/add-login' role 'implementer'", sec(text, "Checkpoint commands"))
+
+
+class TestBriefPaths(BriefBase):
+    """(c) only the values of a step's files: and context: fields change; everything else is as written."""
+
+    def with_plan(self, **parts):
+        text = self.plan_text
+        for old, new in parts.values():
+            self.assertIn(old, text, old)
+            text = text.replace(old, new, 1)
+        self.put_plan(text)
+
+    def test_files_and_context_values_are_relative_and_the_rest_is_byte_identical(self):
+        r, w = self.repo, self.wt
+        self.with_plan(
+            files=("- files: %s/src/auth.py, %s/tests/test_auth.py" % (r, r),
+                   "- files: %s/a/b.py, ~/notes/x.md, /etc/hosts, x%s/y, %s" % (r, r, r)),
+            context=("  - %s/docs/design.md \u2014 the sign-in flow" % r,
+                     "  - %s/plugin/x.py \u2014 purpose; sym@12\n  - %s/docs/design.md \u2014 flow, see %s/src/config.py" % (w, r, r)),
+            do=("- do: write the password check.", "- do: cd %s/tests/python && write the check, rg -n x %s/plugin, see ~/x" % (r, r)),
+            contract=("constant time.", "constant time, kept in ~/x and %s/src/auth.py." % r),
+            done=("- done when: `pytest tests/test_auth.py` passes.", "- done when: `rg -n x %s/plugin` finds it." % r),
+            finding=("- `src/auth.py` hashes with sha256", "- `%s/src/auth.py` hashes with sha256" % r),
+            verification=("- Step 1: `pytest tests/test_auth.py`", "- Step 1: `pytest %s/tests/test_auth.py`" % r))
+        _, text = self.brief("implement", "1")
+        home = self.home
+        steps = sec(text, "Your steps")
+        self.assertIn("- files: a/b.py, %s/notes/x.md, /etc/hosts, x%s/y, %s\n" % (home, r, r), steps)
+        self.assertIn("  - plugin/x.py \u2014 purpose; sym@12\n  - docs/design.md \u2014 flow, see src/config.py\n", steps)
+        # not rewritten: do, contract, done when, Verification, Findings
+        self.assertIn("- do: cd %s/tests/python && write the check, rg -n x %s/plugin, see ~/x" % (r, r), steps)
+        self.assertIn("- contract: `check(user, password) -> bool`; constant time, kept in ~/x and %s/src/auth.py." % r, steps)
+        self.assertIn("- done when: `rg -n x %s/plugin` finds it." % r, steps)
+        self.assertIn("`pytest %s/tests/test_auth.py`" % r, sec(text, "Verification for your steps"))
+        self.assertIn("`%s/src/auth.py` hashes with sha256" % r, sec(text, "Findings about your files"))
+
+    def test_the_context_files_section_is_generated_and_stays_absolute(self):
+        _, text = self.brief("implement", "1")
+        self.assertIn("- %s/docs/design.md \u2014 the sign-in flow" % self.wt, sec(text, "Context files"))
+
+    def test_the_anchor_matches_what_was_rewritten(self):
+        _, text = self.brief("implement", "1")
+        self.assertIn("- step files: and context: paths are relative to the worktree root above", sec(text, "Where you work"))
+        self.assertNotIn(self.repo + "/", sec(text, "Your steps"))
+        self.set_field(worktree="none (user: no worktree)")
+        self.put_plan(self.plan_text)
+        _, text = self.brief("implement", "1")
+        w = sec(text, "Where you work")
+        self.assertIn("- step files: and context: paths are relative to the repo root above", w)
+        self.assertNotIn("worktree root", w)
+        self.assertIn("- files: src/auth.py, tests/test_auth.py", sec(text, "Your steps"))
+        self.set_field(worktree="not yet created")
+        _, text = self.brief("implement", "1")
+        self.assertNotIn("relative to", sec(text, "Where you work"))
+        self.assertIn("- files: %s/src/auth.py" % self.repo, sec(text, "Your steps"))     # nothing rewritten, nothing anchored
+
+    def test_fix_brief_steps_are_rewritten_too(self):
+        wr(os.path.join(self.d, "review.md"), "### F1 \u2014 x\n- severity: nit\n- file: %s/src/views.py:5\n" % self.repo)
+        _, text = self.brief("fix", "1", "--findings", "F1")
+        self.assertIn("- files: src/views.py", sec(text, "Steps whose files"))
+        self.assertIn("relative to the worktree root above", sec(text, "Where you work"))
+
+    def test_rel_fields_boundaries_and_spaces(self):
+        class C(object):
+            wt = "/w/my wt"
+            repo_path = "/r/my repo"
+            no_wt_mode = False
+        text = "### Step 1 \u2014 x\n- files: /r/my repo/a.py (/r/my repo/b.py) `/r/my repo/c.py` k=/r/my repo/d.py /w/my wt/e.py /r/my repoX/f.py\n- do: /r/my repo/a.py"
+        got = brief.rel_fields(C, text)
+        self.assertEqual(got.split("\n")[1], "- files: a.py (b.py) `c.py` k=d.py e.py /r/my repoX/f.py")
+        self.assertEqual(got.split("\n")[2], "- do: /r/my repo/a.py")
+        self.assertEqual(brief.rel_fields(C, "- files: /r/my repo"), "- files: /r/my repo")      # a bare root has no slash
+        # a field runs to the next field line; a heading ends it
+        t2 = "- context:\n  - /r/my repo/a.py\n\n  - /r/my repo/b.py\n- do: x\n  /r/my repo/z.py\n#### Note\n- files: /r/my repo/q.py"
+        self.assertEqual(brief.rel_fields(C, t2), "- context:\n  - a.py\n\n  - b.py\n- do: x\n  /r/my repo/z.py\n#### Note\n- files: q.py")
+
+
+class TestBriefSlices(BriefBase):
+    def test_summary_gate_lines_go_with_their_continuation(self):
+        summary = ("- shape: single \u2014 one release\n  and a second line\n- goal: g\n- decisions needing the user: D9\n"
+                   "- implementer tier: per step\n- sketched steps: 2\n- guided steps: 3\n- visual steps: none\n"
+                   "- steps:\n  1. Auth module\n- files: 6")
+        self.put_plan(self.plan_text.replace("- shape: single \u2014 one login page", summary.split("\n- files: 6")[0]))
+        _, text = self.brief("implement", "1")
+        s = sec(text, "Summary")
+        self.assertIn("- goal: g\n- steps:\n  1. Auth module", s)
+        for gone in ("- shape:", "and a second line", "decisions needing the user", "implementer tier", "sketched steps", "guided steps", "visual steps"):
+            self.assertNotIn(gone, s)
+        _, text = self.brief("review")
+        self.assertIn("- shape: single", sec(text, "Summary"))
+        self.assertIn("- implementer tier: per step", sec(text, "Summary"))
+
+    DECISIONS = ("## Decisions\n\n"
+                 "- **D1 Hashing** \u2014 use scrypt. Rejected: sha256 (no salt). Status: decided\n"
+                 "- **D2 Cookies** \u2014 signed. Status: decided\n"
+                 "- **D3 Storage** \u2014 keep it in `src/auth.py`. Rejected: a database. Status: decided\n"
+                 "- **D4 Tokens** \u2014 opaque. Rejected: JWT, because of size.\n"
+                 "  A second line of D4.\n"
+                 "- **D5 Cited** \u2014 as step 1 says. Rejected: other things. Status: decided\n"
+                 "\n### D6 \u2014 Heading style\nChosen.\n- Rejected: x\n  more x\n- Status: decided\n\n"
+                 "### D7 \u2014 No status\nChosen.\nRejected: y\n\n")
+
+    def put_decisions(self):
+        text = self.plan_text.replace("- **D1 Hashing** \u2014 use scrypt. Rejected: sha256 (no salt). Status: decided\n- **D2 Cookies** \u2014 signed, 1 hour. Status: decided\n",
+                                      "@@D@@")
+        a = text.index("## Decisions")
+        b = text.index("## Approach")
+        text = text[:a] + self.DECISIONS + "@@REST@@" + text[b:]
+        text = text.replace("@@D@@", "").replace("@@REST@@", "")
+        self.put_plan(text.replace("- do: write the password check.", "- do: write the password check (D5)."))
+
+    def test_unmatched_rejected_clauses_become_a_pointer(self):
+        self.put_decisions()
+        _, text = self.brief("implement", "1")
+        d = sec(text, "Decisions")
+        ptr = "(alternatives: %s -t 'myapp/add-login' plan --decision " % CLI
+        self.assertIn("- **D1 Hashing** \u2014 use scrypt. %sD1) Status: decided" % ptr, d)
+        self.assertIn("- **D2 Cookies** \u2014 signed. Status: decided", d)                       # no Rejected: unchanged
+        self.assertIn("keep it in `src/auth.py`. Rejected: a database. Status: decided", d)       # matches step 1's file: whole
+        self.assertIn("- **D4 Tokens** \u2014 opaque. %sD4)\n" % ptr, d)                              # no Status: the entry's end
+        self.assertNotIn("JWT", d)
+        self.assertNotIn("A second line of D4", d)
+        self.assertIn("Rejected: other things. Status: decided", d)                               # D5 is cited by the step
+        self.assertIn("### D6 \u2014 Heading style\nChosen.\n- %sD6)\n- Status: decided" % ptr, d)
+        self.assertIn("### D7 \u2014 No status\nChosen.\n%sD7)" % ptr, d)
+        _, text = self.brief("review")
+        self.assertIn("Rejected: sha256 (no salt). Status: decided", sec(text, "Decisions"))      # review briefs keep Decisions whole
+        self.assertIn("JWT", sec(text, "Decisions"))
+
+    def test_director_brief_slices_the_same_way(self):
+        self.put_decisions()
+        _, text = self.brief("director", "1")
+        self.assertNotIn("sha256 (no salt)", sec(text, "Decisions"))
+        self.assertNotIn("- shape:", sec(text, "Summary"))
+
+
+class TestFixSteps(BriefBase):
+    def review(self, body):
+        wr(os.path.join(self.d, "review.md"), "# Code review: add-login\n\n" + body)
+
+    def test_a_finding_selects_the_steps_whose_files_its_file_line_names(self):
+        self.review("### F1 \u2014 x\n- severity: should-fix\n- file: %s/src/views.py:5\n- what: also touches src/auth.py in passing.\n" % self.repo)
+        _, text = self.brief("fix", "1", "--findings", "F1")
+        steps = sec(text, "Steps whose files")
+        self.assertIn("### Step 3 - Views", steps)
+        self.assertNotIn("### Step 1 \u2014 Auth module", steps)     # named only in the finding's prose
+
+    def test_a_colon_heading_still_names_the_finding(self):
+        self.review("### F1: colon style\n- severity: nit\n- file: src/session.py:5\n")
+        _, text = self.brief("fix", "1", "--findings", "F1")
+        self.assertIn("### F1: colon style", sec(text, "Findings to fix"))
+
+    def test_a_relative_file_line_and_the_header(self):
+        self.review("### F1 \u2014 x\n- severity: nit\n- file: src/session.py:5\n")
+        _, text = self.brief("fix", "1", "--findings", "F1")
+        self.assertIn("### Step 2", sec(text, "Steps whose files"))
+        self.assertIn("## Findings to fix (verbatim; record each resolution with %s -t 'myapp/add-login' finding resolve <id>)" % CLI, text)
+
+    def test_without_a_file_line_the_old_rule_applies(self):
+        self.review("### F1 \u2014 x\n- severity: nit\n- what: see src/auth.py.\n")
+        _, text = self.brief("fix", "1", "--findings", "F1")
+        self.assertIn("### Step 1 \u2014 Auth module", sec(text, "Steps whose files"))
+
+    def test_a_missing_file_line_on_one_finding_still_uses_the_others(self):
+        self.review("### F1 \u2014 x\n- severity: nit\n- what: see src/auth.py.\n\n### F2 \u2014 y\n- severity: nit\n- file: %s/src/views.py:2\n" % self.repo)
+        _, text = self.brief("fix", "1", "--findings", "F1,F2")
+        steps = sec(text, "Steps whose files")
+        self.assertIn("### Step 3 - Views", steps)
+        self.assertNotIn("Auth module", steps)
 
 
 class TestMentionMatching(BriefBase):
