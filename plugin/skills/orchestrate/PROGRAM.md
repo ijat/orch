@@ -20,8 +20,9 @@ says so; each milestone adds its own dirs with `sparse-checkout add`.
 
 ## 1. Roadmap → gate
 
-1. **Tier follows shape.** A planner below `opus/max` returning `need: shape_roadmap`: journal
-   `plan_shape` and an `escalation` (`trigger: plan_shape`), re-spawn at `opus/max` with its
+1. **Tier follows shape.** A planner below an escalated planner tier (`opus/max`, `fable/high`, `fable/max`)
+   returning `need: shape_roadmap`: journal
+   `plan_shape` and an `escalation` (`trigger: plan_shape`), re-spawn at `opus/max` or `fable/high` (your pick, journaled with why) with its
    `notes.md` as starting findings. Under a user cap that forbids it, send the same planner back to
    write the roadmap at its tier, and say at the gate what the cap costs.
 2. **Checker.** Run `orch-program-check.py <roadmap.md>` yourself — don't trust the

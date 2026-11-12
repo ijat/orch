@@ -47,11 +47,11 @@ below it).
 
 | Role | `subagent_type` | Default tier | Escalation ladder |
 |---|---|---|---|
-| Planner | `orch:planner` | `opus/high` | → `opus/max`; `fable/max` only after an `opus/max` plan failed (or the user asks) |
-| Implementer | `orch:implementer` | `sonnet/high` | → `opus/medium` → `opus/high` → `opus/max` → `fable/high` (Fable only after a failed `opus/max` pass, or the user asks); `haiku/medium` for gated steps (`TIERS.md`) |
+| Planner | `orch:planner` | `opus/high` | → an escalated tier, `opus/max` or `fable/high` (the orchestrator's pick per task, journaled with why); `fable/max` only after both failed on design (`TIERS.md` § Tier table) |
+| Implementer | `orch:implementer` | `sonnet/high` | → `opus/medium` → `opus/high` → `opus/max` → `fable/high` (the ladder reaches Fable only after a failed `opus/max` pass; otherwise `TIERS.md` § Fable outside planning); `haiku/medium` for gated steps (`TIERS.md`) |
 | Code reviewer | `orch:code-reviewer` | `opus/high` | — |
 | Security reviewer | `orch:security-reviewer` | `opus/high` | — **by rule** (step 5) or on request; every run or skip journaled |
-| Plan reviewer | `orch:plan-reviewer` | `sonnet/high` | — roadmaps and `opus/max` plans only (`PROGRAM.md` §1) |
+| Plan reviewer | `orch:plan-reviewer` | `sonnet/high` | — roadmaps and plans written at an escalated planner tier (`opus/max`, `fable/high`, `fable/max`) only (`PROGRAM.md` §1) |
 | Director | `orch:director` | `opus/high` | → `opus/max` after the user reverses an accepted verdict — plan steps marked `visual:` only (step 7) |
 | Explorer | `orch:explorer` | `haiku/low` | read-only lookups and claim checks |
 | Graph | `orch:graph` | `haiku/low` | keeps the code index (orch-index) fresh (check; rebuild when stale or missing; install a missing binary once, only under its install conditions); you, the planner or the user call it, never the explorer. The explorer is the only role that queries the index |
@@ -59,9 +59,10 @@ below it).
 | Init | `orch:init` | `sonnet/high` | → `opus/medium` for an ecosystem with no `skills/init/references/<ecosystem>.md`; sets up or audits a project's agent files for the `orch:init` skill (step 3a) |
 
 Always pass both `model` and `effort` for planners and implementers, even at the default tier, so the
-spawn record states it. The ladders are the normal path; any other combination, including raising a
-reviewer, is allowed after weighing **`TIERS.md`** (quality, ability, speed, cost, limitations, escalation
-history). Read it before every tier choice; each records a one-line `tradeoff`.
+spawn record states it. The ladders are the normal path. **`TIERS.md` § Tier table** lists every tier each role
+may run at; a tier it doesn't list runs only on the user's request (journal `override`). Read it before every tier
+choice, weighing quality, ability, speed, cost, limitations and escalation history; each choice records a one-line
+`tradeoff`. A Fable spawn needs no notice to the user or approval; its `tier_choice` / `escalation` journal line is the record.
 
 Set the spawn's `description` to `<agent>-<model>[<effort>]: <task>`, e.g.
 `orch-planner-opus[max]: plan auth flow`, so `/tasks` shows the tier (the agent *type* stays `orch:planner`).
@@ -86,12 +87,13 @@ on any question that is not about one file you were handed is an explorer spawn 
 
 ### Tier selection
 
-**Planner** — choose by complexity, not failure count: `opus/max` (`escalation: proactive`) if the task
-is architecturally ambiguous (several defensible designs, expensive to undo), cross-cutting, high
-blast-radius (hard to reverse; shared/prod systems, migrations, auth, infra), or the user called it
-large/complex/risky; otherwise `opus/high`. `fable/max` only reactively (`escalation: post-failure`), when
-a plan written at `opus/max` failed because its own *design* is why work kept failing, or when the user asks
-for it directly. No first plan is ever Fable-tier.
+**Planner** — choose by complexity, not failure count: an **escalated planner tier** (`opus/max` or `fable/high`,
+`escalation: proactive`) if the task is architecturally ambiguous (several defensible designs, expensive to undo),
+cross-cutting, high blast-radius (hard to reverse; shared/prod systems, migrations, auth, infra), or the user called
+it large/complex/risky; otherwise `opus/high`. Either escalated tier is allowed: you pick per task and journal why
+(`TIERS.md` § Planner bench has the numbers: `opus/max` scored higher, `fable/high` ran ~10 min faster at the same
+cost). A plan whose own *design* is why work kept failing (`escalation: post-failure`) moves to whichever of the two
+hasn't planned this work yet; `fable/max` only after both have failed. No first plan is `fable/max`.
 
 **Implementer** — route every spawn (plan step, fix round, pilot, lite task) with `TIERS.md`
 § Implementer routing (first match wins; `sonnet/high` unless it routes elsewhere). On a `post-failure`
@@ -105,9 +107,9 @@ into its file's header; the planner's goes in the `plan.md` header). For every r
 carries facts, never test scope or gate instructions; only a step's `full-gate:` field lets the implementer run
 the gate. `--extra` takes the path of a file, not inline text. Any other value a spawn needs goes in that file, and
 so into the brief: the prior pass's diff and notes paths on a `post-failure` spawn, the security-ledger path for the
-security reviewer, a peer's agent ID on a visual step. **Fable starts only after an `opus/max` pass on this
-work failed, or when the user asks for it directly; before spawning any Fable-tier agent, tell the user and say
-why** — it's the most expensive rung.
+security reviewer, a peer's agent ID on a visual step. **For any role but the planner, `fable/high` needs one of
+the four reasons in `TIERS.md` § Fable outside planning** ("complex" or "to be safe" is none); a role that wants it
+returns `blocked` with `need: tier — <reason>` and you grant it, pick an Opus rung or re-brief, journaling which.
 
 ## Task directory
 
@@ -177,7 +179,7 @@ Never hand-roll cache parsing or compare a raw % to a fixed number: the line mov
 | State | Action |
 |---|---|
 | `OK` | Normal pace. |
-| `WARN` (`est` within 5 of the line, or < 30 min to it) | Slow down: sequential not parallel implementers (a director + implementer pair counts as one), planner at `opus/high` not `opus/max` unless already earned, batch findings instead of round-tripping small ones. Tell the user, log it. |
+| `WARN` (`est` within 5 of the line, or < 30 min to it) | Slow down: sequential not parallel implementers (a director + implementer pair counts as one), planner at `opus/high`, not an escalated tier (`opus/max`, `fable/high`), unless already earned, batch findings instead of round-tripping small ones. Tell the user, log it. |
 | `STOP` (`est` ≥ line) | Pause — procedure below. |
 | `STALE` / `UNKNOWN` | Treat as `WARN`. A stale low number misleads. |
 
@@ -538,7 +540,7 @@ from the lessons files; and that it's read-only on the codebase (writes only `pl
 **Shape.** Every plan states `shape: single | roadmap` (first Summary line of `plan.md`, header of
 `roadmap.md`). A `roadmap` (or a planner
 returning `need: shape_roadmap`) → read `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/PROGRAM.md` and follow it from
-here. A single plan written at `opus/max` gets the plan reviewer (`PROGRAM.md` §1.3) before the gate.
+here. A single plan written at an escalated planner tier (`opus/max`, `fable/high`, `fable/max`) gets the plan reviewer (`PROGRAM.md` §1.3) before the gate.
 Journal `plan_shape`; show the shape line at the gate, and if the user overrules it, journal
 `override` and send it back to the planner.
 
@@ -790,9 +792,9 @@ worktree and task directory plus the branch name.
 - Assert what could have been verified; go to the user before trying rungs 1 and 2.
 - Let a subagent write to `LESSONS.md`; log non-critical findings as lessons; leave a
   behaviour-changing lesson unpromoted.
-- Spawn a Fable-tier agent without telling the user why; start any role at Fable, or move an implementer or
-  planner to it, without a failed `opus/max` pass on that work or the user's own request; give Haiku a step
-  that fails its gate.
+- Start a non-planner role at Fable without one of the four reasons in `TIERS.md` § Fable outside planning; make a
+  first plan `fable/max`; run a tier `TIERS.md` § Tier table doesn't list for the role without the user's request;
+  give Haiku a step that fails its gate.
 - Make a choice without journalling its real reason at the time; end a task without `retro.md`;
   treat a sketch as binding, or a sketch deviation as a review finding.
 - Run lite mode on an ineligible task without the user forcing it; skip its plan gate or review;

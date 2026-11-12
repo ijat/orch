@@ -24,12 +24,12 @@ mode (a spawned planner at that tier), or go on here (journal `override`). Recor
 - **Step 4:** after the pre-plan `orch:graph` call, you do the planner's job. Read `../../agents/planner.md` once and follow it as
   the planner, except: the user's conversation is your brief; a question it
   would return `blocked` with goes straight to the user after rungs 1–2 of the escalation ladder;
-  `need: shape_roadmap` below `opus/max` → tell the user and continue only if they agree (else
-  standard mode at `opus/max`). Its **Your context is the cost** rules bind you harder than a
+  `need: shape_roadmap` below an escalated planner tier → tell the user and continue only if they agree (else
+  standard mode at `opus/max` or `fable/high`, your pick). Its **Your context is the cost** rules bind you harder than a
   planner: your context also carries the implement and review loop. Talk the design through with the
   user before writing; until the first gate, edit the draft freely; after it, revisions are
   `## Revision N` sections you append yourself. The gate itself, `orch plan-check`, the plan
-  reviewer (roadmaps, `opus/max` plans) and the approval are unchanged.
+  reviewer (roadmaps, plans written at an escalated planner tier) and the approval are unchanged.
 - **At the gate**, add one line: the implement/review loop is cheaper in a fresh session (`/clear`,
   then "resume <repo>/<slug>") since this one carries the whole planning conversation; staying keeps
   it at hand. Their choice. A resumed session stays in interactive mode and under the same boundary.

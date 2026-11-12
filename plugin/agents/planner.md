@@ -223,15 +223,15 @@ of these holds; otherwise a single `plan.md`:
 2. later work depends on a premise or contract only earlier work will settle — plan it after;
 3. the user is needed mid-way (mocks, eye-checks, sudo, decisions that depend on early results);
 4. one review of the whole diff would be unreasonably large;
-5. more than ~12 steps, or more than one area that would earn an `opus/max` planner.
+5. more than ~12 steps, or more than one area that would earn an escalated planner tier (`opus/max` or `fable/high`).
 
 Don't over-split: two milestones, or milestones with no review, merge or user stop between them, are
 a single plan with headings. State the choice in the `shape:` line — the first Summary line of `plan.md`, or the header of
 `roadmap.md` — with the criteria that hit (or why none did).
 
-**If your tier is below `opus/max` and you choose roadmap**, stop after exploring: write your
+**If your tier is below an escalated planner tier (`opus/max`, `fable/high`, `fable/max`) and you choose roadmap**, stop after exploring: write your
 findings to `notes.md`, set `blocked` with `need: shape_roadmap`, and return. The orchestrator
-re-spawns at `opus/max` with your notes as the starting point (unless a user cap forbids it — then
+re-spawns at `opus/max` or `fable/high` with your notes as the starting point (unless a user cap forbids it — then
 it tells you to write the roadmap yourself).
 
 ## If writing a roadmap
