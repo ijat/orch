@@ -132,8 +132,9 @@ read the source yourself.
   cheaper than a spawn), the diff or files you were handed, anything you will edit, security-sensitive reading, and any decision.
 - **Read ranges, not whole files.** Locate first (the explorer or the index for structure, `grep -n` inside one
   file), then `Read` with `offset` and `limit`. Read a whole file only when it is short (about 300 lines or
-  fewer), you will change most of it, or you must judge it whole. Don't re-read a range you already have
-  unless it changed.
+  fewer), you will change most of it, or you must judge it whole. Before you edit a function or region you
+  located, `Read` that range (`offset`, `limit`): the edit tool needs a prior `Read`, and a whole-file `Read`
+  is not the way to get it. Don't re-read a range you already have unless it changed.
 - **Batch:** one spawn with several questions beats several spawns.
 
 ## Trust an instrument only once it has been checked
