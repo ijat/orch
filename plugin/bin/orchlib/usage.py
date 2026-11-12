@@ -1235,6 +1235,12 @@ class Wait:
         paused = self.until_reset or task_state(self.task_dir) == 'paused_usage_limit'
         if not paused and e.state == 'STOP':
             return 2, self.line('STOP', e)
+        # A task-less wait launched after the last known window's reset, before any sample of the new window: the
+        # reset has passed and the estimate is below the line, which is the event its caller waits for. Watching for
+        # STOP instead kept it silent until --max (a caller that saw STOP on the old window just before the reset).
+        # A task wait is the orchestrator's STOP watcher (its 10 means "resume a paused task"): unchanged.
+        if not paused and self.task_dir is None and getattr(e, 'rolled', False):
+            return 10, self.line('RESET', e, reason='rolled')
         r5_0, p_0, t_pause = getattr(e, 'window', None), e.p5, start
         degraded = None
         first = True
