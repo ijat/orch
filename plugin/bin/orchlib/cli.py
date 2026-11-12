@@ -125,8 +125,23 @@ def record_driver_keep_times(task_dir):
         return False
 
 
-def get_task(ns, must_exist=True):
-    return resolve_task(getattr(ns, "task_sub", None) or ns.task, must_exist)
+def get_task(ns, must_exist=True, infer=False):
+    """The task dir: an explicit -t decides alone. With infer=True (the subagent verbs only), no -t means `infer.resolve`
+    (the cwd, this session and ORCH_TASK; it refuses what they do not settle) and `ns.inferred` holds the task label,
+    which the verb prints so a wrong inference shows."""
+    arg = getattr(ns, "task_sub", None) or ns.task
+    if arg or not infer:
+        return resolve_task(arg, must_exist)
+    from . import infer as inf  # infer imports current, which imports this module
+    task_dir, _ = inf.resolve(os.getcwd(), st.driver_session_id(), (os.environ.get("ORCH_TASK") or "").strip(), orch_root())
+    ns.inferred = inf.label(task_dir)
+    return task_dir
+
+
+def tag(ns):
+    """' [<repo>/<slug>]' when the task was inferred, else ''."""
+    label = getattr(ns, "inferred", None)
+    return " [%s]" % label if label else ""
 
 
 # -- commands ------------------------------------------------------------------------------------
@@ -218,7 +233,7 @@ def cmd_set(ns, extra):
 
 def cmd_role(ns, extra):
     require_write_allowed()
-    task_dir = get_task(ns)
+    task_dir = get_task(ns, infer=True)
     ts_cell = now() if ns.ts is None else st.single_line(ns.ts, "--ts")
     pct = None
     if ns.pct is not None:
@@ -238,17 +253,17 @@ def cmd_role(ns, extra):
             ", ".join(skipped), "; run `orch migrate` to add the progress column" if "pct" in skipped else ""))
     if changed:
         refresh_index(warn_stderr)
-    print("role %s -> %s%s" % (ns.role, ns.state, "" if changed else " (no change)"))
+    print("role %s -> %s%s%s" % (ns.role, ns.state, "" if changed else " (no change)", tag(ns)))
     return 0
 
 
 def cmd_log(ns, extra):
     require_write_allowed()
-    task_dir = get_task(ns)
+    task_dir = get_task(ns, infer=True)
     line = log_line(now(), ns.as_role or "orchestrator", ns.text)
     with TaskLock(task_dir):
         append_log(task_dir, line)
-    print("logged")
+    print("logged%s" % tag(ns))
     return 0
 
 
