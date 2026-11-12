@@ -8,6 +8,7 @@ import shlex
 import sys
 
 from . import cli
+from . import findings as fd
 from . import flow
 from . import lessons as ls
 from . import merge
@@ -934,28 +935,10 @@ def cmd_brief_review(ns, c, reviewer):
 # -- fix -----------------------------------------------------------------------------------------
 
 def finding_blocks(path, wanted):
-    """{id: verbatim finding block} and {id: [round-note texts]} from a review file."""
-    plan = pl.parse_file(path)
-    lines, mask = plan.lines, plan.mask
-    heads = [(i, m.group(1)) for i, l in enumerate(lines) if not mask[i]
-             for m in [re.match(r"^###\s+([FS]\d+)\b", l)] if m]
-    ends = [i for i, l in enumerate(lines) if not mask[i] and re.match(r"^#{1,3}\s", l)]
-    found = {}
-    for i, fid in heads:
-        if fid not in wanted or fid in found:
-            continue
-        end = next((e for e in ends if e > i), len(lines))
-        found[fid] = plan.block(i, end)
-    notes = dict((w, []) for w in wanted)
-    for sec in plan.sections:
-        if not re.match(r"(check(\s+\d+)? of )?round\s+\d+", sec.norm):
-            continue
-        for s, e in pl.split_units(lines, mask, sec.start + 1, sec.end):
-            text = plan.block(s, e)
-            m = re.match(r"^[-*]\s+([FS]\d+)\s*:", text)
-            if m and m.group(1) in notes:
-                notes[m.group(1)].append("(%s) %s" % (re.sub(r"^#+\s*", "", lines[sec.start]), text))
-    return found, notes
+    """{id: verbatim finding block} and {id: [round-note texts]} from a review file (the parser `orch findings` uses)."""
+    parsed = fd.parse(path)
+    found = dict((f.id, f.block) for f in parsed.findings if f.id in wanted)
+    return found, dict((w, list(parsed.notes.get(w, []))) for w in wanted)
 
 
 def cmd_brief_fix(ns, c):
