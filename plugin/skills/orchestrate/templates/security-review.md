@@ -18,5 +18,6 @@
 - suggested fix: the smallest change that closes it.
 - resolution: <left empty — the implementer fills this in>
 
-<!-- Numbering (S1, S2, …) stays stable across rounds. On a re-review, append "## Round N" below
+<!-- Written with `orch write review --security` (text on stdin; ids continue from the brief's next id), by hand only when
+     that fails; resolutions go in with `orch finding resolve <id>`. Numbering (S1, S2, …) stays stable across rounds. On a re-review, append "## Round N" below
      with each earlier finding marked resolved | still open | disputed — <reasoning>. -->
