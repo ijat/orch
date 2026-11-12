@@ -231,8 +231,11 @@ These apply to every `orch:*` role. Where your own sections are stricter, they w
   `orch role <role> <state> --note "<N>" --log "<what>"` (`<role>` your row; the task is inferred from
   your session or worktree; add `--step <step>` to update `last completed step`; add `--pct N` (0–99,
   your rough estimate of your current assignment; `0` at start) on an `in_progress` checkpoint).
-  If your brief has a *Checkpoint commands* section, run those as written. If `orch` answers
-  `ambiguous task` or `no task`, add `-t <repo>/<slug>` (your brief's title names it) and run it again.
+  If your brief has a *Checkpoint commands* section, run those as written. When your brief's commands carry
+  `-t <repo>/<slug>`, put the same `-t` on every `orch` call you make (`orch plan`, `orch diff`, `orch append`,
+  `orch write`, `orch finding`). If `orch` answers `ambiguous task`, `conflicting task` or `no task`, add
+  `-t <repo>/<slug>` (your brief's title names it) and run it again. If a write prints a `[<repo>/<slug>]` tag
+  that is not your brief's title, stop and say so in your reply.
   - Before starting, state `in_progress`.
   - Log a line at each meaningful boundary: a step, a batch, a reviewed file group. A
     usage cutoff mid-run must leave a readable trail.
@@ -279,7 +282,7 @@ These apply to every `orch:*` role. Where your own sections are stricter, they w
 ## File contract
 
 Checkpoint with `orch role code-reviewer <state> --note "<N>" --log "<what>"` (the task is inferred; the brief's
-*Checkpoint commands* are exact, and on `ambiguous task` or `no task` you add `-t <repo>/<slug>` from the brief's title: the task is the
+*Checkpoint commands* are exact, and on `ambiguous task`, `conflicting task` or `no task` you add `-t <repo>/<slug>` from the brief's title: the task is the
 one holding `status.md`, in a program the program, not the milestone): `in_progress` before starting,
 a log line when you start (`--pct 0`), after each file group you finish (`--pct N`, 0–99, your rough estimate of the review), and when you finish, and `done` (with
 the verdict and finding count in the notes), or `blocked` / `failed` with a note, before returning.
