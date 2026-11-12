@@ -1492,6 +1492,22 @@ class TestBriefCommands(BriefBase):
         self.assertIn("\norch -t 'myapp/add-login' role 'implementer'", sec(text, "Checkpoint commands"))
 
 
+    def test_a_cwd_inside_the_worktree_does_not_decide_for_the_role(self):
+        """The orchestrator may have `cd`ed into the worktree; the role's shell starts in the session's original cwd."""
+        self.env["PATH"] = paths.BIN_DIR + os.pathsep + path_without_orch()
+        self.env["CLAUDE_CODE_SESSION_ID"] = SESSION
+        self.ok("set", "driver_session=%s" % SESSION, "--add", "-t", T)
+        self.ok("init", "myapp", "other", "--repo-path", self.repo, "--base", "main", "--request", "x")
+        self.ok("set", "driver_session=%s" % SESSION, "--add", "-t", "myapp/other")
+        old = os.getcwd()
+        self.addCleanup(os.chdir, old)
+        os.chdir(self.wt)
+        _, text = self.brief("implement", "1")
+        c = sec(text, "Checkpoint commands")
+        self.assertIn("\norch -t 'myapp/add-login' role 'implementer'", c)
+        self.assertIn("append with orch -t 'myapp/add-login' append notes", text)
+
+
 class TestBriefPaths(BriefBase):
     """(c) only the values of a step's files: and context: fields change; everything else is as written."""
 
@@ -1636,6 +1652,11 @@ class TestFixSteps(BriefBase):
         steps = sec(text, "Steps whose files")
         self.assertIn("### Step 3 - Views", steps)
         self.assertNotIn("### Step 1 \u2014 Auth module", steps)     # named only in the finding's prose
+
+    def test_a_wrapped_status_line_is_carried_whole(self):
+        self.review("### F1 \u2014 x\n- severity: nit\n- file: src/session.py:5\n\n## Round 2\n\n- F1: still open \u2014 the fix\n  wraps onto a second line\n")
+        _, text = self.brief("fix", "1", "--findings", "F1")
+        self.assertIn("(Round 2) - F1: still open \u2014 the fix\n  wraps onto a second line", sec(text, "Findings to fix"))
 
     def test_a_colon_heading_still_names_the_finding(self):
         self.review("### F1: colon style\n- severity: nit\n- file: src/session.py:5\n")

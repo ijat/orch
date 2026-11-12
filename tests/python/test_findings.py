@@ -59,6 +59,15 @@ class TestParse(unittest.TestCase):
         self.assertIn("flags: disputed 1, status-unknown 3;", fd.counts_line(p))
         self.assertIn("open: blocker 0, should-fix 4,", fd.counts_line(p))   # F2 closed; unknown and disputed count
 
+    def test_a_status_line_that_wraps_is_still_a_status_line(self):
+        text = (block("F1") + block("F2") + "\n## Round 2\n\n- F1: resolved \u2014 the fix\n  wraps onto a second line\n"
+                "- F2: still open \u2014 reasoning that\n  also wraps\n")
+        p = fd.parse_text(text)
+        self.assertEqual(self.states(text), {"F1": "closed", "F2": "open"})
+        self.assertEqual((p.get("F1").phrase, p.get("F2").phrase), ("resolved", "still open"))
+        self.assertEqual(p.notes["F1"], ["(Round 2) - F1: resolved \u2014 the fix\n  wraps onto a second line"])
+        self.assertEqual(p.unparsed, [])
+
     def test_phrase_separators(self):
         text = block("F1") + block("F2") + block("F3") + "\n## Round 2\n\n- F1: resolved - x\n- F2: fixed – y\n- F3: not fixed\n"
         self.assertEqual(self.states(text), {"F1": "closed", "F2": "closed", "F3": "open"})
@@ -328,6 +337,21 @@ class TestWriteReview(ReviewBase):
         self.assertEqual(rc, 1)
         self.assertIn("F99: a status line for an id that exists nowhere", err)
         self.assertEqual(self.get(), before)
+
+    def test_wrapped_status_lines_are_validated_and_accepted(self):
+        self.put(fixture("rounds.md"))
+        before = self.get()
+        rc, _, err = self.write_review("## Round 3\n\n- F99: resolved \u2014 the fix\n  wraps\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("F99: a status line for an id that exists nowhere", err)
+        rc, _, err = self.write_review("## Round 3\n\n- F3: resolved in part \u2014 x\n  wraps\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("is not one of", err)
+        self.assertEqual(self.get(), before)
+        rc, out, err = self.write_review("## Check of round 3\n\n- F3: fixed \u2014 renamed it,\n  checked the callers\n- F4: not fixed \u2014 still\n  no test\n")
+        self.assertEqual((rc, out), (0, "review.md: wrote no new finding (+2 status lines); next id F5\n"), err)
+        out, _ = self.ok("findings", "--open", "-t", T)
+        self.assertEqual([l.split(" | ")[0] for l in out.splitlines()], ["F4"])
 
     def test_a_status_phrase_outside_the_template_is_refused(self):
         self.put(fixture("rounds.md"))
