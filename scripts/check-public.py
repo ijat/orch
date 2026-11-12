@@ -16,7 +16,7 @@
   --show       print the matching line as well; by default hits give `path:line: pattern #k` only, never the text.
 
 Hits: `[<commit12>:]<path>:<line>: pattern #k`; a path hit is `<path>:path`, a message hit `<commit12>:message:<line>`.
-Exit 0 clean, 1 hits, 2 bad input or any git/file error (nothing checked is never a pass). LICENSE is exempt.
+Exit 0 clean, 1 hits, 2 bad input or any git/file error (nothing checked is never a pass). LICENSE and plugin/bin/vendor/ (bundled third-party binaries) are exempt.
 Matching follows the retired export gate: one case-insensitive alternation over each line (UTF-8, errors=replace).
 """
 import argparse
@@ -32,6 +32,11 @@ from orchlib import paths  # noqa: E402
 
 ZERO_MODE_GITLINK = "160000"
 LINE_SPLIT = re.compile(r"\r\n|\r|\n")
+
+
+def exempt(path):
+    """LICENSE, and the bundled third-party binaries (their build paths and licence text are not ours to edit)."""
+    return path == "LICENSE" or path.startswith("plugin/bin/vendor/")
 
 
 class Fail(Exception):
@@ -186,7 +191,7 @@ class Scan(object):
     def tree(self, top):
         raw = run_git(top, "ls-files", "-z", "-co", "--exclude-standard", "--deduplicate")
         for rel in sorted(set(p for p in raw.decode("utf-8", "surrogateescape").split("\0") if p)):
-            if rel == "LICENSE":
+            if exempt(rel):
                 continue
             full = os.path.join(top, rel)
             if not os.path.lexists(full):
@@ -212,7 +217,7 @@ class Scan(object):
             meta, _, path = entry.partition(b"\t")
             mode, _, sha = meta.decode("ascii", "replace").split(" ")[:3]
             path = path.decode("utf-8", "surrogateescape")
-            if mode == ZERO_MODE_GITLINK or path == "LICENSE":
+            if mode == ZERO_MODE_GITLINK or exempt(path):
                 continue
             self.check_path("", path)
             self.check_blob("", path, sha)
@@ -253,7 +258,7 @@ class Scan(object):
                 _, new_mode, _, new_sha, status = fields[:5]
                 path = tokens[i + 1].decode("utf-8", "surrogateescape")
                 i += 2
-                if status.startswith("D") or new_mode == ZERO_MODE_GITLINK or path == "LICENSE":
+                if status.startswith("D") or new_mode == ZERO_MODE_GITLINK or exempt(path):
                     continue
                 self.check_path(prefix, path)
                 self.check_blob(prefix, path, new_sha)
