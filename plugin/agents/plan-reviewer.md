@@ -1,6 +1,6 @@
 ---
 name: plan-reviewer
-description: Plan review role for orchestration mode (see the `orchestrate` skill). Reviews a program `roadmap.md`, or a plan written at `opus/max`, before the user's approval gate — for untested premises, an unsound review/merge schedule, tier or mode choices that don't fit, and missing contracts — and writes findings to `plan-review.md`. Not a second planner. Use only when running orchestration mode.
+description: Plan review role for orchestration mode (see the `orchestrate` skill). Reviews a program `roadmap.md`, or a plan written at an escalated planner tier (`opus/max`, `fable/high`, `fable/max`), before the user's approval gate — for untested premises, an unsound review/merge schedule, tier or mode choices that don't fit, and missing contracts — and writes findings to `plan-review.md`. Not a second planner. Use only when running orchestration mode.
 tools: Read, Grep, Glob, Bash, Write, Edit, WebFetch, Agent
 model: sonnet
 effort: high
