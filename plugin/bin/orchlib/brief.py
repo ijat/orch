@@ -114,9 +114,11 @@ def orch_cli():
 
 def orch_head(c):
     """`<orch>` or `<orch> -t '<repo>/<slug>'`: the task is named only when a bare call from the role's shell would not
-    land on it (the cwd, this session and ORCH_TASK, through the one resolver `orch role` uses). Never the absolute dir."""
+    land on it. The resolver is the one `orch role` uses, run on this session and ORCH_TASK with a cwd that is in no
+    worktree: the role's shell starts in the session's original cwd, not wherever this process has `cd`ed to, so a cwd match
+    here must not decide for it. Never the absolute dir."""
     try:
-        found, _ = infer.resolve(os.getcwd(), st.driver_session_id(), (os.environ.get("ORCH_TASK") or "").strip(), orch_root())
+        found, _ = infer.resolve(os.sep, st.driver_session_id(), (os.environ.get("ORCH_TASK") or "").strip(), orch_root())
         if current.same_dir(found, c.task_dir):
             return orch_cli()
     except OrchError:
