@@ -14,6 +14,10 @@ readonly SHA256_X86_64_APPLE_DARWIN=b67ac28da7a00577c4b46ff06a6eb8abbd6a0d694377
 readonly SHA256_X86_64_UNKNOWN_LINUX_MUSL=b6480490d496221e9086742e1de6f5dd61dbb61549cfa7a94f3a56c7846c542e
 readonly SHA256_AARCH64_UNKNOWN_LINUX_MUSL=e2597adde9b9cf5b8bcb19aaad5a4baca9ea6142f0e67efb8449c01b8c0711c9
 # --- pins (end) ---
+# Bundled binaries (bin/vendor/orch-index-<target>) are pinned by the binary's own SHA-256 and win over the download.
+# --- bundled pins (begin) ---
+readonly BUNDLED_SHA256_AARCH64_APPLE_DARWIN=baa6558260e2086815cf293881b5ada8e46e33ca49eb975933dedd62e284aa60
+# --- bundled pins (end) ---
 
 readonly RELEASE_BASE=https://github.com/ijat/orch-index/releases/download
 readonly MANUAL_URL=https://github.com/ijat/orch-index#install
@@ -80,8 +84,14 @@ if [ "$dry_run" = 1 ]; then
   echo "dry-run: would install $final $ORCH_INDEX_VERSION"; exit 0
 fi
 
-command -v curl >/dev/null 2>&1 || fail "curl not found"
-py=$(command -v python3 || true); [ -n "$py" ] || fail "python3 not found"
+bundled=""; bundled_pin=""
+case "$target" in aarch64-apple-darwin) bundled_pin=$BUNDLED_SHA256_AARCH64_APPLE_DARWIN ;; esac
+cand="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vendor/orch-index-$target"
+use_bundled=0
+if [ -n "$bundled_pin" ] && [ -f "$cand" ] && [ ! -L "$cand" ]; then use_bundled=1; fi
+
+if [ "$use_bundled" = 0 ]; then command -v curl >/dev/null 2>&1 || fail "curl not found"; fi
+py=$(command -v python3 || true); [ "$use_bundled" = 1 ] || [ -n "$py" ] || fail "python3 not found"
 if command -v shasum >/dev/null 2>&1; then sha() { shasum -a 256 "$1"; }
 elif command -v sha256sum >/dev/null 2>&1; then sha() { sha256sum "$1"; }
 else fail "shasum or sha256sum not found"; fi
@@ -94,6 +104,13 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/orch-install-code-index.XXXXXX") || fail "cannot create a temp dir"
 archive="$tmp/$archive_name"
+
+if [ "$use_bundled" = 1 ]; then
+  got=$(sha "$cand" | awk '{print $1}')
+  [ "$got" = "$bundled_pin" ] || fail "bundled binary checksum mismatch"
+  echo "bundled $cand (checksum ok)"
+  cp "$cand" "$tmp/orch-index" || fail "cannot copy the bundled binary"
+else
 
 echo "download $url"
 # -q first: ignore any ~/.curlrc. Redirects (GitHub -> its CDN) must stay on the same protocol.
@@ -192,6 +209,7 @@ if total != found.size:
     die("short binary member")
 print("archive ok")
 PY
+fi
 
 if [ ! -d "$dest" ]; then (umask 022 && mkdir -p "$dest") || fail "cannot create $dest"; fi
 staged=$(mktemp "$dest/.orch-index.XXXXXX") || fail "cannot write to $dest"
