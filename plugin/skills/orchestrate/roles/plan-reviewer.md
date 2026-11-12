@@ -75,7 +75,7 @@ plus your open findings. There are at most 3 passes in all (`${CLAUDE_PLUGIN_ROO
 <!-- @include _shared/every-role.md -->
 ## File contract
 
-Checkpoint with `orch role plan-reviewer <state> --note "<N>" --log "<what>"` (the task is inferred; the rules above say what to add on `ambiguous task` or `no task`):
+Checkpoint with `orch role plan-reviewer <state> --note "<N>" --log "<what>"` (the task is inferred; the rules above say what to add on `ambiguous task`, `conflicting task` or `no task`):
 `in_progress` before starting, a log line when you start (`--pct 0`), after each of the four questions (`--pct N`, 0–99, your rough estimate of the review), and when
 you finish, and `done` (verdict and finding count in the notes), or `blocked` / `failed` with a note,
 before returning. `plan-review.md` is the deliverable — your return message is not durable.

@@ -156,7 +156,7 @@ another file. Anything that doesn't fit a template's sections goes in `notes.md`
 
 Every `orch:*` role must, one call each (the brief's *Checkpoint commands* have them filled in):
 `orch role <role> <state> --step <step> --note "<note>" --log "<what>"` (the task is inferred from the session or
-worktree; on `ambiguous task` or `no task` the role adds `-t <repo>/<slug>`).
+worktree; on `ambiguous task`, `conflicting task` or `no task` the role adds `-t <repo>/<slug>`; when its brief carries `-t`, it puts the same `-t` on every `orch` call).
 
 - set its `status.md` row to `in_progress` with a UTC timestamp **before** starting;
 - append a `log.md` line at each meaningful step boundary, and update `last completed step` as it

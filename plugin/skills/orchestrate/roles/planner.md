@@ -111,7 +111,7 @@ Verification is unchanged: a fact a contract rests on is one you or `orch:explor
 ## File contract
 
 You are given an absolute task directory. Checkpoint with
-`orch role planner <state> --note "<N>" --log "<what>"` (the task is inferred; the rules above say what to add on `ambiguous task` or `no task`; add
+`orch role planner <state> --note "<N>" --log "<what>"` (the task is inferred; the rules above say what to add on `ambiguous task`, `conflicting task` or `no task`; add
 `--step <step>` to update `last completed step`; `--pct N`, 0–99, your rough estimate of the plan so far, `0` at start): before you start, `in_progress` with `--pct 0` and a log line saying you started.
 
 As you work, update `last completed step` (`--step`) at each meaningful boundary — after the

@@ -178,7 +178,7 @@ missing `review.md` is indistinguishable from a review that never ran.
 ## File contract
 
 Checkpoint with `orch role code-reviewer <state> --note "<N>" --log "<what>"` (the task is inferred; the brief's
-*Checkpoint commands* are exact, and on `ambiguous task` or `no task` you add `-t <repo>/<slug>` from the brief's title: the task is the
+*Checkpoint commands* are exact, and on `ambiguous task`, `conflicting task` or `no task` you add `-t <repo>/<slug>` from the brief's title: the task is the
 one holding `status.md`, in a program the program, not the milestone): `in_progress` before starting,
 a log line when you start (`--pct 0`), after each file group you finish (`--pct N`, 0–99, your rough estimate of the review), and when you finish, and `done` (with
 the verdict and finding count in the notes), or `blocked` / `failed` with a note, before returning.

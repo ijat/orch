@@ -129,8 +129,11 @@ These apply to every `orch:*` role. Where your own sections are stricter, they w
   `orch role <role> <state> --note "<N>" --log "<what>"` (`<role>` your row; the task is inferred from
   your session or worktree; add `--step <step>` to update `last completed step`; add `--pct N` (0–99,
   your rough estimate of your current assignment; `0` at start) on an `in_progress` checkpoint).
-  If your brief has a *Checkpoint commands* section, run those as written. If `orch` answers
-  `ambiguous task` or `no task`, add `-t <repo>/<slug>` (your brief's title names it) and run it again.
+  If your brief has a *Checkpoint commands* section, run those as written. When your brief's commands carry
+  `-t <repo>/<slug>`, put the same `-t` on every `orch` call you make (`orch plan`, `orch diff`, `orch append`,
+  `orch write`, `orch finding`). If `orch` answers `ambiguous task`, `conflicting task` or `no task`, add
+  `-t <repo>/<slug>` (your brief's title names it) and run it again. If a write prints a `[<repo>/<slug>]` tag
+  that is not your brief's title, stop and say so in your reply.
   - Before starting, state `in_progress`.
   - Log a line at each meaningful boundary: a step, a batch, a reviewed file group. A
     usage cutoff mid-run must leave a readable trail.
@@ -176,7 +179,7 @@ These apply to every `orch:*` role. Where your own sections are stricter, they w
   work addresses it.
 ## File contract
 
-Checkpoint with `orch role plan-reviewer <state> --note "<N>" --log "<what>"` (the task is inferred; the rules above say what to add on `ambiguous task` or `no task`):
+Checkpoint with `orch role plan-reviewer <state> --note "<N>" --log "<what>"` (the task is inferred; the rules above say what to add on `ambiguous task`, `conflicting task` or `no task`):
 `in_progress` before starting, a log line when you start (`--pct 0`), after each of the four questions (`--pct N`, 0–99, your rough estimate of the review), and when
 you finish, and `done` (verdict and finding count in the notes), or `blocked` / `failed` with a note,
 before returning. `plan-review.md` is the deliverable — your return message is not durable.

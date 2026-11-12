@@ -149,7 +149,7 @@ that record is the entire point of the review having run.
 ## File contract
 
 Checkpoint with `orch role security-reviewer <state> --note "<N>" --log "<what>"`
-(the task is inferred; the brief's *Checkpoint commands* are exact, and on `ambiguous task` or `no task` you add
+(the task is inferred; the brief's *Checkpoint commands* are exact, and on `ambiguous task`, `conflicting task` or `no task` you add
 `-t <repo>/<slug>` from the brief's title: the task is the one holding `status.md`, in a program the program, not the
 milestone): `in_progress` before
 starting, a log line when you start (`--pct 0`), after each sensitive area you finish (`--pct N`, 0–99, your rough estimate of the review), and when you finish, and
