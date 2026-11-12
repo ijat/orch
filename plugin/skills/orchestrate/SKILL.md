@@ -26,6 +26,14 @@ Bookkeeping is one call per state transition: `orch [-t <task>] <command>` (`orc
 by a guard or policy (usage STOP, a merge condition) write nothing; 3 internal error (for `merge`: the merge
 commit exists): read the message.
 
+The orchestrator's own commands keep `-t`. The roles' verbs — `orch role`, `orch log`, `orch plan` (outline,
+`--step`, `--section`, `--decision`), `orch diff`, `orch append notes`, `orch write review`, `orch finding add|resolve`,
+`orch findings` — infer the
+task when `-t` is missing: from the cwd (inside the task's worktree) and this session (`driver_session`), with
+`ORCH_TASK`, when set, as a signal that must agree with them (it decides alone only when they give nothing). Plural
+or disagreeing signals refuse (exit 1, nothing written); a role then repeats the call with `-t <repo>/<slug>`, and a
+brief names `-t` itself whenever a bare call from the role's shell would not land on its task.
+
 **Fallback:** `orch` missing, or failing in a way a corrected call won't fix → edit the files by hand
 per their templates (then `orch-index.sh` refreshes `ACTIVE.md`) and say so in the log line.
 
@@ -147,7 +155,8 @@ another file. Anything that doesn't fit a template's sections goes in `notes.md`
 ## Checkpointing contract (give this to every subagent)
 
 Every `orch:*` role must, one call each (the brief's *Checkpoint commands* have them filled in):
-`orch -t <task> role <role> <state> --step <step> --note "<note>" --log "<what>"`.
+`orch role <role> <state> --step <step> --note "<note>" --log "<what>"` (the task is inferred from the session or
+worktree; on `ambiguous task`, `conflicting task` or `no task` the role adds `-t <repo>/<slug>`; when its brief carries `-t`, it puts the same `-t` on every `orch` call).
 
 - set its `status.md` row to `in_progress` with a UTC timestamp **before** starting;
 - append a `log.md` line at each meaningful step boundary, and update `last completed step` as it
@@ -156,14 +165,16 @@ Every `orch:*` role must, one call each (the brief's *Checkpoint commands* have 
   `in_progress` checkpoints, so `orch status --json` shows how far along each running role is;
 - set `done`, `blocked`, or `failed` with a note before returning;
 - write its output to its designated file — a return message that never reached disk didn't happen;
-- keep the chat reply decision-grade: short summary, primary file path, blockers/risks, verification
-  results, deviations. Detail lives in the file;
+- keep the chat reply to about 8 lines (~600 characters): outcome, commits or primary file, one line per blocker,
+  deviation, risk or failed check with where its detail is. Detail lives in the file;
 - be brief everywhere — files and replies. Required sections stay; padding goes;
-- if `orch` errors or is missing, edit the files by hand per the templates and say so in the reply.
+- if `orch` errors or is missing, or a verb that writes a file fails, edit the files by hand per the templates and say so in the reply.
 
 After any subagent returns, `orch return <role>`: it journals the return and prints the row, the task-dir
 files changed since its spawn and, for `haiku/*`, its `contract-check`. Confirm its files exist (the
-worktree too: `git -C <worktree> log -3 --stat`) before briefing the next role. Don't infer it from the reply.
+worktree too: `git -C <worktree> log -3 --stat`) before briefing the next role. Don't infer it from the reply:
+the short reply is only a pointer, and the detail comes from `orch return`, the notes entry and, after a review,
+`orch findings --open`.
 
 ## Usage pacing (5h / 7d windows)
 
@@ -661,8 +672,9 @@ in `status.md` (row `skipped`) and journal an `override` whose `what` says "revi
 (`orch merge` needs both); then go to step 10.
 
 `orch brief review` writes the code reviewer's brief (worktree, the range pinned to the tip's sha — round 1
-`<base>...orch/<task-slug>`, from round 2 `<last reviewed sha>..<tip>` — and the exact `git diff <range>` command to
-read it with, the plan's steps, decisions and revisions, the absolute `review.md` path). It refuses (exit 2) while the
+`<base>...orch/<task-slug>`, from round 2 `<last reviewed sha>..<tip>` — and the exact `orch diff --range <range>`
+command to read it with, the plan's steps, decisions and revisions, the `orch write review` command with the next
+finding id, and the absolute `review.md` path). It refuses (exit 2) while the
 worktree has uncommitted changes: the range sees only commits. Spawn
 `orch:code-reviewer` with the spawn prompt `orch brief` printed, unchanged. If step 5 said it runs, `orch brief security` and spawn
 `orch:security-reviewer` the same way, with `security-review.md` and the security-ledger path (in its `--extra` file). The two
@@ -678,6 +690,10 @@ counts are findings still **open after** the round, `verdict` is `pass` only at 
 should-fix (security: and 0 nits):
 `orch journal review_round reviewer=code round:=1 blockers:=0 should_fix:=0 nits:=0 verdict=pass`.
 A fix-batch check (step 9) is journaled the same way with `check:=true`, `cycle:=K` and the round it belongs to.
+`orch findings --open --counts` describes `review.md` (it is a reader, never the verdict): journal the round from its
+`open:` numbers only when `severity-unknown` (both groups), `status-unknown` and `unparsed` are 0 and the `open:` numbers
+equal the reviewer's `open after this round` line (parked findings aside); otherwise read `review.md` and count it
+yourself. `pre-existing:` findings are not routed (step 9), are not in the journal counts and go to the digest.
 
 ### 9. Fix, check, re-review — caps in § Review loops
 
@@ -690,7 +706,8 @@ A fix-batch check (step 9) is journaled the same way with `check:=true`, `cycle:
    the implementer's brief (`--extra`) and the reviewer's check or re-review scope. Code-review findings that are `nit`
    or `origin: pre-existing` are not routed and never start or extend a round or a cycle; they go to the digest
    (step 10). Security findings are always routed. The implementer commits every fix before it returns (one commit per
-   finding, or per batch of one class).
+   finding, or per batch of one class). It writes each resolution with `orch finding resolve <id>`; a gate failure no
+   reviewer raised may be recorded with `orch finding add` (severity, file, summary) so `orch brief fix --findings` carries it.
 2. **Code review: check the fix batch, cycle by cycle.** After a review (or a check) with something open and its batch
    committed, `orch brief review --check` (with `--tier`, `--escalation` and `--tradeoff`, spawn prompt unchanged)
    briefs the same `orch:code-reviewer` (step 7) on the fix commits only, the range from the previous line's sha

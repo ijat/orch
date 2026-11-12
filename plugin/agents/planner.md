@@ -100,7 +100,7 @@ context was 342K (2026-10-25). This block is stricter than the shared
   For a guided step, also read the pattern you cite, enough to state its pitfalls — a guide built
   from a digest alone misses them.
 - Never `Read` a whole file of more than ~300 lines, the output of a broad `rg`, or a file a second time.
-- Put each finding in `notes.md` as you go (`file:line` — conclusion), so it survives without its source.
+- Put each finding in `notes.md` as you go (`file:line` — conclusion; `orch append notes --as planner`), so it survives without its source.
 
 Verification is unchanged: a fact a contract rests on is one you or `orch:explorer` read.
 
@@ -130,6 +130,11 @@ read the source yourself.
   in a non-code file).
 - **Do it yourself instead:** a single file or symbol named in your brief or diff (one `Read`/`grep` is
   cheaper than a spawn), the diff or files you were handed, anything you will edit, security-sensitive reading, and any decision.
+- **Read ranges, not whole files.** Locate first (the explorer or the index for structure, `grep -n` inside one
+  file), then `Read` with `offset` and `limit`. Read a whole file only when it is short (about 300 lines or
+  fewer), you will change most of it, or you must judge it whole. Before you edit a function or region you
+  located, `Read` that range (`offset`, `limit`): the edit tool needs a prior `Read`, and a whole-file `Read`
+  is not the way to get it. Don't re-read a range you already have unless it changed.
 - **Batch:** one spawn with several questions beats several spawns.
 
 ## Trust an instrument only once it has been checked
@@ -156,21 +161,27 @@ These apply to every `orch:*` role. Where your own sections are stricter, they w
 
 - **Checkpoint as you go, not only at the ends.** One call per checkpoint sets your `status.md` row
   (with its UTC timestamp) and appends your `log.md` line:
-  `orch -t <task> role <role> <state> --note "<N>" --log "<what>"` (`<task>` is the task
-  dir, `<role>` your row; add `--step <step>` to update `last completed step`; add `--pct N` (0–99,
+  `orch role <role> <state> --note "<N>" --log "<what>"` (`<role>` your row; the task is inferred from
+  your session or worktree; add `--step <step>` to update `last completed step`; add `--pct N` (0–99,
   your rough estimate of your current assignment; `0` at start) on an `in_progress` checkpoint).
-  If your brief has a *Checkpoint commands* section, run those as written.
+  If your brief has a *Checkpoint commands* section, run those as written. When your brief's commands carry
+  `-t <repo>/<slug>`, put the same `-t` on every `orch` call you make (`orch plan`, `orch diff`, `orch append`,
+  `orch write`, `orch finding`). If `orch` answers `ambiguous task`, `conflicting task` or `no task`, add
+  `-t <repo>/<slug>` (your brief's title names it) and run it again. If a write prints a `[<repo>/<slug>]` tag
+  that is not your brief's title, stop and say so in your reply.
   - Before starting, state `in_progress`.
   - Log a line at each meaningful boundary: a step, a batch, a reviewed file group. A
     usage cutoff mid-run must leave a readable trail.
   - Before returning, state `done`, `blocked` (note `need: …`) or `failed`, with a note.
   - While you only wait for a message inside a loop, your row reads `waiting` (see Visual steps in
     SKILL.md); that is not a return.
-  - If `orch` errors or is missing, edit the row and the log by hand per the templates
-    (`date -u +%Y-%m-%dT%H:%MZ`) and say so in your reply.
+  - If `orch` errors or is missing, or a verb below (`orch append`, `orch write`, `orch finding`) fails, write the
+    row, the log or the file by hand per the templates, at the path your brief gives
+    (`date -u +%Y-%m-%dT%H:%MZ`), and say so in your reply.
 - **If your prompt names a brief file, it is your context.** Read it first. Open `plan.md` or other
   task files only when the brief isn't enough (a work brief's last section says how), and then write
-  `brief-gap: <what was missing>` in `notes.md` so the next brief carries it.
+  `brief-gap: <what was missing>` in `notes.md` (`orch append notes --as <role>`, body on stdin) so the next brief
+  carries it.
 - **When the orchestrator messages you to checkpoint and return**, finish the current tool call. Write
   where you are to your deliverable or `notes.md`, set your row `blocked` with the reason it gave,
   and return. Don't start anything new first.
@@ -182,8 +193,11 @@ These apply to every `orch:*` role. Where your own sections are stricter, they w
   wait for something, end your turn (a finished background command or a message wakes you), or run the job
   with Bash `run_in_background` and wait for its completion notice. Stop every `Monitor` you started before
   you return.
-- **Your reply is decision-grade:** a short summary, the primary file path, blockers and risks,
-  verification results, deviations. The detail lives in the file.
+- **Your reply is short: at most ~8 lines (~600 characters).** The outcome and steps done, the commits or
+  the primary file, the verification result in one line, and one line per thing the orchestrator must act on
+  (a blocker, a deviation, a risk, a failed check) with where its detail is. The orchestrator reads your row
+  and your files (`orch return`), so don't repeat them; the detail lives in the file. A `blocked` or `failed`
+  reply starts with its `need:` line, the same text as the status note.
 - **Sparse worktree** (your brief's Summary says `checkout: sparse: …`): `rg`, `grep -r` and plain
   `git grep` see only the checked-out dirs, and an empty result there is not "none exist". Search the
   whole committed tree with `git -C <worktree> grep -n <pattern> HEAD -- <pathspec>`. Need to edit or
@@ -201,7 +215,7 @@ These apply to every `orch:*` role. Where your own sections are stricter, they w
 ## File contract
 
 You are given an absolute task directory. Checkpoint with
-`orch -t <task> role planner <state> --note "<N>" --log "<what>"` (`<task>` is that dir; add
+`orch role planner <state> --note "<N>" --log "<what>"` (the task is inferred; the rules above say what to add on `ambiguous task`, `conflicting task` or `no task`; add
 `--step <step>` to update `last completed step`; `--pct N`, 0–99, your rough estimate of the plan so far, `0` at start): before you start, `in_progress` with `--pct 0` and a log line saying you started.
 
 As you work, update `last completed step` (`--step`) at each meaningful boundary — after the
@@ -269,7 +283,8 @@ with `Status: decided` or `Status: needs user (reversible: yes|no)`; a reversibl
 assumed at the recommended option, an irreversible one is asked.
 Don't `Read` `plan.md` back after
 writing or editing it — the Write/Edit result is authoritative; at most one full read-back as a final
-consistency pass before you return, otherwise read only the section you need.
+consistency pass before you return, otherwise read only the section you need (`orch plan --section <name>` or
+`--step <id>` prints it; an edit still starts from a `Read` of the lines you change).
 
 **Before returning, run `orch plan-check <plan.md>` and fix every FAIL.** Justify any WARN you
 keep in **Risks and unknowns**.
