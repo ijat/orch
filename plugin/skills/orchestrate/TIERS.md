@@ -63,7 +63,7 @@ Weigh these for every non-default choice:
   week"), that is a hard ceiling above every factor below. Log it once as an `override` journal
   event. Then escalate *within* the cap by raising effort: e.g. with Opus banned, planners and
   reviewers run at `sonnet/xhigh` or above, and the implementer follows § Implementer routing →
-  Caps and pressure. If the cap stops a needed escalation (the work keeps failing at the capped
+  Caps and pressure. The tier table's Never and default-only cells yield to a cap (§ Tier table). If the cap stops a needed escalation (the work keeps failing at the capped
   ceiling), tell the user what the cap is costing; don't quietly break it.
 
 - **Quality:** how bad is a subtle mistake here, and would review catch it? Sensitive areas
@@ -95,6 +95,12 @@ This table lists every tier each role may run at. A tier it does not list for a 
 request, journaled as an `override` event. The caps in § Caps and pressure are part of it. A Fable spawn needs no
 user notice or approval; the `tier_choice` or `escalation` journal line with its reason is the record. Tags as in
 § Implementer routing; the planner bench is in § Planner bench below.
+
+A user cap (§ The factors) overrides a Never or default-only cell, so a capped role always has a tier: run it at the
+nearest tier the cap allows, raising effort inside the cap. With Opus banned, planners, reviewers and the director
+run at `sonnet/xhigh` or above; with Haiku banned, the explorer, executor and graph run at `sonnet/low`. The
+implementer follows § Caps and pressure. A cap that leaves a role no tier at all is for the user (a parked
+question), not for a quiet substitute.
 
 | Role | Default | Allowed, and when | Never | Basis |
 |---|---|---|---|---|
