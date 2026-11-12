@@ -387,8 +387,6 @@ def append_text(c, path, security, text=None, build=None):
         problems, new_ids, statuses = validate_text(text, existing, security)
         if problems:
             refuse(problems, file_next)
-        if not new_ids and not statuses:
-            raise OrchError("nothing to write: the text has no finding block and no status line\nnext id: %s" % file_next, 1)
         body = text.rstrip("\n") + "\n"
         if exists:
             data = separator(path) + body
