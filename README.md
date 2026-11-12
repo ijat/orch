@@ -166,7 +166,7 @@ flowchart TD
     B -->|yes| R[Resume from status.md + log.md]
     B -->|no| C[Create task dir<br/>~/.claude/orch-data/tasks/repo/task/]
     C --> P[Planner writes plan.md<br/>shape: single plan or roadmap<br/>+ guides for steps that copy a pattern]
-    P --> PR{Roadmap or<br/>opus/max plan?}
+    P --> PR{Roadmap or plan at an<br/>escalated planner tier?}
     PR -->|yes| PRV[Plan reviewer] --> G1
     PR -->|no| G1{{Gate: you approve the plan}}
     G1 -->|revise| P
