@@ -17,7 +17,7 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 | `tier_choice` **choice** | before each planner/implementer/director spawn, and any non-default reviewer | `role`, `tier` (`<model>/<effort>`), `tradeoff` (≤ 1 line, see `TIERS.md`) |
 | `spawn` | each subagent spawn, or next work sent to a reused implementer (those lines add reused: true) | `role`, `agent`, `tier`, `steps` (array or null), `usage_5h`, `usage_7d` |
 | `return` | each subagent returns | `role`, `agent`, `outcome` (done/blocked/failed/stopped), `tokens`, `tool_uses`, `duration_ms` (from the completion notice if it reports them, else null) |
-| `escalation` **choice** | a tier is raised | `role`, `from`, `to`, `trigger` (plan_flag/plan_shape/review_pattern/prior_tier_failed/blocker/user), `tradeoff` |
+| `escalation` **choice** | a tier is raised | `role`, `from`, `to`, `trigger` (plan_flag/plan_shape/planner_escalate/review_pattern/prior_tier_failed/blocker/user), `tradeoff` |
 | `blocker` | a role returns blocked | `role`, `need` (≤ 1 line), `rung` (1/2/3 — where it got resolved), `resolved_by` |
 | `security_offer` | old lines; new tasks only when `policy.md` says `security: ask` and the user was asked | `areas` (array), `answer` (accepted/declined/not_offered), `late` (bool) |
 | `review_round` | each reviewer return | `round`, `reviewer`, `blockers`, `should_fix`, `nits`, `verdict`, `sha` |
