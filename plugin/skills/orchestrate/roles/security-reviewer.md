@@ -113,6 +113,11 @@ Do **not** report: theoretical issues with no reachable path, defense-in-depth s
 up as vulnerabilities, or generic hardening advice unrelated to this diff. A security review that
 cries wolf gets ignored, and it burns fix rounds (the cap is in `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/SKILL.md`, § Review loops). Security findings stay on rounds: every routed finding is fixed and re-reviewed as the next round, with no check lane and no follow-up lane.
 
+Put a **`class:`** on every finding: the bug class, one short slug, so the orchestrator can see the same class
+return in a later round. Pick from `concurrency`, `state-reset`, `validation`, `error-handling`, `resource-cleanup`,
+`api-contract`, `algorithm`, `config`, `test-gap`, `docs`, or write your own slug (letters, digits, `-`, `_`); the match
+is exact, so reuse the slug an earlier finding of the same class used.
+
 Verify before asserting. Read the actual definitions of the validators, escapers, and auth helpers
 involved before claiming one is missing or wrong.
 

@@ -102,7 +102,8 @@ evidence, no finding. A clean plan gets `verdict: pass` and a list of what you c
 ```
 
 On a second pass (after a revision) append `## Round 2` and re-check only what the revision touched
-plus your open findings. There are at most 3 passes in all (`${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/SKILL.md`, § Review loops).
+plus your open findings. You may be a **resumed** plan reviewer: a message `orch: next work — brief <path>` replaces
+your assignment; read that brief whole, re-read what changed, and continue. There are at most 3 passes in all (`${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/SKILL.md`, § Review loops).
 
 ## Trust an instrument only once it has been checked
 
