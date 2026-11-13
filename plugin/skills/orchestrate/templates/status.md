@@ -27,7 +27,7 @@
 | planner | pending | | | | |
 | implementer | pending | | | | |
 | director | n/a | | | | <pending if the plan has visual steps> |
-| plan-reviewer | n/a | | | | <pending for roadmaps, plans at fable/high and plans naming `undo:`> |
+| plan-reviewer | n/a | | | | <pending for roadmaps, plans at fable/high and plans naming an `undo:` artifact> |
 | code-reviewer | pending | | | | |
 | security-reviewer | not_offered | | | | <one-line reason, or pending / declined> |
 

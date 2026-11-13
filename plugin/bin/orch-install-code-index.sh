@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# orch-install-code-index.sh — install the pinned orch-index release binary (macOS and Linux).
+# orch-install-code-index.sh — install the pinned orch-index release binary (macOS, Linux, Windows under Git Bash).
 # Usage: orch-install-code-index.sh [--dest DIR] [--dry-run] [--print-target]   (default DIR: ${ORCH_DATA:-$HOME/.claude/orch-data}/bin)
 # Trust root: the SHA-256 pins below, committed in this repo; the release's own SHA256SUMS is not used.
-# Never overwrites an existing <DIR>/orch-index, never uses sudo, refuses to run as root.
+# Never overwrites an existing <DIR>/orch-index (Windows: orch-index.exe), never uses sudo, refuses to run as root.
 # ORCH_INDEX_AUTOINSTALL=0 disables it (exit 3, checked first, no network).
 # Exit: 0 installed or already there, 1 failure, 2 bad usage, 3 unsupported platform or disabled.
 set -euo pipefail
@@ -13,10 +13,16 @@ readonly SHA256_AARCH64_APPLE_DARWIN=f9694a720b1943bba933cd96411de6e69835ff720ca
 readonly SHA256_X86_64_APPLE_DARWIN=b67ac28da7a00577c4b46ff06a6eb8abbd6a0d694377bc2e2d2b53bf04dd15b3
 readonly SHA256_X86_64_UNKNOWN_LINUX_MUSL=b6480490d496221e9086742e1de6f5dd61dbb61549cfa7a94f3a56c7846c542e
 readonly SHA256_AARCH64_UNKNOWN_LINUX_MUSL=e2597adde9b9cf5b8bcb19aaad5a4baca9ea6142f0e67efb8449c01b8c0711c9
+readonly SHA256_X86_64_PC_WINDOWS_MSVC=89bbcc0094f964bddf61cb5d91fcfaa87caa60819d37d8c80c845cf872719146
 # --- pins (end) ---
-# Bundled binaries (bin/vendor/orch-index-<target>) are pinned by the binary's own SHA-256 and win over the download.
+# Bundled binaries (bin/vendor/orch-index-<target>, `.exe` on Windows) are pinned by the binary's own SHA-256 and win
+# over the download.
 # --- bundled pins (begin) ---
 readonly BUNDLED_SHA256_AARCH64_APPLE_DARWIN=baa6558260e2086815cf293881b5ada8e46e33ca49eb975933dedd62e284aa60
+readonly BUNDLED_SHA256_X86_64_APPLE_DARWIN=7255d9d5ecdf267fc4ceda7bad9b76e81632dd0fcdfb3793659ab1acd5b8a85a
+readonly BUNDLED_SHA256_X86_64_UNKNOWN_LINUX_MUSL=ac4255a5ff60800f8857ee8546cd58de320ef2507f38eace899a0d6c62113f77
+readonly BUNDLED_SHA256_AARCH64_UNKNOWN_LINUX_MUSL=85001aca34fa1ee50b0844b41557dd0ce9f06ae339fec6f0888ade77c5e759cc
+readonly BUNDLED_SHA256_X86_64_PC_WINDOWS_MSVC=b419788091320b4220f9fd0afee9e7ed56d88bc0fca7d9094d1b7f5f19fb9dd2
 # --- bundled pins (end) ---
 
 readonly RELEASE_BASE=https://github.com/ijat/orch-index/releases/download
@@ -48,15 +54,18 @@ case "$os/$arch" in
   Darwin/x86_64)               target=x86_64-apple-darwin;  pin=$SHA256_X86_64_APPLE_DARWIN ;;
   Linux/x86_64|Linux/amd64)    target=x86_64-unknown-linux-musl;  pin=$SHA256_X86_64_UNKNOWN_LINUX_MUSL ;;
   Linux/aarch64|Linux/arm64)   target=aarch64-unknown-linux-musl; pin=$SHA256_AARCH64_UNKNOWN_LINUX_MUSL ;;
+  MINGW*/x86_64|MSYS*/x86_64|CYGWIN*/x86_64) target=x86_64-pc-windows-msvc; pin=$SHA256_X86_64_PC_WINDOWS_MSVC ;;
   *) target="" ; pin="" ;;
 esac
+# Windows ships a zip holding orch-index.exe and installs as orch-index.exe; every other target a tar.gz.
+exe=""; ext=tar.gz; case "$target" in *-windows-*) exe=.exe; ext=zip ;; esac
 
 if [ "$print_target" = 1 ]; then
   [ -n "$target" ] || { echo "unsupported platform $os/$arch"; exit 3; }
   echo "$target"; exit 0
 fi
 
-final="$dest/orch-index"
+final="$dest/orch-index$exe"
 if [ -e "$final" ] || [ -L "$final" ]; then echo "already installed $final"; exit 0; fi
 
 if [ -z "$target" ]; then
@@ -76,7 +85,7 @@ if [ "${ORCH_INSTALL_TEST:-}" = 1 ] && [ -n "${ORCH_INSTALL_TEST_BASE:-}" ]; the
   case "$ORCH_INSTALL_TEST_BASE" in file:///*) ;; *) fail "test base must be a file:/// URL" ;; esac
   base=$ORCH_INSTALL_TEST_BASE; proto='=file'
 fi
-archive_name="orch-index-$ORCH_INDEX_VERSION-$target.tar.gz"
+archive_name="orch-index-$ORCH_INDEX_VERSION-$target.$ext"
 url="$base/$ORCH_INDEX_VERSION/$archive_name"
 
 if [ "$dry_run" = 1 ]; then
@@ -85,13 +94,26 @@ if [ "$dry_run" = 1 ]; then
 fi
 
 bundled=""; bundled_pin=""
-case "$target" in aarch64-apple-darwin) bundled_pin=$BUNDLED_SHA256_AARCH64_APPLE_DARWIN ;; esac
-cand="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vendor/orch-index-$target"
+case "$target" in
+  aarch64-apple-darwin)       bundled_pin=$BUNDLED_SHA256_AARCH64_APPLE_DARWIN ;;
+  x86_64-apple-darwin)        bundled_pin=$BUNDLED_SHA256_X86_64_APPLE_DARWIN ;;
+  x86_64-unknown-linux-musl)  bundled_pin=$BUNDLED_SHA256_X86_64_UNKNOWN_LINUX_MUSL ;;
+  aarch64-unknown-linux-musl) bundled_pin=$BUNDLED_SHA256_AARCH64_UNKNOWN_LINUX_MUSL ;;
+  x86_64-pc-windows-msvc)     bundled_pin=$BUNDLED_SHA256_X86_64_PC_WINDOWS_MSVC ;;
+esac
+cand="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vendor/orch-index-$target$exe"
 use_bundled=0
 if [ -n "$bundled_pin" ] && [ -f "$cand" ] && [ ! -L "$cand" ]; then use_bundled=1; fi
 
 if [ "$use_bundled" = 0 ]; then command -v curl >/dev/null 2>&1 || fail "curl not found"; fi
-py=$(command -v python3 || true); [ "$use_bundled" = 1 ] || [ -n "$py" ] || fail "python3 not found"
+py=$(command -v python3 || true); unzip_bin=$(command -v unzip || true)
+if [ "$use_bundled" = 0 ]; then
+  if [ "$ext" = zip ]; then
+    [ -n "$unzip_bin" ] || [ -n "$py" ] || fail "neither unzip nor python3 found (install by hand: $MANUAL_URL)"
+  else
+    [ -n "$py" ] || fail "python3 not found"
+  fi
+fi
 if command -v shasum >/dev/null 2>&1; then sha() { shasum -a 256 "$1"; }
 elif command -v sha256sum >/dev/null 2>&1; then sha() { sha256sum "$1"; }
 else fail "shasum or sha256sum not found"; fi
@@ -134,6 +156,57 @@ else
   echo "not attested (gh not found)"
 fi
 
+if [ "$ext" = zip ]; then
+# The Windows zip: take the one member orch-index.exe by its exact name (nothing else is extracted, so no
+# archive path, mode or link is used), refuse it when absent or listed twice, and cap its size.
+zip_member="orch-index-$ORCH_INDEX_VERSION-$target/orch-index.exe"; zip_limit=268435456
+if [ -n "$unzip_bin" ]; then
+  names=$("$unzip_bin" -Z1 "$archive" 2>/dev/null) || fail "unreadable archive"
+  [ "$(printf '%s\n' "$names" | grep -Fxc -- "$zip_member")" = 1 ] || fail "binary missing from archive or listed twice"
+  (umask 077; "$unzip_bin" -p "$archive" "$zip_member" | head -c $((zip_limit + 1)) > "$tmp/orch-index") \
+    || fail "unreadable archive"
+  zsize=$(wc -c < "$tmp/orch-index" | tr -d ' ')
+  [ "$zsize" -gt 0 ] || fail "short binary member"
+  [ "$zsize" -le "$zip_limit" ] || fail "binary larger than $zip_limit bytes"
+else
+"$py" -I - "$archive" "$tmp" "$zip_member" "$zip_limit" <<'PY' || exit 1
+import os, sys, zipfile
+archive, out, member, limit = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+
+def die(msg):
+    print("failed: " + msg)
+    sys.exit(1)
+
+try:
+    zf = zipfile.ZipFile(archive)
+    infos = [i for i in zf.infolist() if i.filename == member]
+except (zipfile.BadZipFile, OSError, EOFError, ValueError):
+    die("unreadable archive")
+if len(infos) != 1:
+    die("binary missing from archive or listed twice")
+info = infos[0]
+if info.file_size == 0:
+    die("short binary member")
+if info.file_size > limit:
+    die("binary larger than %d bytes" % limit)
+fd = os.open(os.path.join(out, "orch-index"),
+             os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o700)
+total = 0
+with zf.open(info) as src, os.fdopen(fd, "wb") as dst:
+    while True:
+        chunk = src.read(1 << 20)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            die("binary larger than %d bytes" % limit)
+        dst.write(chunk)
+if total != info.file_size:
+    die("short binary member")
+PY
+fi
+echo "archive ok"
+else
 # List every member before extracting; accept only the binary (plus its directory and a licence or
 # readme beside it); write the binary's bytes to a new file ourselves, so no archive mode or link is used.
 "$py" -I - "$archive" "$tmp" "$ORCH_INDEX_VERSION" "$target" <<'PY' || exit 1
@@ -210,9 +283,13 @@ if total != found.size:
 print("archive ok")
 PY
 fi
+fi
 
 if [ ! -d "$dest" ]; then (umask 022 && mkdir -p "$dest") || fail "cannot create $dest"; fi
 staged=$(mktemp "$dest/.orch-index.XXXXXX") || fail "cannot write to $dest"
+if [ -n "$exe" ]; then   # Windows runs a file only under an .exe name
+  mv "$staged" "$staged$exe" || fail "cannot write to $dest"; staged="$staged$exe"
+fi
 install -m 755 "$tmp/orch-index" "$staged" || fail "cannot write to $dest"
 
 # Run the version check on the staged file in <dest>, not in the temp dir (which may be mounted noexec);

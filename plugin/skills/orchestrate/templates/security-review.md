@@ -12,6 +12,7 @@
 ### S1 — <one-line summary>
 - severity: critical | high | medium | low
 - file: /abs/path:LINE
+- class: <optional: one slug from your role file's list, or your own short slug; delete the line if none>
 - fingerprint: `severity | path | short-slug`
 - attack path: who the attacker is, what they control, what they achieve.
 - impact: what an attacker gets.

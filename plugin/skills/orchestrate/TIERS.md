@@ -137,7 +137,7 @@ revisions, review blockers, retro), with dates and tiers redacted.
 | wrong turns | 4 | 5 | 2 | 4 | 8 |
 
 - **What it shows:** `opus/high` scored 0.6 under `opus/max` and `fable/high` at about a third of the cost and
-  a quarter of the time, so it is the planner default. `opus/max` and `fable/high` tie; `opus/max` and `opus/high`
+  about a quarter of `opus/max`'s time, so it is the planner default. `opus/max` and `fable/high` tie; `opus/max` and `opus/high`
   differ mostly on breadth items (A's optional items and publish atomicity, D's later milestones), and on A's
   weight-3 deadlock item `opus/high` scored yes where `opus/max` scored partial. `opus/medium` is clearly worse (4.75,
   8 wrong turns). `fable/medium` sits between.
@@ -274,7 +274,7 @@ When a Haiku spawn returns `done`, read its `contract-check` in `notes.md` befor
   `opus/medium` only when the fix itself carries a `flag` (it changes the concurrency protocol, the
   algorithm or the state change the step was flagged for, not a rename or a log line beside it),
   `unknown_cause` (the finding's cause must be found), or `refusal`, or by the ladder: a class already
-  raised in an earlier round of this task (`post-failure`, `review_pattern`). A step that already climbed
+  raised in an earlier round of this task — `orch brief fix` prints a `class repeat:` line for it (`post-failure`, `review_pattern`). A step that already climbed
   the ladder after a failure in this task (a `post-failure` escalation, not a proactive signal) keeps the rung it
   reached for its later fix rounds and climbs from there (Sonnet already had trouble with it). Security-reviewer findings
   follow the same rule; the security reviewer re-reviews the fix. One exception downward: an **exact-edit list** — at most 5 routed findings, each with `file:line` and
@@ -289,7 +289,8 @@ When a Haiku spawn returns `done`, read its `contract-check` in `notes.md` befor
   picks it there. [judgment]
 - Code Haiku wrote that gets any routed finding → `sonnet/high` (`post-failure`).
 - A round-2 finding in a class already raised in round 1 → the next rung (`post-failure`,
-  `review_pattern`). At the cap, SKILL.md step 9 and § Review loops.
+  `review_pattern`); "already raised" is the `class repeat:` line `orch brief fix` prints for a finding's `class:`
+  (matched exactly; a recommendation, `orch spawn` does not refuse). At the cap, SKILL.md step 9 and § Review loops.
 - **Pilots:** a mechanical step that passes the Haiku gate and whose items each have their own check pilots at `haiku/medium`. It
   continues at `haiku/medium`, in spawns of ≤ ~10 items, only if the pilot passed its gates with
   every `contract-check` line `[x]`; otherwise offer the retier to `sonnet/high` at the pilot gate. Other pilots run
@@ -308,10 +309,10 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 | `haiku/medium`, `haiku/high` (guided) | any routed finding; a check still failing after its three strikes; a `[ ]` in `contract-check` | `sonnet/high` | Don't raise Haiku's effort: at `high` it skipped the same items on replays (4 medium issues, as at medium); `max` fixed that at 1.9× `sonnet/high`'s cost and 3.8× its wall time [measured] |
 | `sonnet/medium` (caps, pressure, saver) | any routed finding | `sonnet/high` | escalate on the first review failure [current rule] |
 | `sonnet/high` | round-1 findings | fix at `sonnet/high` | [current rule] |
-| `sonnet/high` | the same class again in round 2; `stuck` where the check is right and the approach keeps failing | `opus/medium` | change model, not effort: Opus costs 2× Sonnet per token [list prices]; `sonnet/xhigh` is for the no-Opus cap [judgment] |
+| `sonnet/high` | the same class again in round 2 (a `class repeat:` line); `stuck` where the check is right and the approach keeps failing | `opus/medium` | change model, not effort: Opus costs 2× Sonnet per token [list prices]; `sonnet/xhigh` is for the no-Opus cap [judgment] |
 | `opus/medium` | round-1 findings that are neither diligence nor ability failures (routine review findings) | fix at `opus/medium` | same as Sonnet's round 1 [current rule] |
 | `opus/medium` | diligence: an omission, an edge case the contract named, thin tests, an unverified claim — the design is right | `opus/high` | raise effort within the model [judgment] |
-| `opus/medium` | ability: the same class after the Opus pass, the wrong mechanism twice, `stuck` on a hard item | `opus/high` | Fable on the failure ladder only follows a failed `opus/max` pass (2026-11-06; was a jump to `fable/high`) [current rule] |
+| `opus/medium` | ability: the same class after the Opus pass (a `class repeat:` line), the wrong mechanism twice, `stuck` on a hard item | `opus/high` | Fable on the failure ladder only follows a failed `opus/max` pass (2026-11-06; was a jump to `fable/high`) [current rule] |
 | `opus/high` | any | `opus/max` | raise effort within the model before changing model [current rule 2026-11-06] |
 | `opus/max` | any | `fable/high` | no user notice; journal the `escalation` event with the reason (reason 1 of § Fable outside planning) [current rule] |
 | `fable/high` | any | planner revision if the plan is the problem, else the user | no `fable/xhigh` unless the user asks [judgment] |

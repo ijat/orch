@@ -117,7 +117,7 @@ requires naming what the prior pass got wrong.
 
 Record the tier, the escalation kind and the **`tradeoff` line** (`TIERS.md`) in the spawn prompt (the role copies it
 into its file's header; the planner's goes in the `plan.md` header). For every role that has a brief
-(implementer, director, code and security reviewer, fix rounds) pass the three to `orch brief` (`--tier`,
+(implementer, director, code and security reviewer, fix rounds, planner revision `revise`, plan reviewer `plan-review`) pass the three to `orch brief` (`--tier`,
 `--escalation`, `--tradeoff`) and send the spawn prompt it prints, unchanged: never a hand-written one. `--extra`
 carries facts, never test scope or gate instructions; only a step's `full-gate:` field lets the implementer run
 the gate. `--extra` takes the path of a file, not inline text. Any other value a spawn needs goes in that file, and
@@ -224,11 +224,16 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
    Never `TaskStop` the wait when a subagent returns; at task end only if `orch end` didn't end it.
 4. On `WARN`/`STALE`: log, tell the user, apply the slow-down rules; don't stop the subagent. `STOP`: pause.
 5. **Check-in on silence** (a CHECKIN exit, or a fallback tick): if the running role's last `log.md` line
-   is older than the check-in interval — 30 min, then 60, then 120 after each check-in on that
+   is older than the check-in interval — 30, 60, 120, 120 min (four) after each check-in on that
    spawn — read its last log lines, the tail of `notes.md`, and `git -C <worktree> log -3 --stat`.
-   Progressing (new commits or differing results): log `check-in: ok`, back off. Looping (the
-   same failure or sweep repeating, no commit since the last check-in): `SendMessage` it to checkpoint
-   in `notes.md` and return `blocked` with `need: stuck — …` (it reads it at its next tool call); if
+   The CHECKIN line decides progress (`progress=commits|log|files|none|unknown none_streak=<n>`):
+   `progress=commits` (the worktree HEAD moved), `progress=log` (the role wrote new `log.md` lines) or
+   `progress=files` (an output it writes in the task dir changed: `notes.md`, `review.md`, `security-review.md`,
+   `plan.md`, `roadmap.md`, `plan-review.md`, `visual-*.md`, files under `sketches/`, `guides/`, `artifacts/`), or
+   `none_streak` 1, is progressing: log `check-in: ok`, back off. Uncommitted worktree edits don't count.
+   `none_streak` ≥ 2 (two check-ins in a row with none of that) is looping;
+   `progress=unknown` (no worktree or no baseline yet) → judge from the files you read, as before.
+   Looping: `SendMessage` it to checkpoint in `notes.md` and return `blocked` with `need: stuck — …` (it reads it at its next tool call); if
    nothing lands within one tick, `TaskStop` it and checkpoint from its files yourself, then work the
    rung ladder with a sharper brief (a tier raise: `post-failure`, trigger `blocker`).
    Journal a `checkin` line either way. Check-ins read files, never the transcript.
@@ -564,8 +569,8 @@ Journal `plan_shape`; show the shape line at the gate, and if the user overrules
 
 Read `plan.md` yourself and `orch plan-check <plan.md>` it (a FAIL goes back to the planner), then **present it to the user and get approval before any code is
 written.** Show its Summary, every decision marked `needs user`, and the implementer tier
-`TIERS.md` gives each step (one line each), and give the file path for the rest (ask in the text format, § Checkpoints and questions); if the Summary can't stand alone, send it back to the planner before the gate. If they want changes, send their feedback to the same planner tier to append a
-`## Revision N` section, and return to this gate — don't rewrite the plan yourself.
+`TIERS.md` gives each step (one line each), and give the file path for the rest (ask in the text format, § Checkpoints and questions); if the Summary can't stand alone, send it back to the planner before the gate. If they want changes, send their feedback (the file you give `orch brief revise`'s `--extra`) to the same planner tier to append a
+`## Revision N` section (resume the same planner by step 7), and return to this gate — don't rewrite the plan yourself.
 
 Before asking: `orch set task_state=awaiting_approval --log "plan ready"`. Add one line to the question:
 if they answer more than about an hour later, a fresh session (`/clear`, then "resume <repo>/<slug>") is
@@ -634,13 +639,21 @@ journal a `sketch` line. When a `haiku/*` spawn returns, read its `contract-chec
 it) before anything else; a gap re-routes the step (`TIERS.md` § Haiku gate). A `brief-gap:` note in
 `notes.md` goes into the next brief (`--extra`).
 
-**Reuse while the cache is warm.** For the next implementer work in a milestone (a step, a batch or a fix round),
+**Reuse while the cache is warm.** Every non-Haiku role is resumed under one rule; explorer, executor and graph
+(`haiku/*`) never are. For the next implementer work in a milestone (a step, a batch or a fix round),
 if you hold the last implementer's agent ID, first try `orch spawn implementer --reused …` at the routed tier. It
 refuses, writing nothing, unless that implementer returned `done` within 55 minutes, in this milestone, at the same
 tier, and the tier isn't `haiku/*`. Accepted → `SendMessage` it `orch: next work — brief <absolute path>` (the line `orch brief` printed, unchanged) instead of
 spawning. Refused → spawn fresh without `--reused`. A failed send → `orch return implementer --outcome failed`,
 then spawn fresh. Never reuse for a `visual:` step, a pilot, a parallel track or an escalation. Context growth is
 left to autocompaction.
+
+**The planner, plan reviewer, director and init resume by the same conditions** (`orch spawn <role> --reused …`; the
+brief line goes unchanged): a clerical planner revision (user feedback at the gate, a checker FAIL, a plan-reviewer
+blocker) via `orch brief revise` to the same planner; plan-reviewer pass 2 and 3 via `orch brief plan-review` to the same
+plan reviewer; the director's next batch's brief via `orch brief director`; init by the `orch:init` skill's own message.
+An escalated revision (a different tier: `fable/high` after `need: escalate`, a roadmap revision after a broken
+premise) is a fresh spawn, so a refused `--reused` costs nothing.
 
 **Reviewers resume the same way, for a check and for security round 2 and up.** For a code-review fix-batch check, if you hold
 the code reviewer's agent ID, `orch spawn code-reviewer --reused …` at the review's tier; for security round 2 or
@@ -666,7 +679,7 @@ Brief the role to re-probe right before driving it, stop on any foreign activity
 window it didn't open.
 
 **Blockers:** an implementer that finds a plan assumption invalid stops — that's its contract. Work
-the escalation ladder; if the plan itself must change, re-invoke the planner (`opus/high`; `fable/high` only if the revision reopens a design decision that
+the escalation ladder; if the plan itself must change, re-invoke the planner (`orch brief revise`; `opus/high`; `fable/high` only if the revision reopens a design decision that
 passes § Tier selection (3)) to append a revision. Never tell an implementer to
 "just work around it".
 

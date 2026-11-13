@@ -360,6 +360,9 @@ When sent back (implementer blocker, user feedback at the gate, review): **appen
 `## Revision N` section in the template's shape. Never silently rewrite approved sections — why the
 plan changed is what a resuming session most needs.
 
+You may be a **resumed** planner: a message `orch: next work — brief <path>` replaces your assignment. Read that
+brief whole (it names the revision number and carries the feedback), re-read the plan before appending, and continue.
+
 ## Fixes: name the whole class and the invariant
 
 When a step fixes a bug or enforces a rule, say in the step which **class** it belongs to (every

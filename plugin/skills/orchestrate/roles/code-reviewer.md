@@ -90,6 +90,11 @@ When a finding is one instance of a class (a state reset, a validation, a cleanu
 whole class before you return, not just the path the brief named — a variant found in round 3 was a
 round 1 miss.
 
+Put a **`class:`** on every blocker and should-fix: the bug class, one short slug, so the orchestrator can see
+the same class return in a later round. Pick from `concurrency`, `state-reset`, `validation`, `error-handling`,
+`resource-cleanup`, `api-contract`, `algorithm`, `config`, `test-gap`, `docs`, or write your own slug (letters, digits,
+`-`, `_`); the match is exact, so reuse the slug an earlier finding of the same class used.
+
 Tag every finding's **origin**. Run `git blame` on its lines: if the defect is already on the base
 branch and the diff neither changed those lines nor newly reaches them (a new caller of old broken
 code is `introduced`), it is `pre-existing`. Still report it, with the blame evidence. Pre-existing
