@@ -1360,6 +1360,85 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.assertEqual((rec["milestone"], rec["cycle"], rec["sha"]), (2, 2, self.tip()))
 
 
+class TestReviseAndPlanReviewBrief(BriefBase):
+    FLAGS = ("--tier", "opus/high", "--escalation", "none", "--tradeoff", "t")
+
+    def feedback(self, text="Split step 2 in two."):
+        path = os.path.join(self.tmp, "feedback.md")
+        wr(path, text)
+        return path
+
+    def test_revise_writes_the_next_revision_number_and_the_feedback(self):
+        # the standard fixture already holds Revision 1 and Revision 2
+        path, text = self.brief("revise", "--extra", self.feedback(), *self.FLAGS)
+        self.assertEqual(os.path.basename(path), "revise-r3.md")
+        self.assertEqual(text.split("\n")[0], "# Brief: revise plan.md, revision 3 — myapp/add-login")
+        self.assertIn("Append a `## Revision 3` section to %s" % os.path.join(self.d, "plan.md"), sec(text, "What to do"))
+        self.assertIn("Never rewrite approved sections", sec(text, "What to do"))
+        self.assertEqual(sec(text, "Feedback to address"), "Split step 2 in two.")
+        self.assertIn("role 'planner' in_progress --note 'working on step(s) revision 3'", sec(text, "Checkpoint commands"))
+        self.assertIn("tier: opus/high\nescalation: none\ntradeoff: t\n\nYour whole context is this brief: %s" % path, self.last_out)
+        self.assertIn("--- reused planner: SendMessage unchanged instead ---\norch: next work \u2014 brief %s\n" % path, self.last_out)
+
+    def test_revise_counts_the_revisions_already_in_the_plan(self):
+        self.put_plan(self.plan_text + "\n## Revision 3\n\nthird.\n\n## Revision 4\n\nfourth.\n")
+        path, text = self.brief("revise", *self.FLAGS)
+        self.assertEqual(os.path.basename(path), "revise-r5.md")
+        self.assertIn("revision 5", text.split("\n")[0])
+        self.assertEqual(sec(text, "Feedback to address"), "None.")
+
+    def test_plan_review_pass_one_has_no_re_review_line(self):
+        path, text = self.brief("plan-review", *self.FLAGS)
+        self.assertEqual(os.path.basename(path), "plan-review-p1.md")
+        what = sec(text, "What to do")
+        self.assertIn("This is pass 1.", what)
+        self.assertIn(os.path.join(self.d, "plan-review.md"), what)
+        self.assertNotIn("Re-review only what changed", text)
+        self.assertIn("role 'plan-reviewer' in_progress --note 'reviewing'", sec(text, "Checkpoint commands"))
+        self.assertIn("--- reused plan-reviewer: SendMessage unchanged instead ---\norch: next work \u2014 brief %s\n" % path,
+                      self.last_out)
+
+    def test_plan_review_pass_is_the_journaled_plan_reviews_plus_one(self):
+        self.cmd_ok("journal", "plan_review", "round:=1", "blockers:=1", "should:=0", "notes:=0", "verdict=findings")
+        path, text = self.brief("plan-review", *self.FLAGS)
+        self.assertEqual(os.path.basename(path), "plan-review-p2.md")
+        self.assertIn("This is pass 2.", sec(text, "What to do"))
+        self.assertIn("Re-review only what changed since the last pass; don't re-raise closed findings.", sec(text, "What to do"))
+
+    def test_a_program_roadmap_is_the_target_before_any_milestone_exists(self):
+        os.remove(os.path.join(self.d, "plan.md"))
+        wr(os.path.join(self.d, "roadmap.md"), "# Roadmap\n\n| M | goal |\n|---|---|\n| 1 | x |\n")
+        self.set_field(shape="roadmap", milestone="n/a")
+        path, text = self.brief("plan-review", *self.FLAGS)
+        self.assertEqual(os.path.basename(path), "plan-review-p1.md")
+        self.assertIn("- plan or roadmap: %s" % os.path.join(self.d, "roadmap.md"), text)
+        path, text = self.brief("revise", *self.FLAGS)
+        self.assertEqual(os.path.basename(path), "revise-r1.md")
+
+    def test_a_program_milestone_plan_is_the_target_when_it_exists(self):
+        wr(os.path.join(self.d, "roadmap.md"), "# Roadmap\n")
+        self.set_field(shape="roadmap", milestone="M2 — planning")
+        mdir = os.path.join(self.d, "m02-sessions")
+        wr(os.path.join(mdir, "plan.md"), self.fixture_plan("program_m02.md"))
+        path, text = self.brief("plan-review", *self.FLAGS)
+        self.assertEqual(os.path.basename(path), "plan-review-m02-p1.md")
+        self.assertIn("- plan or roadmap: %s" % os.path.join(mdir, "plan.md"), text)
+        self.assertIn("write findings to: %s" % os.path.join(mdir, "plan-review.md"), text)
+
+    def test_a_missing_plan_or_roadmap_is_refused(self):
+        os.remove(os.path.join(self.d, "plan.md"))
+        for kind in ("revise", "plan-review"):
+            self.assertIn("no plan or roadmap at", self.refused(1, kind))
+
+    def test_a_director_brief_prints_the_director_reuse_line(self):
+        path, _ = self.brief("director", "1", *self.FLAGS)
+        self.assertIn("--- reused director: SendMessage unchanged instead ---\norch: next work \u2014 brief %s\n" % path, self.last_out)
+
+    def test_a_positional_argument_is_refused(self):
+        for kind in ("revise", "plan-review"):
+            self.assertIn("takes no positional argument", self.refused(1, kind, "3"))
+
+
 class TestFixBrief(BriefBase):
     REVIEW = ("# Code review: add-login\n\n- round: 1\n- verdict: findings\n\n## Findings\n\n"
               "### F1 — hashing is unsalted\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/auth.py:12\n"
