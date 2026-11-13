@@ -102,6 +102,8 @@ run at `sonnet/xhigh` or above; with Haiku banned, the explorer, executor and gr
 implementer follows § Caps and pressure. A cap that leaves a role no tier at all is for the user (a parked
 question), not for a quiet substitute.
 
+The three cheap rows (Explorer, Executor, Graph) are enforced twice: the `orch hook tier` PreToolUse hook denies a spawn at any tier but `haiku/low` or `sonnet/low` (or under `CLAUDE_CODE_SUBAGENT_MODEL*` forcing), and each role refuses to work when its system prompt names a model other than Haiku or Sonnet. `ORCH_TIER_GUARD=0` in the env turns both off. A `fork` is not covered: it runs on the parent's model and neither check can tell it from any other fork.
+
 | Role | Default | Allowed, and when | Never | Basis |
 |---|---|---|---|---|
 | Planner | `opus/high` | `opus/medium` or `sonnet/high`: small, unambiguous task, nothing sensitive (fewer alternatives explored). `opus/max` or `fable/high`: escalated, for an architecturally ambiguous, cross-cutting or high-blast-radius task, or one the user called large, complex or risky; the orchestrator picks either per task and journals why (see § Planner bench). After a failure: a plan whose design failed moves to whichever of the two has not planned this work yet. `fable/max`: only after both an `opus/max` and a `fable/high` plan of this work failed on design | `fable/medium` and `fable/low` (open benchmark: `fable/medium` vs `opus/high`); `fable/max` as a first plan; `haiku/*` | [measured 2026-11-12, § Planner bench; judgment for the small-task rows] |
