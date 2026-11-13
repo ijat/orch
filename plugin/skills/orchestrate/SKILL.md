@@ -226,14 +226,14 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
 5. **Check-in on silence** (a CHECKIN exit, or a fallback tick): if the running role's last `log.md` line
    is older than the check-in interval — 30, 60, 120, 120 min (four) after each check-in on that
    spawn — read its last log lines, the tail of `notes.md`, and `git -C <worktree> log -3 --stat`.
-   The CHECKIN line decides progress (`progress=commits|files|none|unknown none_streak=<n>`, from files only):
-   `progress=commits` (the worktree HEAD moved) or `progress=files` (anything else the role produces changed:
-   uncommitted worktree edits, `notes.md`, `review.md`, `security-review.md`, `plan.md`, `roadmap.md`,
-   `plan-review.md`, `visual-*.md`, files under `sketches/`, `guides/`, `artifacts/`), or `none_streak` 1, is
-   progressing: log `check-in: ok`, back off. `none_streak` ≥ 2 (two check-ins in a row with nothing of that changed)
-   is looping; `progress=unknown` (no worktree or no baseline yet) → judge from the files you read,
-   as before. Looping: `SendMessage` it to checkpoint
-   in `notes.md` and return `blocked` with `need: stuck — …` (it reads it at its next tool call); if
+   The CHECKIN line decides progress (`progress=commits|log|files|none|unknown none_streak=<n>`):
+   `progress=commits` (the worktree HEAD moved), `progress=log` (the role wrote new `log.md` lines) or
+   `progress=files` (an output it writes in the task dir changed: `notes.md`, `review.md`, `security-review.md`,
+   `plan.md`, `roadmap.md`, `plan-review.md`, `visual-*.md`, files under `sketches/`, `guides/`, `artifacts/`), or
+   `none_streak` 1, is progressing: log `check-in: ok`, back off. Uncommitted worktree edits don't count.
+   `none_streak` ≥ 2 (two check-ins in a row with none of that) is looping;
+   `progress=unknown` (no worktree or no baseline yet) → judge from the files you read, as before.
+   Looping: `SendMessage` it to checkpoint in `notes.md` and return `blocked` with `need: stuck — …` (it reads it at its next tool call); if
    nothing lands within one tick, `TaskStop` it and checkpoint from its files yourself, then work the
    rung ladder with a sharper brief (a tier raise: `post-failure`, trigger `blocker`).
    Journal a `checkin` line either way. Check-ins read files, never the transcript.

@@ -430,8 +430,9 @@ class TestCheckin(Base):
 
 
 class TestCheckinProgress(Base):
-    """CHECKIN carries progress=commits|files|none|unknown and none_streak, from the worktree HEAD, its uncommitted
-    files and the output files roles write in the task dir (notes.md, review.md, plan files, ...)."""
+    """CHECKIN carries progress=commits|log|files|none|unknown and none_streak, from the worktree HEAD, the role's own
+    log.md lines and the output files roles write in the task dir (notes.md, review.md, plan files, ...). Uncommitted
+    worktree edits are not progress."""
 
     def setUp(self):
         Base.setUp(self)
@@ -470,15 +471,18 @@ class TestCheckinProgress(Base):
         return line
 
     def stamp(self):
+        return self.stamp_of('implementer')
+
+    def stamp_of(self, role):
         with open(os.path.join(self.state, 'checkin-%s.json' % KEY)) as fh:
-            return json.load(fh)['implementer']
+            return json.load(fh)[role]
 
     def test_the_first_check_in_records_the_baseline_and_says_unknown(self):
         line = self.checkin()
         self.assertIn('CHECKIN role=implementer silent_min=30 interval=30 progress=unknown none_streak=0 ', line)
         stamp = self.stamp()
         self.assertEqual(stamp['head'], self.git('rev-parse', 'HEAD').decode().strip())
-        self.assertEqual((len(stamp['sig']), stamp['none_streak']), (40, 0))
+        self.assertEqual((len(stamp['out']), stamp['log_n'], stamp['none_streak']), (40, 0, 0))
 
     def test_a_moved_head_is_commits_and_resets_the_streak(self):
         self.checkin()
@@ -513,13 +517,53 @@ class TestCheckinProgress(Base):
                 self.assertIn('progress=files none_streak=0 ', self.checkin())
                 self.assertIn('progress=none none_streak=1 ', self.checkin())
 
-    def test_uncommitted_edits_alone_are_files(self):
-        for name in ('new.txt', 'one'):                                   # untracked; tracked, edited in place
-            with self.subTest(name):
-                self.baseline()
-                self.write(name, 'wip\n', base=self.wt)
-                self.assertIn('progress=files none_streak=0 ', self.checkin())
-                self.assertIn('progress=none none_streak=1 ', self.checkin())
+    def test_uncommitted_edits_alone_are_none_and_reach_a_streak_of_two(self):
+        """The edit-test-fail loop: edits to a tracked file and untracked leftovers, no commit, log line or notes."""
+        self.spawn_with_head(self.git('rev-parse', 'HEAD').decode().strip())
+        self.write('one', 'wip\n', base=self.wt)
+        self.assertIn('progress=none none_streak=1 ', self.checkin())
+        self.write('one', 'wip again\n', base=self.wt)
+        self.write('new.txt', 'leftover\n', base=self.wt)
+        self.assertIn('progress=none none_streak=2 ', self.checkin())
+
+    def log(self, role='implementer', text='step 1: file group a'):
+        self.write('log.md', '- %s %s: %s\n' % (ts(self.clock.t), role, text))
+
+    def test_log_lines_between_check_ins_are_log(self):
+        self.checkin()
+        self.log()
+        self.assertIn('progress=log none_streak=0 ', self.checkin())
+        self.assertEqual(self.stamp()['log_n'], 1)
+        self.assertIn('progress=none none_streak=1 ', self.checkin())
+
+    def test_another_roles_log_lines_are_not_progress(self):
+        self.checkin()
+        self.log('orchestrator', 'gate pass')
+        self.log('code-reviewer')
+        self.assertIn('progress=none none_streak=1 ', self.checkin())
+
+    def test_a_reviewer_that_only_logs_file_groups_never_reaches_a_streak_of_two(self):
+        """F1: silent 30 min, then file groups logged, then silent 60 min; review.md is written once at the end."""
+        head = self.git('rev-parse', 'HEAD').decode().strip()
+        self.d = self.task(rows=(('orchestrator', 'in_progress'), ('code-reviewer', 'in_progress')),
+                           journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'code-reviewer', 'head': head}],
+                           log=['- %s code-reviewer: started review round 1' % ts(BASE)])
+        self.set_worktree(self.wt)
+        stamp = lambda: self.stamp_of('code-reviewer')
+        self.assertIn('CHECKIN role=code-reviewer ', self.checkin())
+        self.assertEqual(stamp()['none_streak'], 1)                     # only its start line so far
+        self.log('code-reviewer', 'reviewed file group 1')
+        self.log('code-reviewer', 'reviewed file group 2')
+        self.assertIn('progress=log none_streak=0 ', self.checkin())
+        self.assertIn('progress=none none_streak=1 ', self.checkin())   # silent since: streak 1, not 2
+
+    def test_the_first_check_in_counts_log_lines_after_the_start_line(self):
+        head = self.git('rev-parse', 'HEAD').decode().strip()
+        self.d = self.task(journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer', 'head': head}],
+                           log=['- %s implementer: started step 1' % ts(BASE),
+                                '- %s implementer: step 1: tests written' % ts(BASE + 300)])
+        self.set_worktree(self.wt)
+        self.assertIn('progress=log none_streak=0 ', self.checkin())
 
     def test_orchestrator_files_are_not_progress(self):
         self.baseline()
@@ -602,14 +646,19 @@ class TestCheckinProgress(Base):
         self.assertIn('progress=files none_streak=0 ', self.checkin())
 
     def test_a_stamp_with_a_head_but_no_signature_reads_as_unknown(self):
-        os.makedirs(self.state, exist_ok=True)
         head = self.git('rev-parse', 'HEAD').decode().strip()
-        with open(os.path.join(self.state, 'checkin-%s.json' % KEY), 'w') as fh:
-            json.dump({'implementer': {'spawn': '%s#0' % ts(BASE), 'n': 1, 'last': BASE + 1800, 'final': False,
-                                       'head': head, 'notes_size': 6, 'none_streak': 1}}, fh)
-        self.clock = Clock(BASE + 1800)
-        self.assertIn('progress=unknown none_streak=1 ', self.checkin())
-        self.assertIn('progress=none none_streak=2 ', self.checkin())
+        for older in ({'notes_size': 6}, {'sig': 'f' * 40}):          # step-3 stamp; a stamp with the worktree sig
+            with self.subTest(older):
+                os.makedirs(self.state, exist_ok=True)
+                rec = {'spawn': '%s#0' % ts(BASE), 'n': 1, 'last': BASE + 1800, 'final': False, 'head': head,
+                       'none_streak': 1}
+                rec.update(older)
+                with open(os.path.join(self.state, 'checkin-%s.json' % KEY), 'w') as fh:
+                    json.dump({'implementer': rec}, fh)
+                self.clock = Clock(BASE + 1800)
+                self.assertIn('progress=unknown none_streak=1 ', self.checkin())
+                self.assertIn('progress=none none_streak=2 ', self.checkin())
+                shutil.rmtree(self.state, True)
 
     def test_a_spawn_without_a_head_keeps_the_first_check_in_unknown(self):
         self.assertIn('progress=unknown none_streak=0 ', self.checkin())
