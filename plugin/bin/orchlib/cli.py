@@ -534,6 +534,9 @@ def main(argv=None):
     if argv[:2] == ["hook", "delegate"]:  # a PreToolUse hook: fail open, always 0, nothing else loaded
         from . import hook
         return hook.run()
+    if argv[:2] == ["hook", "tier"]:
+        from . import tierguard
+        return tierguard.run()
     try:
         parser = build_parser()
         ns, rest = parser.parse_known_args(argv)
