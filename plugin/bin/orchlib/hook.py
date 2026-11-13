@@ -473,9 +473,12 @@ def run(stdin=None, stdout=None):
 
 
 def cmd_hook(ns, extra):
+    if ns.which == "tier":
+        from . import tierguard
+        return tierguard.run()
     return run()
 
 
 def register(add):
-    sp = add("hook", cmd_hook, "PreToolUse hooks (hook delegate: send repo-wide searches to orch:explorer)")
-    sp.add_argument("which", choices=["delegate"])
+    sp = add("hook", cmd_hook, "PreToolUse hooks (hook delegate: send repo-wide searches to orch:explorer; hook tier: keep explorer, executor and graph on haiku/low)")
+    sp.add_argument("which", choices=["delegate", "tier"])
