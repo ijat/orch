@@ -102,7 +102,7 @@ run at `sonnet/xhigh` or above; with Haiku banned, the explorer, executor and gr
 implementer follows § Caps and pressure. A cap that leaves a role no tier at all is for the user (a parked
 question), not for a quiet substitute.
 
-The three cheap rows (Explorer, Executor, Graph) are enforced twice: the `orch hook tier` PreToolUse hook denies a spawn above `haiku/low` (or under `CLAUDE_CODE_SUBAGENT_MODEL*` forcing), and each role refuses to work when its system prompt names a model other than Haiku or Sonnet. `ORCH_TIER_GUARD=0` in the env turns both off. A `fork` is not covered: it runs on the parent's model and neither check can tell it from any other fork.
+The three cheap rows (Explorer, Executor, Graph) are enforced twice: the `orch hook tier` PreToolUse hook denies a spawn at any tier but `haiku/low` or `sonnet/low` (or under `CLAUDE_CODE_SUBAGENT_MODEL*` forcing), and each role refuses to work when its system prompt names a model other than Haiku or Sonnet. `ORCH_TIER_GUARD=0` in the env turns both off. A `fork` is not covered: it runs on the parent's model and neither check can tell it from any other fork.
 
 | Role | Default | Allowed, and when | Never | Basis |
 |---|---|---|---|---|
