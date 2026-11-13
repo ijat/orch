@@ -429,6 +429,124 @@ class TestCheckin(Base):
         self.assertEqual(self.run_wait(lambda: est(), task_dir=d, max_sec=4 * 3600)[0], 13)
 
 
+class TestCheckinProgress(Base):
+    """CHECKIN carries progress=commits|notes|none|unknown and none_streak, from the worktree HEAD and notes.md."""
+
+    def setUp(self):
+        Base.setUp(self)
+        self.wt = os.path.join(self.tmp, 'wt')
+        os.makedirs(self.wt)
+        self.git('init', '-q')
+        self.commit('one')
+        self.d = self.task(journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer'}])
+        self.set_worktree(self.wt)
+        self.notes('start\n')
+
+    def git(self, *args):
+        env = dict(os.environ, GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@t', GIT_COMMITTER_NAME='t', GIT_COMMITTER_EMAIL='t@t')
+        return subprocess.run(('git', '-c', 'core.hooksPath=/dev/null', '-C', self.wt) + args, env=env, check=True, stdout=subprocess.PIPE).stdout
+
+    def commit(self, name):
+        with open(os.path.join(self.wt, name), 'w') as fh:
+            fh.write(name)
+        self.git('add', name)
+        self.git('commit', '-q', '-m', name)
+
+    def set_worktree(self, value):
+        p = os.path.join(self.d, 'status.md')
+        with open(p) as fh:
+            text = fh.read()
+        with open(p, 'w') as fh:
+            fh.write(text.replace('- mode: standard', '- mode: standard\n- worktree: %s' % value))
+
+    def notes(self, text):
+        with open(os.path.join(self.d, 'notes.md'), 'a') as fh:
+            fh.write(text)
+
+    def checkin(self):
+        code, line = self.run_wait(lambda: est(), task_dir=self.d, interval=60, max_sec=6 * 3600)
+        self.assertEqual(code, 11, line)
+        return line
+
+    def stamp(self):
+        with open(os.path.join(self.state, 'checkin-%s.json' % KEY)) as fh:
+            return json.load(fh)['implementer']
+
+    def test_the_first_check_in_records_the_baseline_and_says_unknown(self):
+        line = self.checkin()
+        self.assertIn('CHECKIN role=implementer silent_min=30 interval=30 progress=unknown none_streak=0 ', line)
+        stamp = self.stamp()
+        self.assertEqual(stamp['head'], self.git('rev-parse', 'HEAD').decode().strip())
+        self.assertEqual((stamp['notes_size'], stamp['none_streak']), (len('start\n'), 0))
+
+    def test_a_moved_head_is_commits_and_resets_the_streak(self):
+        self.checkin()
+        self.checkin()                                       # none, streak 1
+        self.assertEqual(self.stamp()['none_streak'], 1)
+        self.commit('two')
+        self.assertIn('progress=commits none_streak=0 ', self.checkin())
+        self.assertEqual(self.stamp()['none_streak'], 0)
+
+    def test_only_notes_growing_is_notes(self):
+        self.checkin()
+        self.notes('a finding\n')
+        self.assertIn('progress=notes none_streak=0 ', self.checkin())
+
+    def test_neither_twice_is_none_with_a_growing_streak(self):
+        self.checkin()
+        self.assertIn('progress=none none_streak=1 ', self.checkin())
+        self.assertIn('progress=none none_streak=2 ', self.checkin())
+
+    def test_a_missing_or_removed_worktree_is_unknown(self):
+        for value in (os.path.join(self.tmp, 'gone'), 'removed after merge', 'none'):
+            shutil.rmtree(self.state, True)
+            self.set_worktree_line(value)
+            self.assertIn('progress=unknown none_streak=0 ', self.checkin(), value)
+
+    def set_worktree_line(self, value):
+        import re
+        p = os.path.join(self.d, 'status.md')
+        with open(p) as fh:
+            text = fh.read()
+        with open(p, 'w') as fh:
+            fh.write(re.sub(r'- worktree: .*', lambda m: '- worktree: %s' % value, text))
+
+    def test_a_sparse_suffix_on_the_worktree_value_is_ignored(self):
+        self.set_worktree_line('%s (sparse: plugin)' % self.wt)
+        self.checkin()
+        self.commit('two')
+        self.assertIn('progress=commits', self.checkin())
+
+    def test_a_stamp_from_an_older_orch_reads_without_error_and_says_unknown_once(self):
+        os.makedirs(self.state, exist_ok=True)
+        spawn_id = '%s#0' % ts(BASE)
+        with open(os.path.join(self.state, 'checkin-%s.json' % KEY), 'w') as fh:
+            json.dump({'implementer': {'spawn': spawn_id, 'n': 1, 'last': BASE + 1800, 'final': False}}, fh)
+        self.clock = Clock(BASE + 1800)
+        self.assertIn('progress=unknown none_streak=0 ', self.checkin())
+        self.assertIn('progress=none none_streak=1 ', self.checkin())
+
+    def test_a_new_spawn_resets_the_baseline_and_the_streak(self):
+        self.checkin()
+        self.checkin()
+        self.assertEqual(self.stamp()['none_streak'], 1)
+        t = self.clock.t
+        self.d = self.task(journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer'},
+                                    {'ts': ts(t), 'kind': 'return', 'role': 'implementer'},
+                                    {'ts': ts(t + 60), 'kind': 'spawn', 'role': 'implementer'}], row_ts=ts(t + 60))
+        self.set_worktree(self.wt)
+        self.assertIn('progress=unknown none_streak=0 ', self.checkin())
+
+    def test_a_final_line_carries_no_progress_field(self):
+        d = self.task(rows=(('orchestrator', 'in_progress'), ('implementer', 'done')),
+                      journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer'}])
+        code, line = self.run_wait(lambda: est(), task_dir=d, interval=30, max_sec=3600)
+        self.assertEqual(code, 11)
+        self.assertIn('final=done', line)
+        self.assertNotIn('progress=', line)
+        self.assertNotIn('none_streak', line)
+
+
 class TestRefresh(Base):
     def near(self, **kw):
         kw.setdefault('own_last', self.clock.t - 100)

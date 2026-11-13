@@ -1104,6 +1104,51 @@ def due_checkin(task_dir, now, stamps):
     return best[1:] if best else None
 
 
+def _wt_head(task_dir):
+    """HEAD sha of the task's worktree (status.md `worktree`), or None: no worktree, removed, or git unusable."""
+    try:
+        from . import status as st
+        wt = st.clean_value('worktree', st.Status.load(os.path.join(task_dir, 'status.md')).get('worktree')).value
+        if not os.path.isdir(wt):
+            return None
+        r = subprocess.run(['git', '-C', wt, 'rev-parse', 'HEAD'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           universal_newlines=True, timeout=10)
+        sha = r.stdout.strip()
+        return sha if r.returncode == 0 and sha else None
+    except Exception:
+        return None
+
+
+def _notes_size(task_dir):
+    try:
+        return os.stat(os.path.join(task_dir, 'notes.md')).st_size
+    except OSError:
+        return None
+
+
+def progress_since(task_dir, prev):
+    """-> (progress, fields): what a role did since its last check-in, from files only. `prev` is its stamp for this
+    spawn: `head`, `notes_size`, `none_streak` (any of them absent in a stamp an older orch wrote, or on the first
+    check-in, which only records the baseline: `unknown`). `fields` are the stamp keys to store."""
+    head, size = _wt_head(task_dir), _notes_size(task_dir)
+    streak = prev.get('none_streak') if isinstance(prev.get('none_streak'), int) else 0
+    if head is None:
+        return 'unknown', {k: prev[k] for k in ('head', 'notes_size') if k in prev}, streak
+    fields = {'head': head}
+    if size is not None:
+        fields['notes_size'] = size
+    elif 'notes_size' in prev:
+        fields['notes_size'] = prev['notes_size']
+    if not isinstance(prev.get('head'), str):
+        return 'unknown', fields, 0
+    if head != prev['head']:
+        return 'commits', fields, 0
+    old = prev.get('notes_size')
+    if size is not None and isinstance(old, int) and size > old:
+        return 'notes', fields, 0
+    return 'none', fields, streak + 1
+
+
 class Wait:
     """One `usage wait`. Every collaborator is injectable (tests drive it with a fake clock and estimates)."""
 
@@ -1179,10 +1224,18 @@ class Wait:
             return None
         role, silent, interval, spawn_id, n, final = c
         prev = stamps.get(role) if isinstance(stamps.get(role), dict) else {}
-        stamps[role] = {'spawn': spawn_id, 'n': n, 'last': now,
-                        'final': bool(final) or (prev.get('spawn') == spawn_id and bool(prev.get('final')))}
+        if prev.get('spawn') != spawn_id:
+            prev = {}
+        stamp = {'spawn': spawn_id, 'n': n, 'last': now, 'final': bool(final) or bool(prev.get('final'))}
+        progress = streak = None
+        if final:       # a final row reports the row, not progress: its baseline stays as it was
+            stamp.update((k, prev[k]) for k in ('head', 'notes_size', 'none_streak') if k in prev)
+        else:
+            progress, fields, streak = progress_since(self.task_dir, prev)
+            stamp.update(fields, none_streak=streak)
+        stamps[role] = stamp
         _write_atomic(path, json.dumps(stamps, sort_keys=True))
-        return role, silent, interval, final
+        return role, silent, interval, final, progress, streak
 
     def _refresh(self, e, now):
         if not self.refresh or not self.sid:
@@ -1286,7 +1339,7 @@ class Wait:
                 if self.task_dir:
                     c = self._checkin(now)
                     if c:
-                        extra = {'final': c[3]} if c[3] else {}
+                        extra = {'final': c[3]} if c[3] else {'progress': c[4], 'none_streak': c[5]}
                         return 11, self.line('CHECKIN', e, role=c[0], silent_min=c[1], interval=c[2], **extra)
                 if self._refresh(e, now):
                     return 12, self.line('REFRESH', e)
