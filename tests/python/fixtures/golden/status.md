@@ -27,7 +27,7 @@
 | planner | done | 2026-03-01T10:05Z | plan written | | plan.md ready |
 | implementer | done | 2026-03-01T11:00Z | step 2 | | 2 commits |
 | director | n/a | | | | <pending if the plan has visual steps> |
-| plan-reviewer | n/a | | | | <pending for roadmaps and plans at an escalated planner tier> |
+| plan-reviewer | n/a | | | | <pending for roadmaps, plans at fable/high and plans naming `undo:`> |
 | code-reviewer | done | 2026-03-01T11:30Z | round 1 | | 1 should-fix |
 | security-reviewer | not_offered | | | | <one-line reason, or pending / declined> |
 

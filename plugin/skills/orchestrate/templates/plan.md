@@ -1,7 +1,7 @@
 # Plan: <task-slug>
 
-- tier: <model>/<effort> (e.g. opus/high, opus/max, fable/high; fable/max only after both an opus/max and a fable/high plan failed)
-- tradeoff: <the orchestrator's one-line tier tradeoff, verbatim; for an escalated tier say why this one of opus/max / fable/high; after a failed plan say which one failed>
+- tier: <model>/<effort> (opus/high; fable/high when escalated — SKILL.md § Tier selection)
+- tradeoff: <the orchestrator's one-line tier tradeoff, verbatim; for an escalated tier say which trigger (user, roadmap, planner flag, design failure); after a failed plan say which tier failed>
 - repo: /abs/path
 - base branch: <branch>
 - planned at: <UTC>
@@ -18,6 +18,7 @@
      below. -->
 
 - shape: single — <why not a roadmap, one line>
+- undo: <artifact expensive to reverse: persisted format, schema/migration, public API, security/network boundary, live prod/infra, install path every session uses> | none
 - goal: <one sentence>
 - approach: <2–4 bullets>
 - steps: <one line each — `N. <title> — <what it achieves> (S|M|L)`>
