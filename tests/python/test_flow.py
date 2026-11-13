@@ -1128,11 +1128,30 @@ class TestReuse(FlowBase):
 
     def test_every_other_role_is_refused(self):
         from orchlib import flow
-        for role in ("planner", "plan-reviewer", "director", "implementer:part-a", "reviewer"):
+        for role in ("explorer", "executor", "graph", "implementer:part-a", "reviewer"):
             journal = [{"kind": "spawn", "role": role, "tier": "opus/high"},
                        {"kind": "return", "role": role, "outcome": "done", "ts": "2026-03-01T10:10Z"}]
-            self.assertIn("implementer, code-reviewer, security-reviewer",
+            self.assertIn("only the implementer, code-reviewer, security-reviewer, planner, plan-reviewer, director, init roles",
                           flow.reuse_refusal(journal, role, "opus/high", "2026-03-01T10:20Z", None))
+
+    def test_planner_and_plan_reviewer_are_reused_under_the_same_conditions(self):
+        for role, tier in (("planner", "opus/high"), ("plan-reviewer", "sonnet/high")):
+            self.setUp()
+            agent = "orch:" + role
+            self.ok("spawn", role, "--agent", agent, "--tier", tier, env=self.at("2026-03-01T10:00Z"))
+            self.ok("return", role, "--outcome", "done", env=self.at("2026-03-01T10:10Z"))
+            self.ok("spawn", role, "--agent", agent, "--tier", tier, "--reused", env=self.at("2026-03-01T11:05Z"))
+            spawn = [r for r in self.journal() if r["kind"] == "spawn"][-1]
+            self.assertEqual((spawn["role"], spawn["reused"]), (role, True))
+
+    def test_a_planner_at_another_tier_is_refused_and_writes_nothing(self):
+        self.ok("spawn", "planner", "--agent", "orch:planner", "--tier", "opus/high", env=self.at("2026-03-01T10:00Z"))
+        self.ok("return", "planner", "--outcome", "done", env=self.at("2026-03-01T10:10Z"))
+        before = self.snapshot()
+        err = self.refuse(1, "spawn", "planner", "--agent", "orch:planner", "--tier", "fable/high", "--reused",
+                          env=self.at("2026-03-01T10:20Z"))
+        self.assertIn("last planner ran at opus/high", err)
+        self.assertEqual(self.snapshot(), before)
 
     def test_another_milestone_is_refused(self):
         from orchlib import flow

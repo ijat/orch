@@ -208,7 +208,7 @@ def cmd_spawn(ns, extra):
 # -- reuse ---------------------------------------------------------------------------------------
 
 REUSE_IDLE_MIN = 55    # stay inside the 1 h prompt cache (documented for the implementer; the reviewers assume the same)
-REUSE_ROLES = ("implementer", "code-reviewer", "security-reviewer")
+REUSE_ROLES = ("implementer", "code-reviewer", "security-reviewer", "planner", "plan-reviewer", "director", "init")
 
 
 def minutes_between(a, b):
