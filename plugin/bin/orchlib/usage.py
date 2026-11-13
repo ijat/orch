@@ -1126,10 +1126,12 @@ def _notes_size(task_dir):
         return None
 
 
-def progress_since(task_dir, prev):
+def progress_since(task_dir, prev, spawn=None):
     """-> (progress, fields): what a role did since its last check-in, from files only. `prev` is its stamp for this
     spawn: `head`, `notes_size`, `none_streak` (any of them absent in a stamp an older orch wrote, or on the first
-    check-in, which only records the baseline: `unknown`). `fields` are the stamp keys to store."""
+    check-in, which only records the baseline: `unknown`). `spawn` = (head, epoch) from the spawn's journal line: the
+    first check-in's baseline, when the stamp has none (notes.md has no baseline then: `notes` if it was written since
+    the spawn). `fields` are the stamp keys to store."""
     head, size = _wt_head(task_dir), _notes_size(task_dir)
     streak = prev.get('none_streak') if isinstance(prev.get('none_streak'), int) else 0
     if head is None:
@@ -1139,9 +1141,19 @@ def progress_since(task_dir, prev):
         fields['notes_size'] = size
     elif 'notes_size' in prev:
         fields['notes_size'] = prev['notes_size']
-    if not isinstance(prev.get('head'), str):
-        return 'unknown', fields, 0
-    if head != prev['head']:
+    base = prev.get('head')
+    if not isinstance(base, str):
+        if not spawn:
+            return 'unknown', fields, 0
+        base = spawn[0]
+        if head == base:
+            try:
+                if os.stat(os.path.join(task_dir, 'notes.md')).st_mtime >= spawn[1]:
+                    return 'notes', fields, 0
+            except OSError:
+                pass
+            return 'none', fields, streak + 1
+    if head != base:
         return 'commits', fields, 0
     old = prev.get('notes_size')
     if size is not None and isinstance(old, int) and size > old:
@@ -1216,6 +1228,16 @@ class Wait:
         self.held = False
 
     # -- check-in / refresh stamps
+    def _spawn_head(self, spawn_id):
+        """(head, epoch) the spawn's journal line recorded (`orch spawn` adds head=<sha>), else None."""
+        from . import flow
+        try:
+            rec = flow.read_journal(self.task_dir)[int(spawn_id.rsplit('#', 1)[1])]
+            t = _min_ts(rec.get('ts'))
+            return (rec['head'], t) if isinstance(rec.get('head'), str) and rec['head'] and t is not None else None
+        except (IndexError, ValueError, KeyError, AttributeError):
+            return None
+
     def _checkin(self, now):
         path = os.path.join(self.state, 'checkin-%s.json' % self.key)
         stamps = _load_json(path)
@@ -1231,7 +1253,7 @@ class Wait:
         if final:       # a final row reports the row, not progress: its baseline stays as it was
             stamp.update((k, prev[k]) for k in ('head', 'notes_size', 'none_streak') if k in prev)
         else:
-            progress, fields, streak = progress_since(self.task_dir, prev)
+            progress, fields, streak = progress_since(self.task_dir, prev, self._spawn_head(spawn_id))
             stamp.update(fields, none_streak=streak)
         stamps[role] = stamp
         _write_atomic(path, json.dumps(stamps, sort_keys=True))

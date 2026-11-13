@@ -537,6 +537,32 @@ class TestCheckinProgress(Base):
         self.set_worktree(self.wt)
         self.assertIn('progress=unknown none_streak=0 ', self.checkin())
 
+    def spawn_with_head(self, head):
+        self.d = self.task(journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer', 'head': head}])
+        self.set_worktree(self.wt)
+
+    def test_the_first_check_in_uses_the_head_the_spawn_recorded(self):
+        head = self.git('rev-parse', 'HEAD').decode().strip()
+        self.spawn_with_head(head)
+        self.assertIn('progress=none none_streak=1 ', self.checkin())
+        self.assertEqual(self.stamp()['head'], head)
+        self.assertIn('progress=none none_streak=2 ', self.checkin())
+
+    def test_the_first_check_in_sees_a_commit_made_since_the_spawn(self):
+        head = self.git('rev-parse', 'HEAD').decode().strip()
+        self.spawn_with_head(head)
+        self.commit('two')
+        self.assertIn('progress=commits none_streak=0 ', self.checkin())
+
+    def test_the_first_check_in_sees_notes_written_since_the_spawn(self):
+        self.spawn_with_head(self.git('rev-parse', 'HEAD').decode().strip())
+        self.notes('x\n')
+        os.utime(os.path.join(self.d, 'notes.md'), (BASE + 600, BASE + 600))
+        self.assertIn('progress=notes none_streak=0 ', self.checkin())
+
+    def test_a_spawn_without_a_head_keeps_the_first_check_in_unknown(self):
+        self.assertIn('progress=unknown none_streak=0 ', self.checkin())
+
     def test_a_final_line_carries_no_progress_field(self):
         d = self.task(rows=(('orchestrator', 'in_progress'), ('implementer', 'done')),
                       journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer'}])
