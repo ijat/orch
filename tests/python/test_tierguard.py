@@ -19,9 +19,10 @@ from orchlib import tierguard  # noqa: E402
 
 
 def payload(sub="orch:explorer", tool="Agent", **tool_input):
+    tool_input.setdefault("prompt", "SECRET_PROMPT")   # where the real payload carries it
     if sub is not None:
         tool_input["subagent_type"] = sub
-    return {"tool_name": tool, "tool_input": tool_input, "session_id": "s1", "prompt": "SECRET_PROMPT"}
+    return {"tool_name": tool, "tool_input": tool_input, "session_id": "s1"}
 
 
 class Case(unittest.TestCase):
@@ -89,7 +90,10 @@ class Denied(Case):
             self.assertIn('model: "haiku", effort: "low"', r)
 
     def test_sonnet_needs_low(self):
-        self.denied(payload(model="sonnet"))
+        r = self.denied(payload(model="sonnet"))
+        self.assertIn('effort: "low"', r)
+        self.assertNotIn('Respawn with model: "haiku"', r)   # a Haiku-ban caller must not be steered to haiku
+        self.denied(payload(model="sonnet", effort="max"))
         self.denied(payload(model="sonnet", effort="high"))
         self.denied(payload(model="claude-sonnet-4-5", effort="medium"))
 

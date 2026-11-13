@@ -59,7 +59,7 @@ def _verdict(role, tool_input, env):
                 % (role, ask, FIX))
     if fam == "sonnet" and eff != "low":
         return ("sonnet-effort", "orch tier guard: %s may run on sonnet only at effort low; this call asked for %s. "
-                "Respawn with %s." % (role, ask, FIX))
+                "Respawn with effort: \"low\" (or %s)." % (role, ask, FIX))
     if eff is not None and eff != "low":
         return ("effort", "orch tier guard: %s runs at effort low; this call asked for %s. Respawn with %s."
                 % (role, ask, FIX))
