@@ -17,6 +17,8 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import warnings
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.path.join(os.path.dirname(os.path.dirname(HERE)), "plugin", "bin")
@@ -29,9 +31,20 @@ TOP = 'orch-index-%s-%s' % (VERSION, TARGET)
 ARCHIVE = TOP + '.tar.gz'
 GOOD_BIN = b'#!/bin/sh\necho "orch-index 0.2.0"\n'
 TARGETS = ('AARCH64_APPLE_DARWIN', 'X86_64_APPLE_DARWIN', 'X86_64_UNKNOWN_LINUX_MUSL',
-           'AARCH64_UNKNOWN_LINUX_MUSL')
+           'AARCH64_UNKNOWN_LINUX_MUSL', 'X86_64_PC_WINDOWS_MSVC')
+WIN = 'x86_64-pc-windows-msvc'          # Git for Windows bash; its release asset is a zip holding orch-index.exe
 PLATFORMS = {'aarch64-apple-darwin': ('Darwin', 'arm64'), 'x86_64-apple-darwin': ('Darwin', 'x86_64'),
-             'x86_64-unknown-linux-musl': ('Linux', 'x86_64'), 'aarch64-unknown-linux-musl': ('Linux', 'aarch64')}
+             'x86_64-unknown-linux-musl': ('Linux', 'x86_64'), 'aarch64-unknown-linux-musl': ('Linux', 'aarch64'),
+             WIN: ('MINGW64_NT-10.0-26100', 'x86_64')}
+VENDOR = os.path.join(BIN, 'vendor')
+
+
+def exe_name(target):
+    return 'orch-index.exe' if target == WIN else 'orch-index'
+
+
+def archive_ext(target):
+    return 'zip' if target == WIN else 'tar.gz'
 CURL_FLAGS = ('-q', '--proto', '--proto-redir', '--tlsv1.2', '--max-filesize', '67108864')
 
 
@@ -49,6 +62,15 @@ def make_tar(path, members):
             if kind in ('sym', 'link'):
                 ti.linkname = payload
             tf.addfile(ti)
+
+
+def make_zip(path, members):
+    """members: (name, payload) pairs, in order (a name may repeat)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')          # zipfile warns on a duplicate name, which a test wants
+        with zipfile.ZipFile(path, 'w') as zf:
+            for name, payload in members:
+                zf.writestr(name, payload)
 
 
 def pin_var(target):
@@ -115,13 +137,17 @@ class InstallerTest(unittest.TestCase):
             f.write(STUBS[name])
         os.chmod(p, 0o755)
 
-    def script(self, pin=None, pins=None, mutate=()):
+    def script(self, pin=None, pins=None, mutate=(), bundled=None):
         """A copy of the installer with every pin set to `pin` (or per target from `pins`, keyed by pin
-        variable suffix), and each (old, new) in `mutate` applied once."""
+        variable suffix), each BUNDLED pin set per target from `bundled` (when given), and each (old, new) in
+        `mutate` applied once."""
         with open(SCRIPT) as f:
             text = f.read()
         text = re.sub(r'^(readonly SHA256_([A-Z0-9_]+)=)\S+$',
                       lambda m: m.group(1) + (pins[m.group(2)] if pins else pin), text, flags=re.M)
+        if bundled is not None:
+            text = re.sub(r'^(readonly BUNDLED_SHA256_([A-Z0-9_]+)=)\S+$',
+                          lambda m: m.group(1) + bundled[m.group(2)], text, flags=re.M)
         for old, new in mutate:
             self.assertEqual(text.count(old), 1, 'mutation target not found once: %r' % old)
             text = text.replace(old, new)
@@ -153,11 +179,11 @@ class InstallerTest(unittest.TestCase):
         with open(self.curl_log) as f:
             return f.read()
 
-    def assert_clean(self, installed=False):
+    def assert_clean(self, installed=False, name='orch-index'):
         self.assertEqual(os.listdir(os.path.join(self.tmp, 'scratch')), [], 'temp dir left behind')
         if os.path.isdir(self.dest):
             left = sorted(os.listdir(self.dest))
-            self.assertEqual(left, ['orch-index'] if installed else [])
+            self.assertEqual(left, [name] if installed else [])
         else:
             self.assertFalse(installed)
 
@@ -214,10 +240,13 @@ class InstallerTest(unittest.TestCase):
         pins = {}
         for target in PLATFORMS:
             top = 'orch-index-%s-%s' % (VERSION, target)
-            path = os.path.join(self.tmp, 'release', VERSION, top + '.tar.gz')
-            make_tar(path, [(top, 'dir', None), (top + '/orch-index', 'file', GOOD_BIN)])
+            path = os.path.join(self.tmp, 'release', VERSION, top + '.' + archive_ext(target))
+            if target == WIN:
+                make_zip(path, [(top + '/orch-index.exe', GOOD_BIN)])
+            else:
+                make_tar(path, [(top, 'dir', None), (top + '/orch-index', 'file', GOOD_BIN)])
             pins[pin_var(target)] = sha256(path)
-        self.assertEqual(len(set(pins.values())), 4)
+        self.assertEqual(len(set(pins.values())), 5)
         return pins
 
     def installs_every_target(self, script):
@@ -225,7 +254,7 @@ class InstallerTest(unittest.TestCase):
         for target, (os_, arch) in PLATFORMS.items():
             dest = os.path.join(self.tmp, 'dest-' + target)
             r = self.run_it(script, '--dest', dest, FAKE_OS=os_, FAKE_ARCH=arch)
-            if (r.returncode, r.last) != (0, 'installed %s %s' % (os.path.join(dest, 'orch-index'), VERSION)):
+            if (r.returncode, r.last) != (0, 'installed %s %s' % (os.path.join(dest, exe_name(target)), VERSION)):
                 return False
         return True
 
@@ -415,7 +444,9 @@ class InstallerTest(unittest.TestCase):
     def test_print_target_no_network_no_writes(self):
         s = self.serve(self.good_members())
         cases = {('Darwin', 'arm64'): 'aarch64-apple-darwin', ('Darwin', 'x86_64'): 'x86_64-apple-darwin',
-                 ('Linux', 'x86_64'): 'x86_64-unknown-linux-musl', ('Linux', 'aarch64'): 'aarch64-unknown-linux-musl'}
+                 ('Linux', 'x86_64'): 'x86_64-unknown-linux-musl', ('Linux', 'aarch64'): 'aarch64-unknown-linux-musl',
+                 ('MINGW64_NT-10.0', 'x86_64'): WIN, ('MINGW64_NT-10.0-26100', 'x86_64'): WIN,
+                 ('MSYS_NT-10.0', 'x86_64'): WIN, ('CYGWIN_NT-10.0', 'x86_64'): WIN}
         for (os_, arch), want in cases.items():
             r = self.run_it(s, '--dest', self.dest, '--print-target', FAKE_CURL_BLOCK='1', FAKE_OS=os_, FAKE_ARCH=arch)
             self.assertEqual((r.returncode, r.stdout), (0, want + '\n'))
@@ -425,7 +456,7 @@ class InstallerTest(unittest.TestCase):
 
     def test_unsupported_platform_exits_3(self):
         s = self.serve(self.good_members())
-        for os_, arch in (('MINGW64_NT-10.0', 'x86_64'), ('Linux', 'riscv64'), ('FreeBSD', 'amd64')):
+        for os_, arch in (('MINGW64_NT-10.0', 'aarch64'), ('Linux', 'riscv64'), ('FreeBSD', 'amd64')):
             r = self.run_it(s, FAKE_CURL_BLOCK='1', FAKE_OS=os_, FAKE_ARCH=arch)
             self.assertEqual((r.returncode, r.last), (3, 'unsupported platform %s/%s' % (os_, arch)))
             self.assertIn('https://github.com/ijat/orch-index#install', r.stdout)
@@ -473,34 +504,210 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual((r.returncode, r.last), (1, 'failed: test base must be a file:/// URL'))
         self.assertEqual(self.curl_calls(), '')
 
+    # -- Windows (Git for Windows bash): a zip holding orch-index.exe, installed as orch-index.exe ------
+
+    WIN_TOP = 'orch-index-%s-%s' % (VERSION, WIN)
+    WIN_ARCHIVE = WIN_TOP + '.zip'
+
+    def serve_zip(self, members, mutate=()):
+        path = os.path.join(self.tmp, 'release', VERSION, self.WIN_ARCHIVE)
+        make_zip(path, members)
+        return self.script(sha256(path), mutate=mutate)
+
+    def win_members(self, binary=GOOD_BIN):
+        return [(self.WIN_TOP + '/LICENSE', b'MIT\n'), (self.WIN_TOP + '/orch-index.exe', binary),
+                (self.WIN_TOP + '/README.md', b'x\n')]
+
+    def run_win(self, script, *args, **env):
+        return self.run_it(script, *args, FAKE_OS='MINGW64_NT-10.0-26100', FAKE_ARCH='x86_64', **env)
+
+    NO_UNZIP = [('unzip_bin=$(command -v unzip || true)', 'unzip_bin=')]   # forces the python3 fallback
+
+    def check_windows_installs(self, mutate):
+        s = self.serve_zip(self.win_members(), mutate=mutate)
+        r = self.run_win(s)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(r.last, 'installed %s %s' % (os.path.join(self.dest, 'orch-index.exe'), VERSION))
+        for line in ('target ' + WIN, 'checksum ok', 'archive ok', 'version ok 0.2.0'):
+            self.assertIn(line, r.stdout)
+        self.assertIn(self.WIN_ARCHIVE, self.curl_calls())
+        with open(os.path.join(self.dest, 'orch-index.exe'), 'rb') as f:
+            self.assertEqual(f.read(), GOOD_BIN)
+        self.assert_clean(installed=True, name='orch-index.exe')
+
+    def test_windows_zip_installs_with_unzip(self):
+        if not shutil.which('unzip', path=SYS_PATH):
+            self.skipTest('unzip not found')
+        self.check_windows_installs(())
+
+    def test_windows_zip_installs_with_python_fallback(self):
+        self.check_windows_installs(self.NO_UNZIP)
+
+    def test_windows_zip_hostile_or_wrong_archives_refused(self):
+        top = self.WIN_TOP
+        cases = {
+            'no binary': [(top + '/LICENSE', b'MIT\n')],
+            'binary under another name': [(top + '/orch-index', GOOD_BIN)],
+            'binary under another dir': [('evil/orch-index.exe', GOOD_BIN)],
+            'duplicate binary': [(top + '/orch-index.exe', GOOD_BIN), (top + '/orch-index.exe', GOOD_BIN)],
+        }
+        for mutate in ((), self.NO_UNZIP):
+            for name, members in cases.items():
+                with self.subTest(case=name, python=bool(mutate)):
+                    s = self.serve_zip(members, mutate=mutate)
+                    r = self.run_win(s)
+                    self.assertEqual(r.returncode, 1, r.stdout)
+                    self.assertTrue(r.last.startswith('failed: binary missing from archive'), r.last)
+                    self.assert_clean()
+
+    def test_windows_zip_hash_mismatch_installs_nothing(self):
+        path = os.path.join(self.tmp, 'release', VERSION, self.WIN_ARCHIVE)
+        make_zip(path, self.win_members())
+        r = self.run_win(self.script('0' * 64))
+        self.assertEqual((r.returncode, r.last), (1, 'failed: checksum mismatch'))
+        self.assert_clean()
+
+    def test_windows_zip_wrong_version_binary_refused(self):
+        s = self.serve_zip(self.win_members(b'#!/bin/sh\necho "orch-index 9.9.9"\n'))
+        r = self.run_win(s)
+        self.assertEqual((r.returncode, r.last), (1, 'failed: binary reports a version other than 0.2.0'))
+        self.assert_clean()
+
+    def test_windows_zip_without_unzip_or_python_fails_with_manual_url(self):
+        s = self.serve_zip(self.win_members(), mutate=self.NO_UNZIP + [('py=$(command -v python3 || true)', 'py=')])
+        r = self.run_win(s, FAKE_CURL_BLOCK='1')
+        self.assertEqual(r.returncode, 1)
+        self.assertIn('neither unzip nor python3 found', r.last)
+        self.assertIn('https://github.com/ijat/orch-index#install', r.last)
+        self.assertEqual(self.curl_calls(), '')
+
+    def test_windows_dry_run_names_the_zip(self):
+        r = self.run_win(self.script('0' * 64), '--dest', self.dest, '--dry-run', FAKE_CURL_BLOCK='1')
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn('/%s/%s' % (VERSION, self.WIN_ARCHIVE), r.stdout)
+        self.assertEqual(r.last, 'dry-run: would install %s %s' % (os.path.join(self.dest, 'orch-index.exe'), VERSION))
+
+    def test_windows_already_installed_exe_untouched(self):
+        os.makedirs(self.dest)
+        final = os.path.join(self.dest, 'orch-index.exe')
+        with open(final, 'w') as f:
+            f.write('mine')
+        r = self.run_win(self.script('0' * 64), FAKE_CURL_BLOCK='1')
+        self.assertEqual((r.returncode, r.last), (0, 'already installed ' + final))
+        self.assertEqual(self.curl_calls(), '')
+
+    # -- bundled binaries (bin/vendor/orch-index-<target>[.exe]) beat the download ----------------------
+
+    def bundled_script(self, tamper=None):
+        """A copy of the installer with a vendor/ beside it: one fake binary per target, each BUNDLED pin set to
+        its own binary's hash (`tamper`: a target whose binary then differs from its pin)."""
+        script = self.script('0' * 64)
+        vendor = os.path.join(os.path.dirname(script), 'vendor')
+        os.makedirs(vendor, exist_ok=True)
+        pins = {}
+        for target in PLATFORMS:
+            data = b'#!/bin/sh\necho "orch-index 0.2.0"\n# %s\n' % target.encode()
+            path = os.path.join(vendor, 'orch-index-' + target + ('.exe' if target == WIN else ''))
+            with open(path, 'wb') as f:
+                f.write(data)
+            os.chmod(path, 0o755)
+            pins[pin_var(target)] = sha256(path)
+            if target == tamper:
+                with open(path, 'ab') as f:
+                    f.write(b'# tampered\n')
+        return self.script('0' * 64, bundled=pins)
+
+    def test_bundled_binary_installs_for_every_target_without_network(self):
+        s = self.bundled_script()
+        for target, (os_, arch) in PLATFORMS.items():
+            with self.subTest(target=target):
+                dest = os.path.join(self.tmp, 'dest-' + target)
+                r = self.run_it(s, '--dest', dest, FAKE_OS=os_, FAKE_ARCH=arch, FAKE_CURL_BLOCK='1')
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertEqual(r.last, 'installed %s %s' % (os.path.join(dest, exe_name(target)), VERSION))
+                self.assertTrue(any(l.startswith('bundled ') and l.endswith('(checksum ok)') for l in r.stdout.splitlines()))
+                with open(os.path.join(dest, exe_name(target)), 'rb') as f:
+                    self.assertIn(target.encode(), f.read())     # this target's own binary, not another's
+        self.assertEqual(self.curl_calls(), '')
+
+    def test_bundled_binary_with_wrong_hash_refused(self):
+        for target, (os_, arch) in PLATFORMS.items():
+            with self.subTest(target=target):
+                s = self.bundled_script(tamper=target)
+                dest = os.path.join(self.tmp, 'dest-' + target)
+                r = self.run_it(s, '--dest', dest, FAKE_OS=os_, FAKE_ARCH=arch, FAKE_CURL_BLOCK='1')
+                self.assertEqual((r.returncode, r.last), (1, 'failed: bundled binary checksum mismatch'))
+                self.assertEqual(os.listdir(dest) if os.path.isdir(dest) else [], [])
+                self.assertEqual(os.listdir(os.path.join(self.tmp, 'scratch')), [])
+
+    def test_mutant_wrong_bundled_pin_variable_is_caught(self):
+        s = self.bundled_script()
+        with open(s) as f:
+            text = f.read()
+        old = 'bundled_pin=$BUNDLED_SHA256_X86_64_PC_WINDOWS_MSVC'
+        self.assertEqual(text.count(old), 1)
+        with open(s, 'w') as f:
+            f.write(text.replace(old, 'bundled_pin=$BUNDLED_SHA256_X86_64_APPLE_DARWIN'))
+        r = self.run_it(s, '--dest', self.dest, FAKE_OS='MINGW64_NT-10.0', FAKE_ARCH='x86_64', FAKE_CURL_BLOCK='1')
+        self.assertEqual((r.returncode, r.last), (1, 'failed: bundled binary checksum mismatch'))
+
+    def test_a_symlinked_bundled_binary_is_not_used(self):
+        s = self.bundled_script()
+        cand = os.path.join(os.path.dirname(s), 'vendor', 'orch-index-' + TARGET)
+        real = cand + '.real'
+        os.rename(cand, real)
+        os.symlink(real, cand)
+        r = self.run_it(s, '--dest', self.dest, FAKE_CURL_BLOCK='1')
+        self.assertEqual((r.returncode, r.last), (1, 'failed: download failed'))   # fell through to the download
+
+    # -- the shipped bundle -------------------------------------------------------------------------
+
+    def test_shipped_vendor_binaries_match_their_bundled_pins(self):
+        with open(SCRIPT) as f:
+            text = f.read()
+        pins = dict(re.findall(r'(?m)^readonly BUNDLED_SHA256_([A-Z0-9_]+)=([0-9a-f]{64})$', text))
+        self.assertEqual(sorted(pins), sorted(TARGETS))
+        for target in PLATFORMS:
+            with self.subTest(target=target):
+                path = os.path.join(VENDOR, 'orch-index-' + target + ('.exe' if target == WIN else ''))
+                self.assertTrue(os.path.isfile(path) and not os.path.islink(path), path)
+                self.assertEqual(sha256(path), pins[pin_var(target)])
+                self.assertLess(os.path.getsize(path), 50 * 1000 * 1000, 'GitHub warns above 50 MB per file')
+                if target != WIN:
+                    self.assertTrue(os.access(path, os.X_OK), path)
+
     # -- the shipped script on the real release archives ----------------------------------------------
 
     @unittest.skipUnless(os.environ.get('ORCH_INSTALL_REAL_ARCHIVES_DIR'),
-                         'set ORCH_INSTALL_REAL_ARCHIVES_DIR to a dir holding the four real archives')
+                         'set ORCH_INSTALL_REAL_ARCHIVES_DIR to a dir holding the five real archives')
     def test_real_v020_archives(self):
         """The shipped script (real pins, no rewrite) on each real archive, via the file:/// test hook and a
         fake `uname` that selects the target. Every target must pass the pin, the archive whitelist and
         reach the --version check. Only a target this host can execute is also required to install;
         any other must install or fail exactly at `binary does not run` with nothing left behind."""
         src = os.path.realpath(os.environ['ORCH_INSTALL_REAL_ARCHIVES_DIR'])
+        # The shipped script, byte for byte, but beside no vendor/ so it downloads (the bundle is checked below).
+        script = os.path.join(self.tmp, 'bin', 'orch-install-code-index.sh')
+        shutil.copyfile(SCRIPT, script)
+        os.chmod(script, 0o755)
         host = (os.uname().sysname, os.uname().machine.replace('arm64', 'aarch64'))
         covered = {}
         for target, (os_name, arch) in PLATFORMS.items():
             with self.subTest(target=target):
-                name = 'orch-index-%s-%s.tar.gz' % (VERSION, target)
+                name = 'orch-index-%s-%s.%s' % (VERSION, target, archive_ext(target))
                 self.assertTrue(os.path.isfile(os.path.join(src, name)), name)
                 shutil.copyfile(os.path.join(src, name), os.path.join(self.tmp, 'release', VERSION, name))
                 dest = os.path.join(self.tmp, 'dest-' + target)
-                r = self.run_it(SCRIPT, '--dest', dest, FAKE_OS=os_name, FAKE_ARCH=arch)
+                r = self.run_it(script, '--dest', dest, FAKE_OS=os_name, FAKE_ARCH=arch)
                 lines = r.stdout.splitlines()
                 for step in ('target ' + target, 'checksum ok', 'archive ok'):
                     self.assertIn(step, lines, r.stdout)
                 self.assertEqual(os.listdir(os.path.join(self.tmp, 'scratch')), [], 'temp dir left behind')
                 runs_here = (os_name, arch.replace('arm64', 'aarch64')) == host
                 if r.returncode == 0:
-                    self.assertEqual(r.last, 'installed %s %s' % (os.path.join(dest, 'orch-index'), VERSION))
+                    self.assertEqual(r.last, 'installed %s %s' % (os.path.join(dest, exe_name(target)), VERSION))
                     self.assertIn('version ok 0.2.0', lines)
-                    self.assertEqual(os.listdir(dest), ['orch-index'])
+                    self.assertEqual(os.listdir(dest), [exe_name(target)])
                     covered[target] = 'installed, version ok (executed here)'
                 else:
                     self.assertFalse(runs_here, 'host-native target must install: %s' % r.stdout)
@@ -509,6 +716,102 @@ class InstallerTest(unittest.TestCase):
                     covered[target] = 'pin + archive whitelist ok; stopped at --version (cannot execute here)'
         for target, what in sorted(covered.items()):
             print('real archive %s: %s' % (target, what), file=sys.stderr)
+
+    @unittest.skipUnless(os.environ.get('ORCH_INSTALL_REAL_ARCHIVES_DIR'),
+                         'set ORCH_INSTALL_REAL_ARCHIVES_DIR to a dir holding the five real archives')
+    def test_vendor_binaries_are_the_release_binaries(self):
+        """Each bundled file is byte-identical to the binary inside the real v0.2.0 archive of its target."""
+        src = os.path.realpath(os.environ['ORCH_INSTALL_REAL_ARCHIVES_DIR'])
+        for target in PLATFORMS:
+            with self.subTest(target=target):
+                top = 'orch-index-%s-%s' % (VERSION, target)
+                path = os.path.join(src, top + '.' + archive_ext(target))
+                if target == WIN:
+                    with zipfile.ZipFile(path) as zf:
+                        want = zf.read(top + '/orch-index.exe')
+                else:
+                    with tarfile.open(path) as tf:
+                        want = tf.extractfile(top + '/orch-index').read()
+                with open(os.path.join(VENDOR, 'orch-index-' + target + ('.exe' if target == WIN else '')), 'rb') as f:
+                    self.assertEqual(f.read() == want, True)
+
+
+class LauncherTest(unittest.TestCase):
+    """bin/orch-index, the launcher: target mapping and lookup order, per platform (fake `uname` via a PATH stub)."""
+    LAUNCHER = os.path.join(BIN, 'orch-index')
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='orch-launcher-test-')
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        for d in ('bin/vendor', 'fakebin', 'data/bin', 'pathbin'):
+            os.makedirs(os.path.join(self.tmp, d))
+        shutil.copyfile(self.LAUNCHER, os.path.join(self.tmp, 'bin', 'orch-index'))
+        os.chmod(os.path.join(self.tmp, 'bin', 'orch-index'), 0o755)
+        with open(os.path.join(self.tmp, 'fakebin', 'uname'), 'w') as f:
+            f.write(STUBS['uname'])
+        os.chmod(os.path.join(self.tmp, 'fakebin', 'uname'), 0o755)
+
+    def fake(self, *parts):
+        path = os.path.join(self.tmp, *parts)
+        with open(path, 'w') as f:
+            f.write('#!/bin/sh\necho "%s $*"\n' % '/'.join(parts))
+        os.chmod(path, 0o755)
+
+    def run_it(self, os_, arch, *args, **env):
+        e = {'PATH': ':'.join([os.path.join(self.tmp, 'fakebin'), os.path.join(self.tmp, 'pathbin'), SYS_PATH]),
+             'HOME': os.path.join(self.tmp, 'home'), 'ORCH_DATA': os.path.join(self.tmp, 'data'),
+             'FAKE_OS': os_, 'FAKE_ARCH': arch}
+        e.update(env)
+        return subprocess.run([os.path.join(self.tmp, 'bin', 'orch-index')] + list(args), env=e,
+                              capture_output=True, text=True, timeout=30)
+
+    def test_each_platform_runs_its_own_bundled_binary(self):
+        for target, (os_, arch) in PLATFORMS.items():
+            self.fake('bin', 'vendor', 'orch-index-' + target + ('.exe' if target == WIN else ''))
+        for target, (os_, arch) in PLATFORMS.items():
+            with self.subTest(target=target):
+                r = self.run_it(os_, arch, 'stats')
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertEqual(r.stdout.strip(), 'bin/vendor/orch-index-%s%s stats' % (target, '.exe' if target == WIN else ''))
+
+    def test_windows_aliases(self):
+        self.fake('bin', 'vendor', 'orch-index-' + WIN + '.exe')
+        for os_ in ('MINGW64_NT-10.0-26100', 'MINGW32_NT-10.0', 'MSYS_NT-10.0', 'CYGWIN_NT-10.0'):
+            r = self.run_it(os_, 'x86_64')
+            self.assertEqual(r.returncode, 0, (os_, r.stderr))
+
+    def test_windows_never_picks_a_non_exe_name(self):
+        for where in (('bin', 'vendor', 'orch-index-' + WIN), ('data', 'bin', 'orch-index'), ('pathbin', 'orch-index')):
+            self.fake(*where)
+        r = self.run_it('MINGW64_NT-10.0', 'x86_64')
+        self.assertEqual((r.returncode, r.stdout), (127, ''))
+        self.assertIn('no binary for x86_64-pc-windows-msvc', r.stderr)
+
+    def test_windows_falls_back_to_data_dir_then_path_exe(self):
+        self.fake('pathbin', 'orch-index.exe')
+        r = self.run_it('MINGW64_NT-10.0', 'x86_64')
+        self.assertEqual(r.stdout.strip(), 'pathbin/orch-index.exe')
+        self.fake('data', 'bin', 'orch-index.exe')
+        r = self.run_it('MINGW64_NT-10.0', 'x86_64')
+        self.assertEqual(r.stdout.strip(), 'data/bin/orch-index.exe')
+
+    def test_unix_lookup_order_unchanged(self):
+        self.fake('pathbin', 'orch-index')
+        self.assertEqual(self.run_it('Linux', 'x86_64').stdout.strip(), 'pathbin/orch-index')
+        self.fake('data', 'bin', 'orch-index')
+        self.assertEqual(self.run_it('Linux', 'x86_64').stdout.strip(), 'data/bin/orch-index')
+        self.fake('bin', 'vendor', 'orch-index-x86_64-unknown-linux-musl')
+        self.assertEqual(self.run_it('Linux', 'x86_64').stdout.strip(), 'bin/vendor/orch-index-x86_64-unknown-linux-musl')
+        other = os.path.join(self.tmp, 'other')
+        self.fake('other')
+        self.assertEqual(self.run_it('Linux', 'x86_64', ORCH_INDEX_REAL=other).stdout.strip(), 'other')
+
+    def test_the_shipped_launcher_runs_the_bundled_binary_here(self):
+        if (os.uname().sysname, os.uname().machine) != ('Darwin', 'arm64'):
+            self.skipTest('this host cannot run the bundled arm64 binary')
+        r = subprocess.run([self.LAUNCHER, '--version'], capture_output=True, text=True, timeout=30,
+                           env={'PATH': SYS_PATH, 'HOME': os.path.join(self.tmp, 'home')})
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, 'orch-index 0.2.0'))
 
 
 class PinsTest(unittest.TestCase):
