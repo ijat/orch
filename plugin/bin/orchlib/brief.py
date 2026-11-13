@@ -1087,6 +1087,17 @@ def finding_blocks(path, wanted):
     return found, dict((w, list(parsed.notes.get(w, []))) for w in wanted)
 
 
+def class_repeat_lines(c, wanted):
+    """The `class repeat:` lines for the routed findings: a class that already had a finding in an earlier round of this
+    task (review.md and security-review.md, any state). A recommendation printed with the brief; nothing refuses."""
+    parsed = []
+    for fname, security in (("review.md", False), ("security-review.md", True)):
+        path = os.path.join(c.review_dir, fname)
+        if os.path.isfile(path):
+            parsed.append(fd.parse(path, security, lenient_heads=True))
+    return [fd.class_repeat_line(*r) for r in fd.class_repeats(parsed, wanted)]
+
+
 def cmd_brief_fix(ns, c):
     try:
         rnd = int(ns.arg)
@@ -1119,6 +1130,7 @@ def cmd_brief_fix(ns, c):
     for w in wanted:
         text_blocks.append(blocks[w] + ("\n\n" + "\n\n".join(notes[w]) if notes[w] else ""))
     findings_text = "\n\n".join(text_blocks)
+    repeats = class_repeat_lines(c, wanted)
     plan = c.plan
     steps = []
     repo = c.repo_path if c.repo_path != "unknown" else None
@@ -1139,6 +1151,8 @@ def cmd_brief_fix(ns, c):
         out.append(legacy_note(c))
     out.append(section("Where you work", where_text(c, role, ns.tier, ns.escalation, steps)))
     out.append(section("Checkpoint commands", checkpoint_text(c, role, "fix round %d" % rnd, "fix round %d" % rnd)))
+    if repeats:
+        out.append(section("Class repeat (a recommendation; TIERS.md § Fix rounds)", "\n".join(repeats)))
     out.append(section("Findings to fix (verbatim; record each resolution with %s finding resolve <id>)" % orch_head(c), findings_text))
     out.append(section("Steps whose files the findings cite", rel_fields(c, "\n\n".join(s.text() for s in steps)) if steps else
                        ("(legacy plan: read the Steps section of %s)" % c.plan_path if plan.legacy else "")))
@@ -1150,6 +1164,8 @@ def cmd_brief_fix(ns, c):
         os.makedirs(os.path.join(c.task_dir, "briefs"), exist_ok=True)
         path = unique_path(os.path.join(c.task_dir, "briefs"), "fix-r%d" % rnd)
         emit(path, text, c.plan_size, ns, "fix")
+    for line in repeats:
+        print(line)
     return 0
 
 

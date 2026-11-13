@@ -18,6 +18,7 @@
 - severity: blocker | should-fix | nit
 - origin: introduced | pre-existing — <blame evidence for pre-existing: commit or "on base">
 - file: /abs/path:LINE
+- class: <optional: one slug from your role file's list, or your own short slug; delete the line if none>
 - what: what is wrong, concretely.
 - why it matters: the consequence, not the principle.
 - suggested fix: the smallest change that resolves it.
