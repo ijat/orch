@@ -72,12 +72,12 @@ Weigh these for every non-default choice:
 - **Ability:** can this model do the task at all? Haiku is for lookups, running commands, and small
   implementation steps whose every contract item a command checks (measured 2026-10-21: equal to
   Sonnet there; in real repos it skips the items no test checks); not design. Sonnet handles most
-  implementation. Opus handles ambiguous design and hard debugging. Fable is the planner's escalated pick
+  implementation. Opus handles ambiguous design and hard debugging. Fable is the planner's one escalated tier
   (§ Tier table); for every other role it needs one of the four reasons in § Fable outside planning.
 - **Performance / urgency:** is the user waiting? Fable turns can run for minutes, and `max` effort
   is slower than `high`. If the user said it's urgent, prefer a faster tier and say what that risks.
   Fable counts as the faster tier only where the Opus tier it replaces is `opus/max` (planner bench: `fable/high`
-  ~10 min faster per plan); against `opus/medium` or `opus/high` it is slower and costlier, so urgency never raises
+  ~10 min faster per plan than `opus/max`, which a planner runs at only on the user's request); against `opus/medium` or `opus/high` it is slower and costlier, so urgency never raises
   to it from those.
 - **Cost:** check `orch usage` first. At `WARN` stay on or below the default tier
   unless a higher one is already earned. A Fable spawn needs no user notice or approval; its `tier_choice`
@@ -106,11 +106,11 @@ The three cheap rows (Explorer, Executor, Graph) are enforced twice: the `orch h
 
 | Role | Default | Allowed, and when | Never | Basis |
 |---|---|---|---|---|
-| Planner | `opus/high` | `opus/medium` or `sonnet/high`: small, unambiguous task, nothing sensitive (fewer alternatives explored). `opus/max` or `fable/high`: escalated, for an architecturally ambiguous, cross-cutting or high-blast-radius task, or one the user called large, complex or risky; the orchestrator picks either per task and journals why (see § Planner bench). After a failure: a plan whose design failed moves to whichever of the two has not planned this work yet. `fable/max`: only after both an `opus/max` and a `fable/high` plan of this work failed on design | `fable/medium` and `fable/low` (open benchmark: `fable/medium` vs `opus/high`); `fable/max` as a first plan; `haiku/*` | [measured 2026-11-12, § Planner bench; judgment for the small-task rows] |
+| Planner | `opus/high` | `fable/high`, only by SKILL.md § Tier selection: the user asks, a roadmap (`need: shape_roadmap` or a requested program), the planner's `need: escalate` flag (open forks and an expensive-to-undo artifact), or a plan whose design failed (`post-failure`). Never for size, "cross-cutting" or "complex". Revisions and milestone plans stay at `opus/high` | `opus/max`, `fable/max`, `opus/xhigh`, `opus/medium`, `sonnet/high`, `fable/medium`, `fable/low`, `haiku/*` unless the user asks for that tier (journal `override`); above `fable/high` nothing: a `fable/high` plan that fails on design parks a question for the user | [measured 2026-11-13, § Planner bench] |
 | Implementer | `sonnet/high` | § Implementer routing and § Escalation ladder: `haiku/medium` through its gate, `haiku/high` guided, Opus by signal or ladder rung. `fable/high` only by § Fable outside planning | the cells marked never or dominated in § Cells; `fable/medium`, `fable/low`, `fable/max` | [measured 2026-10-21, 2026-10-28; judgment for Fable] |
 | Code reviewer | `opus/high` | `opus/xhigh` for a large or sensitive diff. `fable/high` only by § Fable outside planning | `sonnet/*` and `haiku/*` as the reviewer; `fable/medium`, `fable/low`, `fable/max` | [judgment, observed] |
 | Security reviewer | `opus/high` | `opus/xhigh` for a large or sensitive diff. `fable/high` only by § Fable outside planning | `sonnet/*` and `haiku/*` (widest refusal sets, no fallback on Haiku; § The factors, Limitations); `fable/medium`, `fable/low`, `fable/max` | [judgment; model facts above] |
-| Plan reviewer | `sonnet/high` | `opus/medium` if any milestone is sensitive. Runs only on a roadmap or a plan written at an escalated planner tier. `fable/high` only by § Fable outside planning | `haiku/*`; `fable/medium`, `fable/low`, `fable/max` (it checks four questions, it does not re-plan) | [judgment] |
+| Plan reviewer | `sonnet/high` | `opus/medium` if any milestone is sensitive. Runs only on a roadmap, a plan written at `fable/high` (or at a user-requested tier above `opus/high`), or a plan whose Summary names an `undo:` artifact. `fable/high` only by § Fable outside planning | `haiku/*`; `fable/medium`, `fable/low`, `fable/max` (it checks four questions, it does not re-plan) | [judgment] |
 | Director | `opus/high` | `opus/max` after the user reverses an accepted verdict; `visual:` plan steps only. `fable/high` only by § Fable outside planning | `fable/medium`, `fable/low`, `fable/max` | [judgment] |
 | Explorer | `haiku/low` | the default only (read-only lookups and claim checks) | anything else, `fable/*` included | [judgment] |
 | Executor | `haiku/low` | the default only (it runs commands and returns a digest) | anything else, `fable/*` included | [judgment] |
@@ -119,34 +119,48 @@ The three cheap rows (Explorer, Executor, Graph) are enforced twice: the `orch h
 
 ### Planner bench
 
-2026-11-12 (notes of the `planner-tier-bench` task; the harness is `~/.claude/benchmarks/planner-tiers/`).
-Four past tasks, each planned at `opus/max` when it really ran, were replayed from their base commit with the
-request verbatim and the installed `orch:planner` at three tiers; blinded Opus judges scored each plan against an
-answer key built from what really happened (plan review, revisions, review blockers, retro).
+2026-11-13 joint blinded round (harness `~/.claude/benchmarks/planner-tiers/`,
+numbers in `runs/judge-2026-11-13/RESULTS.md`). Four past tasks, each planned at `opus/max` when it really ran,
+were replayed from their base commit with the request verbatim and the installed `orch:planner` at five tiers;
+blinded Opus judges scored each plan against an answer key built from what really happened (plan review,
+revisions, review blockers, retro), with dates and tiers redacted.
 
-| | `opus/max` | `fable/high` | `fable/medium` |
-|---|---|---|---|
-| A atomic repo switch | **7** | 6 | 5 |
-| B codec | 6 (chose a roadmap) | **8** | 7 |
-| C frame pacing | **7** | 5 | 6 |
-| D agent join | **7.5** | 7 | 5 |
-| mean score | **6.88** | 6.50 | 5.75 |
-| mean cost at list prices | $8.67 | $9.14 | $3.99 |
-| mean wall time | 36 min | 26 min | 14 min |
-| wrong turns | 3 | 3 | 8 |
+| | `opus/max` | `fable/high` | `opus/high` | `fable/medium` | `opus/medium` |
+|---|---|---|---|---|---|
+| A atomic repo switch | 6.5 | 5.5 | 5 | 4.5 | 4 |
+| B codec | 6 | 9 | 6 | 7 | 5 |
+| C frame pacing | 8 | 6 | 8 | 7 | 6 |
+| D agent join | 8 | 8 | 7 | 6 | 4 |
+| mean score | **7.12** | **7.12** | 6.50 | 6.12 | 4.75 |
+| mean cost at list prices | $8.67 | $9.14 | $2.58 | $3.99 | $1.95 |
+| mean wall time | 36 min | 26 min | 9 min | 14 min | 8 min |
+| wrong turns | 4 | 5 | 2 | 4 | 8 |
 
-- **What it shows:** `opus/max` and `fable/high` are close. `opus/max` won 3 of 4 and led the mean by 0.4;
-  `fable/high` cost the same and was ~10 min faster per plan, and won B (8 vs 6, where `opus/max` chose a
-  roadmap). So the orchestrator picks per task: `opus/max` when plan quality matters most, `fable/high` when the
-  user is waiting. `fable/medium` is cheapest and fastest but scored lowest
-  with 8 wrong turns, so it is not listed.
-- **Caveats:** 1 rep per cell; hindsight scoring against keys that lean on the design actually shipped (the
-  judges accepted sound alternatives); judge confidence medium-high on A and medium on C and D (B's top rank high, the rest medium); a score gap under
-  one point is not a ranking. A first, leaked blind pass ranked B, C and D the same way, scores within 1 point.
-- **Not tested:** `opus/high` (the default), `opus/medium`, `fable/max`, and any non-planner role. Vendor
-  claim, not ours: `fable/high` ≈ `opus/max` on FrontierCode 2.0 (45.3% vs 45.5%) at about half the cost per task
-  (claude.dev post, 2026-11-09). The next benchmark is `opus/high` on the same four tasks against the existing
-  `fable/medium` cells.
+- **What it shows:** `opus/high` scored 0.6 under `opus/max` and `fable/high` at about a third of the cost and
+  a quarter of the time, so it is the planner default. `opus/max` and `fable/high` tie; `opus/max` and `opus/high`
+  differ mostly on breadth items (A's optional items and publish atomicity, D's later milestones), and on A's
+  weight-3 deadlock item `opus/high` scored yes where `opus/max` scored partial. `opus/medium` is clearly worse (4.75,
+  8 wrong turns). `fable/medium` sits between.
+- **B, the shape finding:** `opus/max`, `opus/high` and `opus/medium` all chose a roadmap on B (6, 6, 5; the
+  `opus/high` and `opus/medium` cells ran with `BENCH_ROADMAP_OK=1`, which lets the planner write the roadmap at
+  its own tier). `fable/high` scored 9. That is why a chosen roadmap goes to `fable/high`, which may overrule the
+  shape and write a single plan.
+- **Scout replay (same day, `~/.claude/benchmarks/scout/`):** 21 historic first plans (the task's request and base
+  commit), labelled by what really happened: 5 anchor (the work did need an escalated planner), 6 over-escalated,
+  5 borderline, 5 held. A scout at `*/low` returned a planner tier from the request and the repo. Arms: E = the
+  new strict rubric plus read-only exploration, N = the new rubric without tools, O = the old SKILL.md rubric
+  plus exploration, M = open forks and an expensive-to-undo artifact only, M2 = M plus silent invariants.
+  Escalated overall (of 21): E-`fable/low` 3, E-`sonnet/low` 1, E-`opus/low` 1, N-`fable/low` 0, O-`fable/low` 18,
+  M-`sonnet/low` 1, M2-`sonnet/low` 1. Anchors escalated (of 5): 1, 0, 0, 0, 5, 1, 1 in the same order. The
+  orchestrator's real history under the old rule escalated 15 of 21 with the anchors 5 of 5. No arm separated the
+  anchors from the over-escalated cases: the old rule escalated 18 of 21, the new rule 0 to 3 of 21 while missing
+  most anchors, and exploration did no better than none. So the escalation decision is not made by the
+  orchestrator or a scout up front; the `opus/high` planner raises `need: escalate` from evidence it found.
+- **Caveats:** 1 rep per cell; keys built from the `opus/max` run's history; all four tasks were `opus/max`-worthy
+  when they ran, so the bench cannot show that `opus/high` suffices on easier work; a score gap under one point is
+  not a ranking.
+- **Not tested:** `fable/max`, `opus/xhigh`, `sonnet/high`, and any non-planner role. Vendor claim, not ours: `fable/high` ≈
+  `opus/max` on FrontierCode 2.0 (45.3% vs 45.5%) at about half the cost per task (claude.dev post, 2026-11-09).
 
 ### Fable outside planning
 
@@ -328,10 +342,10 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 | `opus/high` | rung 4 | diligence failure at `opus/medium`; `boundary` when the user declined a due security review; lite at the edge | before `opus/medium` has tried non-boundary work | [judgment, observed] |
 | `opus/xhigh` | unused on the ladder | a user request; a reviewer tier for a large diff | as an implementer rung: the ladder goes `opus/high → opus/max` | [judgment] |
 | `opus/max` | rung 5 | a failure at `opus/high`; the no-Fable cap's last pass | before `opus/high` has tried the work; as a first route | [judgment, 2026-11-06] |
-| `fable/low`, `fable/medium` | never (benchmark candidates) | — | — | [measured as planner, 2026-11-12] `fable/medium` scored lowest of three planner tiers (5.75 vs 6.88 and 6.50, 8 wrong turns vs 3); no measured gain over Opus for implementers [judgment] |
+| `fable/low`, `fable/medium` | never (benchmark candidates) | — | — | [measured as planner, 2026-11-13] `fable/medium` scored 6.12 against 7.12 for `opus/max` and `fable/high` and 6.50 for `opus/high`; no measured gain over Opus for implementers [judgment] |
 | `fable/high` | last rung | after a failed `opus/max` pass on this work; the other three reasons of § Fable outside planning; the user's request | straight from Haiku, Sonnet or a lower Opus rung without a listed reason; a planner flag; "complex", "important", "to be safe" | [current rule]; [measured] only for planners |
 | `fable/xhigh` | on the user's request | the user asks after `fable/high` failed and the plan holds | otherwise | [judgment] |
-| `fable/max` | never for implementers | — | — | [judgment] planner tier |
+| `fable/max` | never for implementers | — | — | [judgment]; as planner, user request only (§ Tier table) |
 
 ### Caps and pressure
 

@@ -121,9 +121,10 @@ def main():
                 fails.append(f"M{n}: depends on M{d}, which does not exist")
             elif d >= n:
                 fails.append(f"M{n}: depends on M{d}, which runs at or after it")
-        # W: tier/size mismatches
-        if r["size"] == "S" and re.search(r"opus/max|fable", r["tiers"]):
-            warns.append(f"M{n}: {r['tiers']} on an S milestone")
+        # W: tier/size mismatches; the first <model>/<effort> token is the milestone planner's tier (lite rows: one agent, its own tier)
+        pt = re.search(r"\b(?:haiku|sonnet|opus|fable)/(?:low|medium|high|xhigh|max)\b", r["tiers"])
+        if r["mode"] != "lite" and pt and pt.group(0) != "opus/high":
+            warns.append(f"M{n}: milestone planner tier {pt.group(0)}: milestone plans run at opus/high (SKILL.md § Tier selection)")
         if r["mode"] == "lite" and r["size"] != "S":
             warns.append(f"M{n}: lite on a size-{r['size']} milestone (lite rules: ≤ ~5 files, ≤ 3 steps)")
 

@@ -493,6 +493,28 @@ class TestPlanCheckCommand(core.Base):
         rc, out, _ = self.run_orch("plan-check", self.write("x/plan.md", fixture("standard.md")))
         self.assertNotIn("milestone", out)
 
+    def test_program_checker_warns_on_the_milestone_planner_tier(self):
+        checker = os.path.join(BIN, "orch-program-check.py")
+        head = ("# Roadmap\n\n## Milestones\n\n| M | goal | depends on | mode | tiers | sensitive | review | merge | you | size | confidence |\n"
+                "|---|---|---|---|---|---|---|---|---|---|---|\n")
+
+        def warns(mode, tiers):
+            row = f"| 1 | auth | - | {mode} | {tiers} | - | skip | yes | merge | M | high |\n"
+            path = self.write("tier/roadmap.md", head + row)
+            r = subprocess.run([sys.executable, checker, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               universal_newlines=True)
+            self.assertEqual(r.returncode, 0, r.stdout)
+            return [l for l in r.stdout.splitlines() if "milestone planner tier" in l]
+
+        for tiers in ("opus/max → sonnet/high", "fable/high → sonnet/high"):
+            w = warns("standard", tiers)
+            self.assertEqual(len(w), 1, (tiers, w))
+            self.assertIn("M1: milestone planner tier " + tiers.split(" ")[0], w[0])
+            self.assertIn("run at opus/high", w[0])
+        self.assertEqual(warns("standard", "opus/high → sonnet/high"), [])
+        self.assertEqual(warns("standard", "opus/high → opus/max"), [])
+        self.assertEqual(warns("lite", "lite opus/medium"), [])
+
     def test_main_restores_argv(self):
         saved = list(sys.argv)
         with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
