@@ -154,6 +154,8 @@ def cmd_spawn(ns, extra):
     repo, slug = task_names(task_dir)
     note = cli.one_line(ns.note) if ns.note else ""
     schema = jr.load_schema()
+    from . import usage
+    head = usage._wt_head(task_dir)      # the baseline of the first check-in's progress field; None when there is none
     with TaskLock(task_dir):
         status = status_or_none(task_dir)
         program, auto_ms = program_of(status)
@@ -190,7 +192,8 @@ def cmd_spawn(ns, extra):
                                          ("alternatives", ":=", json.dumps(alts))]))
         out.append(rec("spawn", [("role", "=", role), ("agent", "=", ns.agent), ("tier", "=", ns.tier),
                                  ("steps", ":=", json.dumps(steps)), ("usage_5h", ":=", json.dumps(u5)),
-                                 ("usage_7d", ":=", json.dumps(u7))] + ([("reused", ":=", "true")] if ns.reused else [])))
+                                 ("usage_7d", ":=", json.dumps(u7))] + ([("head", "=", head)] if head else [])
+                                 + ([("reused", ":=", "true")] if ns.reused else [])))
         text = "spawned %s (%s, %s)%s%s" % (role, ns.agent, ns.tier, " steps %s" % ",".join(str(s) for s in steps) if steps else "",
                                           ": " + note if note else "")
         log = cli.log_line(ts, "orchestrator", text)
@@ -208,7 +211,7 @@ def cmd_spawn(ns, extra):
 # -- reuse ---------------------------------------------------------------------------------------
 
 REUSE_IDLE_MIN = 55    # stay inside the 1 h prompt cache (documented for the implementer; the reviewers assume the same)
-REUSE_ROLES = ("implementer", "code-reviewer", "security-reviewer")
+REUSE_ROLES = ("implementer", "code-reviewer", "security-reviewer", "planner", "plan-reviewer", "director", "init")
 
 
 def minutes_between(a, b):

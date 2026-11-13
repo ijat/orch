@@ -1104,6 +1104,132 @@ def due_checkin(task_dir, now, stamps):
     return best[1:] if best else None
 
 
+def _wt_path(task_dir):
+    """The task's worktree directory (status.md `worktree`), or None: no worktree or removed."""
+    try:
+        from . import status as st
+        wt = st.clean_value('worktree', st.Status.load(os.path.join(task_dir, 'status.md')).get('worktree')).value
+        return wt if os.path.isdir(wt) else None
+    except Exception:
+        return None
+
+
+def _wt_head(task_dir):
+    """HEAD sha of the task's worktree (status.md `worktree`), or None: no worktree, removed, or git unusable."""
+    try:
+        wt = _wt_path(task_dir)
+        if wt is None:
+            return None
+        r = subprocess.run(['git', '-C', wt, 'rev-parse', 'HEAD'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           universal_newlines=True, timeout=10)
+        sha = r.stdout.strip()
+        return sha if r.returncode == 0 and sha else None
+    except Exception:
+        return None
+
+
+# What the roles write besides commits and log.md lines. Orchestrator-only files (journal.jsonl, status.md,
+# questions.md, briefs/, check-in stamps) are not in it: the orchestrator writing them says nothing about the role.
+# The worktree's uncommitted state is left out on purpose: an implementer editing and re-running a failing test
+# without committing or logging is the loop a check-in has to catch.
+ACTIVITY_FILES = ('notes.md', 'review.md', 'security-review.md', 'plan.md', 'roadmap.md', 'plan-review.md')
+ACTIVITY_GLOB = 'visual-*.md'
+ACTIVITY_DIRS = ('sketches', 'guides', 'artifacts')
+ACTIVITY_CAP = 2000         # most files stat-ed per walk (artifact trees)
+
+
+def _task_activity_paths(task_dir):
+    """Files a role's work shows in: the output files above and the output dirs, in the task dir and in each
+    program milestone dir (m<NN>-*), sorted."""
+    import glob
+    roots = [task_dir] + sorted(d for d in glob.glob(os.path.join(glob.escape(task_dir), 'm[0-9][0-9]-*'))
+                                if os.path.isdir(d))
+    out = []
+    for root in roots:
+        for name in ACTIVITY_FILES:
+            out.append(os.path.join(root, name))
+        out.extend(sorted(glob.glob(os.path.join(glob.escape(root), ACTIVITY_GLOB))))
+        for sub in ACTIVITY_DIRS:
+            for dp, dns, fns in os.walk(os.path.join(root, sub)):
+                dns.sort()
+                out.extend(os.path.join(dp, f) for f in sorted(fns))
+                if len(out) > ACTIVITY_CAP:
+                    break
+    return out[:ACTIVITY_CAP]
+
+
+def _activity(task_dir):
+    """-> (signature, newest): a digest of the task-dir output files above (path, size, mtime) and the latest mtime
+    among them."""
+    import hashlib
+    h = hashlib.sha1()
+    newest = 0.0
+    for path in _task_activity_paths(task_dir):
+        try:
+            st_ = os.stat(path)
+        except OSError:
+            continue
+        h.update(('\0%s\0%d\0%d' % (path, st_.st_size, st_.st_mtime_ns)).encode('utf-8', 'surrogateescape'))
+        newest = max(newest, st_.st_mtime)
+    return h.hexdigest(), newest
+
+
+def _role_log_times(task_dir, role):
+    """Epochs (end of minute) of `role`'s log.md lines, in file order; [] when unreadable."""
+    import re
+    global LOG_RE
+    LOG_RE = LOG_RE or re.compile(r'^- (\d{4}-\d\d-\d\dT\d\d:\d\dZ) ([^:\s]+):')
+    out = []
+    try:
+        with open(os.path.join(task_dir, 'log.md'), encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                m = LOG_RE.match(line)
+                if m and m.group(2) == role:
+                    t = _min_ts(m.group(1))
+                    if t is not None:
+                        out.append(t)
+    except OSError:
+        pass
+    return out
+
+
+def progress_since(task_dir, prev, spawn=None, role=None):
+    """-> (progress, fields, streak): what a role did since its last check-in. In order: `commits` (the worktree
+    HEAD moved), `log` (the role wrote new log.md lines: its `orch role --log` checkpoints), `files` (an output file
+    it writes in the task dir changed: notes.md, review and plan files, visual and sketch/guide/artifact files),
+    `none`, or `unknown` (no worktree, or no baseline yet). Uncommitted worktree edits are not progress.
+    `prev` is its stamp for this spawn: `head`, `out` (the output-file signature), `log_n` (the role's log.md line
+    count), `none_streak`; a stamp an older orch wrote lacks some of them and reads `unknown` once, as does the first
+    check-in, which only records the baseline. `spawn` = (head, epoch) from the spawn's journal line: the first
+    check-in's baseline when the stamp has none. Then `log` means more than one role line since the spawn (the first
+    is its start checkpoint) and `files` that an output file was written since the spawn. `fields` are the stamp
+    keys to store."""
+    head, wt = _wt_head(task_dir), _wt_path(task_dir)
+    streak = prev.get('none_streak') if isinstance(prev.get('none_streak'), int) else 0
+    if head is None or wt is None:
+        return 'unknown', {k: prev[k] for k in ('head', 'out', 'log_n') if k in prev}, streak
+    sig, newest = _activity(task_dir)
+    logs = _role_log_times(task_dir, role) if role else []
+    fields = {'head': head, 'out': sig, 'log_n': len(logs)}
+    base = prev.get('head')
+    if not isinstance(base, str):
+        if not spawn:
+            return 'unknown', fields, 0
+        if head != spawn[0]:
+            return 'commits', fields, 0
+        if sum(1 for t in logs if t >= spawn[1]) > 1:
+            return 'log', fields, 0
+        return ('files', fields, 0) if newest >= spawn[1] else ('none', fields, streak + 1)
+    if head != base:
+        return 'commits', fields, 0
+    old_out, old_n = prev.get('out'), prev.get('log_n')
+    if not isinstance(old_out, str) or not isinstance(old_n, int):
+        return 'unknown', fields, streak
+    if len(logs) > old_n:
+        return 'log', fields, 0
+    return ('files', fields, 0) if sig != old_out else ('none', fields, streak + 1)
+
+
 class Wait:
     """One `usage wait`. Every collaborator is injectable (tests drive it with a fake clock and estimates)."""
 
@@ -1171,6 +1297,16 @@ class Wait:
         self.held = False
 
     # -- check-in / refresh stamps
+    def _spawn_head(self, spawn_id):
+        """(head, epoch) the spawn's journal line recorded (`orch spawn` adds head=<sha>), else None."""
+        from . import flow
+        try:
+            rec = flow.read_journal(self.task_dir)[int(spawn_id.rsplit('#', 1)[1])]
+            t = _min_ts(rec.get('ts'))
+            return (rec['head'], t) if isinstance(rec.get('head'), str) and rec['head'] and t is not None else None
+        except (IndexError, ValueError, KeyError, AttributeError):
+            return None
+
     def _checkin(self, now):
         path = os.path.join(self.state, 'checkin-%s.json' % self.key)
         stamps = _load_json(path)
@@ -1179,10 +1315,18 @@ class Wait:
             return None
         role, silent, interval, spawn_id, n, final = c
         prev = stamps.get(role) if isinstance(stamps.get(role), dict) else {}
-        stamps[role] = {'spawn': spawn_id, 'n': n, 'last': now,
-                        'final': bool(final) or (prev.get('spawn') == spawn_id and bool(prev.get('final')))}
+        if prev.get('spawn') != spawn_id:
+            prev = {}
+        stamp = {'spawn': spawn_id, 'n': n, 'last': now, 'final': bool(final) or bool(prev.get('final'))}
+        progress = streak = None
+        if final:       # a final row reports the row, not progress: its baseline stays as it was
+            stamp.update((k, prev[k]) for k in ('head', 'out', 'log_n', 'none_streak') if k in prev)
+        else:
+            progress, fields, streak = progress_since(self.task_dir, prev, self._spawn_head(spawn_id), role)
+            stamp.update(fields, none_streak=streak)
+        stamps[role] = stamp
         _write_atomic(path, json.dumps(stamps, sort_keys=True))
-        return role, silent, interval, final
+        return role, silent, interval, final, progress, streak
 
     def _refresh(self, e, now):
         if not self.refresh or not self.sid:
@@ -1286,7 +1430,7 @@ class Wait:
                 if self.task_dir:
                     c = self._checkin(now)
                     if c:
-                        extra = {'final': c[3]} if c[3] else {}
+                        extra = {'final': c[3]} if c[3] else {'progress': c[4], 'none_streak': c[5]}
                         return 11, self.line('CHECKIN', e, role=c[0], silent_min=c[1], interval=c[2], **extra)
                 if self._refresh(e, now):
                     return 12, self.line('REFRESH', e)

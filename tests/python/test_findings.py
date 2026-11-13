@@ -410,6 +410,66 @@ class TestWriteReview(ReviewBase):
         self.assertIn("pass -t", err)
 
 
+class TestFindingClass(ReviewBase):
+    def test_class_is_parsed_lower_cased_and_stripped(self):
+        p = fd.parse_text(block("F1", extra="- class:  State-Reset \n") + "\n" + block("F2"))
+        self.assertEqual([(f.id, f.cls) for f in p.findings], [("F1", "state-reset"), ("F2", None)])
+
+    def test_a_non_slug_class_is_no_class_and_the_template_line_reads_as_none(self):
+        for raw in ("two words", "<optional: one slug>", "a/b", ""):
+            f = fd.parse_text(block("F1", extra="- class: %s\n" % raw)).get("F1")
+            self.assertIsNone(f.cls, raw)
+
+    def test_findings_without_a_class_list_exactly_as_before(self):
+        p = fd.parse_text(block("F1"))
+        self.assertEqual(fd.finding_line(p.get("F1")), "F1 | should-fix | introduced | src/a.py:1 | open | thing F1")
+
+    def test_the_class_is_appended_to_the_finding_line(self):
+        p = fd.parse_text(block("F1", extra="- class: validation\n"))
+        self.assertEqual(fd.finding_line(p.get("F1")), "F1 | should-fix | introduced | src/a.py:1 | open | thing F1 | class:validation")
+
+    def test_write_review_accepts_a_class_and_refuses_a_bad_one(self):
+        rc, out, err = self.write_review(block("F1", extra="- class: concurrency\n"))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(fd.parse_text(self.get()).get("F1").cls, "concurrency")
+        before = self.get()
+        rc, _, err = self.write_review(block("F2", extra="- class: not a slug\n"))
+        self.assertEqual(rc, 1)
+        self.assertIn("`- class:` must be one short slug", err)
+        self.assertEqual(self.get(), before)
+
+    def test_finding_add_class(self):
+        def add(*more):
+            return self.stdin("", "finding", "add", "--severity", "nit", "--origin", "introduced", "--file", "a.py:1",
+                              "--summary", "x", *(list(more) + ["-t", T]))
+        self.assertEqual(add("--class", " Test-Gap ")[1], "F1\n")
+        self.assertIn("- file: a.py:1\n- class: test-gap\n- resolution:", self.get())
+        rc, _, err = add("--class", "no good")
+        self.assertEqual(rc, 1)
+        self.assertIn("--class must be one short slug", err)
+        self.assertEqual(fd.parse_text(self.get()).findings[0].cls, "test-gap")
+        rc, out, _ = self.run_orch("findings", "-t", T)
+        self.assertEqual((rc, out.strip().endswith("| class:test-gap")), (0, True))
+
+    def test_repeats_across_rounds(self):
+        text = (block("F1", extra="- class: validation\n") + "\n" + block("F2", extra="- class: validation\n")
+                + "\n" + block("F3") + "\n## Round 2\n\n- F1: resolved\n\n" + block("F4", extra="- class: validation\n")
+                + "\n" + block("F5", extra="- class: config\n"))
+        p = fd.parse_text(text)
+        self.assertEqual(fd.finding_rounds(p), {"F1": 1, "F2": 1, "F3": 1, "F4": 2, "F5": 2})
+        self.assertEqual(fd.class_repeats([p], ["F4", "F5"]), [("validation", "F2", 1)])     # nearest earlier; config is new
+        self.assertEqual(fd.class_repeats([p], ["F1", "F2"]), [])                           # same round: no repeat
+        self.assertEqual(fd.class_repeats([p], ["F3"]), [])                                 # no class: no line
+        self.assertEqual(fd.class_repeats([p], ["F4", "F5", "F2"]), [("validation", "F2", 1)])
+        sec = fd.parse_text(block("S1", severity="high", origin="", extra="- class: config\n"), True)
+        self.assertEqual(fd.class_repeats([p, sec], ["F5"]), [("config", "S1", 1)])         # across both files
+
+    def test_a_check_section_belongs_to_its_round(self):
+        p = fd.parse_text(block("F1", extra="- class: x1\n") + "\n## Check of round 1\n\n- F1: fixed\n\n"
+                          + block("F2", extra="- class: x1\n"))
+        self.assertEqual(fd.finding_rounds(p), {"F1": 1, "F2": 1})
+
+
 class TestFindingAdd(ReviewBase):
     def add(self, *more, body=""):
         return self.stdin(body, "finding", "add", *(list(more) + ["-t", T]))

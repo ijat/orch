@@ -1128,11 +1128,30 @@ class TestReuse(FlowBase):
 
     def test_every_other_role_is_refused(self):
         from orchlib import flow
-        for role in ("planner", "plan-reviewer", "director", "implementer:part-a", "reviewer"):
+        for role in ("explorer", "executor", "graph", "implementer:part-a", "reviewer"):
             journal = [{"kind": "spawn", "role": role, "tier": "opus/high"},
                        {"kind": "return", "role": role, "outcome": "done", "ts": "2026-03-01T10:10Z"}]
-            self.assertIn("implementer, code-reviewer, security-reviewer",
+            self.assertIn("only the implementer, code-reviewer, security-reviewer, planner, plan-reviewer, director, init roles",
                           flow.reuse_refusal(journal, role, "opus/high", "2026-03-01T10:20Z", None))
+
+    def test_planner_and_plan_reviewer_are_reused_under_the_same_conditions(self):
+        for role, tier in (("planner", "opus/high"), ("plan-reviewer", "sonnet/high")):
+            self.setUp()
+            agent = "orch:" + role
+            self.ok("spawn", role, "--agent", agent, "--tier", tier, env=self.at("2026-03-01T10:00Z"))
+            self.ok("return", role, "--outcome", "done", env=self.at("2026-03-01T10:10Z"))
+            self.ok("spawn", role, "--agent", agent, "--tier", tier, "--reused", env=self.at("2026-03-01T11:05Z"))
+            spawn = [r for r in self.journal() if r["kind"] == "spawn"][-1]
+            self.assertEqual((spawn["role"], spawn["reused"]), (role, True))
+
+    def test_a_planner_at_another_tier_is_refused_and_writes_nothing(self):
+        self.ok("spawn", "planner", "--agent", "orch:planner", "--tier", "opus/high", env=self.at("2026-03-01T10:00Z"))
+        self.ok("return", "planner", "--outcome", "done", env=self.at("2026-03-01T10:10Z"))
+        before = self.snapshot()
+        err = self.refuse(1, "spawn", "planner", "--agent", "orch:planner", "--tier", "fable/high", "--reused",
+                          env=self.at("2026-03-01T10:20Z"))
+        self.assertIn("last planner ran at opus/high", err)
+        self.assertEqual(self.snapshot(), before)
 
     def test_another_milestone_is_refused(self):
         from orchlib import flow
@@ -1140,6 +1159,51 @@ class TestReuse(FlowBase):
                    {"kind": "return", "role": "implementer", "outcome": "done", "ts": "2026-03-01T10:10Z", "milestone": 1}]
         self.assertIn("another milestone", flow.reuse_refusal(journal, "implementer", "sonnet/high", "2026-03-01T10:20Z", 2))
         self.assertIsNone(flow.reuse_refusal(journal, "implementer", "sonnet/high", "2026-03-01T10:20Z", 1))
+
+
+class TestSpawnHead(FlowBase):
+    """`orch spawn` records head=<sha> on the spawn line when status.md `worktree` is a git worktree."""
+
+    def worktree(self):
+        wt = os.path.join(self.tmp, "wt")
+        os.makedirs(wt)
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        for args in (("init", "-q"), ("commit", "-q", "--allow-empty", "-m", "one")):
+            subprocess.run(("git", "-c", "core.hooksPath=/dev/null", "-C", wt) + args, env=env, check=True)
+        sha = subprocess.run(("git", "-C", wt, "rev-parse", "HEAD"), check=True, stdout=subprocess.PIPE).stdout.decode().strip()
+        return wt, sha
+
+    def spawn_line(self):
+        return [r for r in self.journal() if r["kind"] == "spawn"][-1]
+
+    def test_a_git_worktree_gives_its_head(self):
+        wt, sha = self.worktree()
+        self.ok("set", "worktree=%s (sparse: plugin)" % wt, "-t", T)
+        self.spawn("implementer", "--agent", "orch:implementer", "--tier", "sonnet/high")
+        self.assertEqual(self.spawn_line()["head"], sha)
+
+    def test_a_reused_spawn_records_it_too(self):
+        wt, sha = self.worktree()
+        self.ok("set", "worktree=%s" % wt, "-t", T)
+        env = dict(self.ok_usage, ORCH_NOW="2026-03-01T10:00Z")
+        self.ok("spawn", "implementer", "--agent", "orch:implementer", "--tier", "sonnet/high", env=env)
+        self.ok("return", "implementer", "--outcome", "done", env=dict(self.ok_usage, ORCH_NOW="2026-03-01T10:10Z"))
+        self.ok("spawn", "implementer", "--agent", "orch:implementer", "--tier", "sonnet/high", "--reused",
+                env=dict(self.ok_usage, ORCH_NOW="2026-03-01T10:20Z"))
+        self.assertEqual((self.spawn_line()["head"], self.spawn_line()["reused"]), (sha, True))
+
+    def test_no_worktree_means_no_field_and_the_spawn_still_works(self):
+        for value in ("removed after merge", "not yet created", "none (user: no worktree)", os.path.join(self.tmp, "gone")):
+            self.ok("set", "worktree=%s" % value, "-t", T)
+            self.spawn("implementer", "--agent", "orch:implementer", "--tier", "sonnet/high")
+            self.assertNotIn("head", self.spawn_line(), value)
+
+    def test_a_directory_that_is_not_a_git_worktree_gives_no_field(self):
+        plain = os.path.join(self.tmp, "plain")
+        os.makedirs(plain)
+        self.ok("set", "worktree=%s" % plain, "-t", T)
+        self.spawn("implementer", "--agent", "orch:implementer", "--tier", "sonnet/high")
+        self.assertNotIn("head", self.spawn_line())
 
 
 if __name__ == "__main__":

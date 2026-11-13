@@ -25,11 +25,12 @@ says so; each milestone adds its own dirs with `sparse-checkout add`.
    `plan_shape` and an `escalation`, `trigger: plan_shape`, with its `notes.md` as starting findings).
    `fable/high` may overrule the shape and write a single plan; then it is a single plan (SKILL.md step 4).
 2. **Checker.** Run `orch-program-check.py <roadmap.md>` yourself — don't trust the
-   planner's report of it. Any FAIL → back to the planner (a revision), then re-run. Journal
+   planner's report of it. Any FAIL → back to the planner (a revision: `orch brief revise`, the feedback in its `--extra` file), then re-run. Journal
    `checker`.
 3. **Plan reviewer.** Spawn `orch:plan-reviewer` (default `sonnet/high`; `opus/medium` if any
-   milestone is sensitive) with the roadmap path, repo path, and `plan-review.md` path. `blocker`
-   findings → one planner revision → re-run the checker and re-review only what changed; at most 3 passes in all
+   milestone is sensitive), its prompt from `orch brief plan-review` (pass 1; pass ≥ 2 resumes the same plan reviewer by
+   SKILL.md step 7). `blocker`
+   findings → one planner revision (`orch brief revise`) → re-run the checker and re-review only what changed; at most 3 passes in all
    (SKILL.md § Review loops), then the open blockers park as a question. Journal
    `plan_review`.
 4. **Security decision** (SKILL.md step 5 rule) for every milestone, once, at this gate: one line each,
@@ -90,7 +91,7 @@ After the first milestone's merge on a repo set up by the `orch:init` skill: if 
 At each review point, compare the remaining rows with what was built and learned (blockers,
 deviations, review findings, probe results). Nothing broken → journal `replan` with `changed: []`
 and continue. A premise or contract broke, a milestone grew past its size, or the user changed
-direction → send the roadmap planner (`fable/high` when a premise or contract broke; `opus/high` for row wording or a user-direction change that keeps the contracts) to rewrite the affected rows of the Milestones table in place,
+direction → send the roadmap planner (`fable/high` when a premise or contract broke; otherwise `opus/high`: a milestone grown past its size, row wording, a user-direction change that keeps the contracts) to rewrite the affected rows of the Milestones table in place,
 bump `revision:`, and append `## Revision N` with each changed row before and after (the checker reads
 only the Milestones table); re-run the checker; show the user the changed rows (before/after) and get approval.
 Journal `replan` with the changed rows and why.

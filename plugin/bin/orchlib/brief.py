@@ -51,16 +51,36 @@ def milestone_dir(task_dir, ms):
     return hits[0]
 
 
-def load_ctx(ns, infer=False):
+def target_plan(c, ns):
+    """(path, milestone or None) of the document a planner revises or a plan reviewer reviews: --plan; in a program the
+    current milestone's plan when it exists, else roadmap.md; in a single-plan task plan.md."""
+    if ns.plan:
+        return os.path.abspath(os.path.expanduser(ns.plan)), None
+    if c.program:
+        if c.ms is not None:
+            hits = [h for h in sorted(glob.glob(os.path.join(glob.escape(c.task_dir), "m%02d-*" % c.ms))) if os.path.isdir(h)]
+            if len(hits) == 1 and os.path.isfile(os.path.join(hits[0], "plan.md")):
+                return os.path.join(hits[0], "plan.md"), c.ms
+        return os.path.join(c.task_dir, "roadmap.md"), None
+    return os.path.join(c.task_dir, "plan.md"), None
+
+
+def load_ctx(ns, infer=False, target=False):
+    """The task, its status fields and its plan. `target`: the brief is for the planner or the plan reviewer, so the
+    document is the plan or the roadmap (target_plan) and a program needs no milestone yet."""
     c = Ctx()
     c.task_dir = cli.get_task(ns, infer=infer)
     c.repo_name, c.slug = task_names(c.task_dir)
     c.status = cli.load_status(c.task_dir)
     c.program, c.ms = cli.program_info(c.status)
-    if c.program and c.ms is None:
+    c.target_ms = None
+    if c.program and c.ms is None and not target:
         raise OrchError("program task with no resolvable milestone in status.md (milestone: %s)" % c.status.get("milestone"), 1)
     c.review_dir = c.task_dir
-    if ns.plan:
+    if target:
+        c.plan_path, c.target_ms = target_plan(c, ns)
+        c.review_dir = os.path.dirname(c.plan_path)
+    elif ns.plan:
         c.plan_path = os.path.abspath(os.path.expanduser(ns.plan))
         if c.program:
             c.review_dir = os.path.dirname(c.plan_path)
@@ -70,7 +90,7 @@ def load_ctx(ns, infer=False):
     else:
         c.plan_path = os.path.join(c.task_dir, "plan.md")
     if not os.path.isfile(c.plan_path):
-        raise OrchError("no plan at %s" % c.plan_path, 1)
+        raise OrchError("no %s at %s" % ("plan or roadmap" if target else "plan", c.plan_path), 1)
     c.plan = pl.parse_file(c.plan_path)
     c.plan_size = os.path.getsize(c.plan_path)
     cv = st.clean_value
@@ -566,7 +586,8 @@ def unique_path(directory, stem):
         n += 1
 
 
-REUSE_ROLES = {"implement": "implementer", "fix": "implementer"}     # brief kinds whose prompt prints a SendMessage line
+REUSE_ROLES = {"implement": "implementer", "fix": "implementer", "director": "director", "revise": "planner",
+               "plan-review": "plan-reviewer"}     # brief kinds whose prompt prints a SendMessage line
 
 
 def spawn_prompt(path, ns, kind, reuse=None):
@@ -1066,6 +1087,17 @@ def finding_blocks(path, wanted):
     return found, dict((w, list(parsed.notes.get(w, []))) for w in wanted)
 
 
+def class_repeat_lines(c, wanted):
+    """The `class repeat:` lines for the routed findings: a class that already had a finding in an earlier round of this
+    task (review.md and security-review.md, any state). A recommendation printed with the brief; nothing refuses."""
+    parsed = []
+    for fname, security in (("review.md", False), ("security-review.md", True)):
+        path = os.path.join(c.review_dir, fname)
+        if os.path.isfile(path):
+            parsed.append(fd.parse(path, security, lenient_heads=True))
+    return [fd.class_repeat_line(*r) for r in fd.class_repeats(parsed, wanted)]
+
+
 def cmd_brief_fix(ns, c):
     try:
         rnd = int(ns.arg)
@@ -1098,6 +1130,7 @@ def cmd_brief_fix(ns, c):
     for w in wanted:
         text_blocks.append(blocks[w] + ("\n\n" + "\n\n".join(notes[w]) if notes[w] else ""))
     findings_text = "\n\n".join(text_blocks)
+    repeats = class_repeat_lines(c, wanted)
     plan = c.plan
     steps = []
     repo = c.repo_path if c.repo_path != "unknown" else None
@@ -1118,6 +1151,8 @@ def cmd_brief_fix(ns, c):
         out.append(legacy_note(c))
     out.append(section("Where you work", where_text(c, role, ns.tier, ns.escalation, steps)))
     out.append(section("Checkpoint commands", checkpoint_text(c, role, "fix round %d" % rnd, "fix round %d" % rnd)))
+    if repeats:
+        out.append(section("Class repeat (a recommendation; TIERS.md § Fix rounds)", "\n".join(repeats)))
     out.append(section("Findings to fix (verbatim; record each resolution with %s finding resolve <id>)" % orch_head(c), findings_text))
     out.append(section("Steps whose files the findings cite", rel_fields(c, "\n\n".join(s.text() for s in steps)) if steps else
                        ("(legacy plan: read the Steps section of %s)" % c.plan_path if plan.legacy else "")))
@@ -1129,12 +1164,90 @@ def cmd_brief_fix(ns, c):
         os.makedirs(os.path.join(c.task_dir, "briefs"), exist_ok=True)
         path = unique_path(os.path.join(c.task_dir, "briefs"), "fix-r%d" % rnd)
         emit(path, text, c.plan_size, ns, "fix")
+    for line in repeats:
+        print(line)
+    return 0
+
+
+# -- revise / plan-review -------------------------------------------------------------------------
+
+def target_where(c, role, tier, escalation):
+    out = ["- repo: %s" % c.repo_path,
+           "- plan or roadmap: %s" % c.plan_path,
+           "- task dir (status.md, log.md): %s" % c.task_dir,
+           "- notes: %s (read earlier entries here; append with %s append notes --as %s)"
+           % (os.path.join(c.task_dir, "notes.md"), orch_head(c), role),
+           "- role row: %s" % role,
+           "- tier: %s" % (tier or "not stated here (the spawn message names it)"),
+           "- escalation: %s" % (escalation or "none")]
+    if c.wt:
+        out.insert(1, "- worktree (read only): %s" % c.wt)
+    if c.target_ms is not None:
+        out.insert(3, "- milestone: %d" % c.target_ms)
+    return "\n".join(out)
+
+
+def stem_for(c, base, letter, n):
+    return "%s-m%02d-%s%d" % (base, c.target_ms, letter, n) if c.target_ms is not None else "%s-%s%d" % (base, letter, n)
+
+
+def plan_review_pass(c):
+    """1 + the plan_review lines already journaled for this document (the roadmap: those without a milestone)."""
+    return 1 + sum(1 for r in flow.read_journal(c.task_dir)
+                   if flow.kind_of(r) == "plan_review" and r.get("milestone") == c.target_ms)
+
+
+def cmd_brief_revise(ns, c):
+    if ns.arg:
+        raise OrchError("brief revise takes no positional argument (the feedback goes in --extra FILE)", 1)
+    n = len(c.plan.revisions()) + 1
+    role = "planner"
+    out = ["# Brief: revise %s, revision %d — %s/%s" % (os.path.basename(c.plan_path), n, c.repo_name, c.slug),
+           section("Where you work", target_where(c, role, ns.tier, ns.escalation)),
+           section("Checkpoint commands", checkpoint_text(c, role, "revision %d" % n, "revision %d" % n)),
+           section("What to do",
+                   "Append a `## Revision %d` section to %s. Never rewrite approved sections; a step the revision "
+                   "restates is restated whole inside it. Run %s plan-check on the file and fix every FAIL before "
+                   "you return." % (n, c.plan_path, orch_head(c))),
+           section("Feedback to address", read_extra(ns.extra)),
+           section("Lessons", lessons_text(c, role, pl.Keys([], [], c.roots))),
+           section("If this brief is not enough", fallback_text(c))]
+    text = "\n\n".join(out)
+    with TaskLock(c.task_dir):
+        os.makedirs(os.path.join(c.task_dir, "briefs"), exist_ok=True)
+        path = unique_path(os.path.join(c.task_dir, "briefs"), stem_for(c, "revise", "r", n))
+        emit(path, text, c.plan_size, ns, "revise")
+    return 0
+
+
+def cmd_brief_plan_review(ns, c):
+    if ns.arg:
+        raise OrchError("brief plan-review takes no positional argument", 1)
+    n = plan_review_pass(c)
+    role = "plan-reviewer"
+    review_path = os.path.join(c.review_dir, "plan-review.md")
+    what = ["Review %s and write your findings to %s (the format is in your role file). This is pass %d." % (c.plan_path, review_path, n)]
+    if n >= 2:
+        what.append("Re-review only what changed since the last pass; don't re-raise closed findings. Append "
+                    "`## Round %d` to %s and re-check the open findings." % (n, review_path))
+    out = ["# Brief: plan review, pass %d — %s/%s" % (n, c.repo_name, c.slug),
+           section("Where you work", target_where(c, role, ns.tier, ns.escalation) + "\n- write findings to: %s" % review_path),
+           section("Checkpoint commands", review_checkpoint_text(c, role)),
+           section("What to do", "\n\n".join(what)),
+           section("From the orchestrator", read_extra(ns.extra)),
+           section("Lessons", lessons_text(c, role, pl.Keys([], [], c.roots))),
+           section("If this brief is not enough", fallback_text(c))]
+    text = "\n\n".join(out)
+    with TaskLock(c.task_dir):
+        os.makedirs(os.path.join(c.task_dir, "briefs"), exist_ok=True)
+        path = unique_path(os.path.join(c.task_dir, "briefs"), stem_for(c, "plan-review", "p", n))
+        emit(path, text, c.plan_size, ns, "plan-review")
     return 0
 
 
 # -- command ------------------------------------------------------------------------------------
 
-KINDS = ("implement", "director", "review", "security", "fix")
+KINDS = ("implement", "director", "review", "security", "fix", "revise", "plan-review")
 
 
 def cmd_brief(ns, extra):
@@ -1147,7 +1260,11 @@ def cmd_brief(ns, extra):
         raise OrchError("--escalation must be none, proactive or post-failure", 1)
     if ns.check and ns.kind != "review":
         raise OrchError("--check belongs to `orch brief review` (the fix-batch check of the code review)", 1)
-    c = load_ctx(ns)
+    c = load_ctx(ns, target=ns.kind in ("revise", "plan-review"))
+    if ns.kind == "revise":
+        return cmd_brief_revise(ns, c)
+    if ns.kind == "plan-review":
+        return cmd_brief_plan_review(ns, c)
     if ns.kind in ("implement", "director"):
         return cmd_brief_work(ns, c, ns.kind)
     if ns.kind == "fix":
@@ -1158,7 +1275,7 @@ def cmd_brief(ns, extra):
 
 
 def register(add):
-    sp = add("brief", cmd_brief, "write TASK/briefs/<kind>-….md: one role's context (implement|director|review|security|fix)")
+    sp = add("brief", cmd_brief, "write TASK/briefs/<kind>-….md: one role's context (implement|director|review|security|fix|revise|plan-review)")
     sp.add_argument("kind")
     sp.add_argument("arg", nargs="?", default=None, metavar="STEPS|STEP|ROUND")
     sp.add_argument("--findings", default=None)
