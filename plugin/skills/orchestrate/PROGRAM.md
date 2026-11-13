@@ -20,11 +20,10 @@ says so; each milestone adds its own dirs with `sparse-checkout add`.
 
 ## 1. Roadmap → gate
 
-1. **Tier follows shape.** A planner below an escalated planner tier (`opus/max`, `fable/high`, `fable/max`)
-   returning `need: shape_roadmap`: journal
-   `plan_shape` and an `escalation` (`trigger: plan_shape`), re-spawn at `opus/max` or `fable/high` (your pick, journaled with why) with its
-   `notes.md` as starting findings. Under a user cap that forbids it, send the same planner back to
-   write the roadmap at its tier, and say at the gate what the cap costs.
+1. **Tier follows shape.** A roadmap is planned at `fable/high` (SKILL.md § Tier selection): directly when the user
+   asked for a program, or by re-spawn when an `opus/high` planner returns `need: shape_roadmap` (journal
+   `plan_shape` and an `escalation`, `trigger: plan_shape`, with its `notes.md` as starting findings).
+   `fable/high` may overrule the shape and write a single plan; then it is a single plan (SKILL.md step 4).
 2. **Checker.** Run `orch-program-check.py <roadmap.md>` yourself — don't trust the
    planner's report of it. Any FAIL → back to the planner (a revision), then re-run. Journal
    `checker`.
@@ -52,7 +51,7 @@ security-reviewer row from that milestone's `auto_security` line — `pending`, 
 reason — every time (`orch merge` reads the row, so last milestone's value must not carry over).
 
 1. **Detail plan**, written now against what's actually built (first the pre-plan `orch:graph` call, SKILL.md Index rebuild pause, so the index is current for this milestone):
-   - `standard`: an `orch:planner` at the row's planner tier, briefed `shape: single (milestone)`,
+   - `standard`: an `orch:planner` at `opus/high` (it may return `need: escalate` like any planner), briefed `shape: single (milestone)`,
      writes `m<NN>-<slug>/plan.md` from the plan template, scoped to the milestone, citing the roadmap's contracts. A milestone too small
      to deserve its own planner should have been `lite` — that's a roadmap revision, not a shortcut.
    - `lite`: the lite agent's phase 1 (SKILL.md "Lite mode"), scoped to the milestone.
@@ -91,7 +90,7 @@ After the first milestone's merge on a repo set up by the `orch:init` skill: if 
 At each review point, compare the remaining rows with what was built and learned (blockers,
 deviations, review findings, probe results). Nothing broken → journal `replan` with `changed: []`
 and continue. A premise or contract broke, a milestone grew past its size, or the user changed
-direction → send the roadmap planner (same tier) to rewrite the affected rows of the Milestones table in place,
+direction → send the roadmap planner (`fable/high` when a premise or contract broke; `opus/high` for row wording or a user-direction change that keeps the contracts) to rewrite the affected rows of the Milestones table in place,
 bump `revision:`, and append `## Revision N` with each changed row before and after (the checker reads
 only the Milestones table); re-run the checker; show the user the changed rows (before/after) and get approval.
 Journal `replan` with the changed rows and why.

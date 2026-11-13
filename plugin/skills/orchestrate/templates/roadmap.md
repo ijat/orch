@@ -26,7 +26,8 @@
      M          1, 2, 3 … (run order)
      depends on - | 1 | 1,3
      mode       standard | lite      (lite only for milestones that meet SKILL.md's lite rules)
-     tiers      free text, e.g. "opus/high → sonnet/high" or "lite opus/medium"
+     tiers      free text starting with the milestone planner tier (`opus/high`), then the implementer tier,
+                e.g. "opus/high → sonnet/high" or "lite opus/medium"
      sensitive  - | <areas from SKILL.md step 5>
      review     - | skip | code | code+sec  (a review point covers every milestone since the previous one;
                 skip = merge without review on purpose — only where a review would find nothing that
