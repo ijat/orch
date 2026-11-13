@@ -16,7 +16,7 @@
 - base_branch: <branch>
 - task_branch: orch/<task-slug>
 - worktree: /abs/path/to/repo/.claude/worktrees/orch-<task-slug> | not yet created | none (user: no worktree)
-- planner_tier: <model>/<effort> — default opus/high; escalated opus/max or fable/high (orchestrator's pick); fable/max only after both failed
+- planner_tier: <model>/<effort> — default opus/high; escalated fable/high (SKILL.md § Tier selection)
 - implementer_tier: <model>/<effort> — default sonnet/high (haiku/medium for gated steps); ladder opus/medium → opus/high → opus/max → fable/high (the ladder reaches Fable only after a failed opus/max pass; TIERS.md § Fable outside planning)
 - review_round: 0/3
 - usage_override: none | <what the user allowed, and when>
@@ -27,7 +27,7 @@
 | planner | pending | | | | |
 | implementer | pending | | | | |
 | director | n/a | | | | <pending if the plan has visual steps> |
-| plan-reviewer | n/a | | | | <pending for roadmaps and plans at an escalated planner tier> |
+| plan-reviewer | n/a | | | | <pending for roadmaps, plans at fable/high and plans naming `undo:`> |
 | code-reviewer | pending | | | | |
 | security-reviewer | not_offered | | | | <one-line reason, or pending / declined> |
 
