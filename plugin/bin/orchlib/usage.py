@@ -1104,12 +1104,21 @@ def due_checkin(task_dir, now, stamps):
     return best[1:] if best else None
 
 
-def _wt_head(task_dir):
-    """HEAD sha of the task's worktree (status.md `worktree`), or None: no worktree, removed, or git unusable."""
+def _wt_path(task_dir):
+    """The task's worktree directory (status.md `worktree`), or None: no worktree or removed."""
     try:
         from . import status as st
         wt = st.clean_value('worktree', st.Status.load(os.path.join(task_dir, 'status.md')).get('worktree')).value
-        if not os.path.isdir(wt):
+        return wt if os.path.isdir(wt) else None
+    except Exception:
+        return None
+
+
+def _wt_head(task_dir):
+    """HEAD sha of the task's worktree (status.md `worktree`), or None: no worktree, removed, or git unusable."""
+    try:
+        wt = _wt_path(task_dir)
+        if wt is None:
             return None
         r = subprocess.run(['git', '-C', wt, 'rev-parse', 'HEAD'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                            universal_newlines=True, timeout=10)
@@ -1119,46 +1128,101 @@ def _wt_head(task_dir):
         return None
 
 
-def _notes_size(task_dir):
+# What the roles write besides commits. Orchestrator-only files (journal.jsonl, status.md, log.md, questions.md,
+# briefs/, check-in stamps) are not in it: the orchestrator writing them says nothing about the role.
+ACTIVITY_FILES = ('notes.md', 'review.md', 'security-review.md', 'plan.md', 'roadmap.md', 'plan-review.md')
+ACTIVITY_GLOB = 'visual-*.md'
+ACTIVITY_DIRS = ('sketches', 'guides', 'artifacts')
+ACTIVITY_CAP = 2000         # most files stat-ed per walk (uncommitted worktree files, artifact trees)
+
+
+def _task_activity_paths(task_dir):
+    """Files a role's work shows in: the output files above and the output dirs, in the task dir and in each
+    program milestone dir (m<NN>-*), sorted."""
+    import glob
+    roots = [task_dir] + sorted(d for d in glob.glob(os.path.join(glob.escape(task_dir), 'm[0-9][0-9]-*'))
+                                if os.path.isdir(d))
+    out = []
+    for root in roots:
+        for name in ACTIVITY_FILES:
+            out.append(os.path.join(root, name))
+        out.extend(sorted(glob.glob(os.path.join(glob.escape(root), ACTIVITY_GLOB))))
+        for sub in ACTIVITY_DIRS:
+            for dp, dns, fns in os.walk(os.path.join(root, sub)):
+                dns.sort()
+                out.extend(os.path.join(dp, f) for f in sorted(fns))
+                if len(out) > ACTIVITY_CAP:
+                    break
+    return out[:ACTIVITY_CAP]
+
+
+def _worktree_dirty_paths(wt):
+    """(raw `git status --porcelain -z -uall` bytes, absolute paths it lists); (b'', []) when git cannot say."""
     try:
-        return os.stat(os.path.join(task_dir, 'notes.md')).st_size
-    except OSError:
-        return None
+        r = subprocess.run(['git', '-C', wt, 'status', '--porcelain', '-z', '--untracked-files=all'],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+        if r.returncode != 0:
+            return b'', []
+    except Exception:
+        return b'', []
+    paths, entries, i = [], r.stdout.split(b'\0'), 0
+    while i < len(entries):
+        e = entries[i]
+        i += 1
+        if len(e) < 4:
+            continue
+        if e[:1] in (b'R', b'C'):       # a rename or copy lists its source as the next entry
+            i += 1
+        paths.append(os.path.join(wt, os.fsdecode(e[3:])))
+    return r.stdout, paths[:ACTIVITY_CAP]
+
+
+def _activity(task_dir, wt):
+    """-> (signature, newest): a digest of everything the role may have produced and the latest mtime among those
+    files. Covers the worktree's uncommitted state (`git status` plus its files' size and mtime) and the task-dir
+    outputs above; HEAD is compared separately."""
+    import hashlib
+    h = hashlib.sha1()
+    newest = 0.0
+    raw, dirty = _worktree_dirty_paths(wt)
+    h.update(raw)
+    for path in dirty + _task_activity_paths(task_dir):
+        try:
+            st_ = os.stat(path)
+        except OSError:
+            continue
+        h.update(('\0%s\0%d\0%d' % (path, st_.st_size, st_.st_mtime_ns)).encode('utf-8', 'surrogateescape'))
+        newest = max(newest, st_.st_mtime)
+    return h.hexdigest(), newest
 
 
 def progress_since(task_dir, prev, spawn=None):
-    """-> (progress, fields): what a role did since its last check-in, from files only. `prev` is its stamp for this
-    spawn: `head`, `notes_size`, `none_streak` (any of them absent in a stamp an older orch wrote, or on the first
-    check-in, which only records the baseline: `unknown`). `spawn` = (head, epoch) from the spawn's journal line: the
-    first check-in's baseline, when the stamp has none (notes.md has no baseline then: `notes` if it was written since
-    the spawn). `fields` are the stamp keys to store."""
-    head, size = _wt_head(task_dir), _notes_size(task_dir)
+    """-> (progress, fields, streak): what a role did since its last check-in, from files only: `commits` (the
+    worktree HEAD moved), `files` (anything else it produces changed: uncommitted edits, notes.md, review and plan
+    files, visual and sketch/guide/artifact files), `none`, or `unknown` (no worktree, or no baseline yet).
+    `prev` is its stamp for this spawn: `head`, `sig`, `none_streak` (absent in a stamp an older orch wrote, or on the
+    first check-in, which only records the baseline: `unknown`). `spawn` = (head, epoch) from the spawn's journal line:
+    the first check-in's baseline, when the stamp has none (no signature then: `files` if any of those files was
+    written since the spawn). `fields` are the stamp keys to store."""
+    head, wt = _wt_head(task_dir), _wt_path(task_dir)
     streak = prev.get('none_streak') if isinstance(prev.get('none_streak'), int) else 0
-    if head is None:
-        return 'unknown', {k: prev[k] for k in ('head', 'notes_size') if k in prev}, streak
-    fields = {'head': head}
-    if size is not None:
-        fields['notes_size'] = size
-    elif 'notes_size' in prev:
-        fields['notes_size'] = prev['notes_size']
+    if head is None or wt is None:
+        return 'unknown', {k: prev[k] for k in ('head', 'sig') if k in prev}, streak
+    sig, newest = _activity(task_dir, wt)
+    fields = {'head': head, 'sig': sig}
     base = prev.get('head')
     if not isinstance(base, str):
         if not spawn:
             return 'unknown', fields, 0
-        base = spawn[0]
-        if head == base:
-            try:
-                if os.stat(os.path.join(task_dir, 'notes.md')).st_mtime >= spawn[1]:
-                    return 'notes', fields, 0
-            except OSError:
-                pass
-            return 'none', fields, streak + 1
+        if head != spawn[0]:
+            return 'commits', fields, 0
+        return ('files', fields, 0) if newest >= spawn[1] else ('none', fields, streak + 1)
     if head != base:
         return 'commits', fields, 0
-    old = prev.get('notes_size')
-    if size is not None and isinstance(old, int) and size > old:
-        return 'notes', fields, 0
-    return 'none', fields, streak + 1
+    old = prev.get('sig')
+    if not isinstance(old, str):
+        return 'unknown', fields, streak
+    return ('files', fields, 0) if sig != old else ('none', fields, streak + 1)
 
 
 class Wait:
@@ -1251,7 +1315,7 @@ class Wait:
         stamp = {'spawn': spawn_id, 'n': n, 'last': now, 'final': bool(final) or bool(prev.get('final'))}
         progress = streak = None
         if final:       # a final row reports the row, not progress: its baseline stays as it was
-            stamp.update((k, prev[k]) for k in ('head', 'notes_size', 'none_streak') if k in prev)
+            stamp.update((k, prev[k]) for k in ('head', 'sig', 'none_streak') if k in prev)
         else:
             progress, fields, streak = progress_since(self.task_dir, prev, self._spawn_head(spawn_id))
             stamp.update(fields, none_streak=streak)

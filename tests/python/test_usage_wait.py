@@ -430,7 +430,8 @@ class TestCheckin(Base):
 
 
 class TestCheckinProgress(Base):
-    """CHECKIN carries progress=commits|notes|none|unknown and none_streak, from the worktree HEAD and notes.md."""
+    """CHECKIN carries progress=commits|files|none|unknown and none_streak, from the worktree HEAD, its uncommitted
+    files and the output files roles write in the task dir (notes.md, review.md, plan files, ...)."""
 
     def setUp(self):
         Base.setUp(self)
@@ -477,7 +478,7 @@ class TestCheckinProgress(Base):
         self.assertIn('CHECKIN role=implementer silent_min=30 interval=30 progress=unknown none_streak=0 ', line)
         stamp = self.stamp()
         self.assertEqual(stamp['head'], self.git('rev-parse', 'HEAD').decode().strip())
-        self.assertEqual((stamp['notes_size'], stamp['none_streak']), (len('start\n'), 0))
+        self.assertEqual((len(stamp['sig']), stamp['none_streak']), (40, 0))
 
     def test_a_moved_head_is_commits_and_resets_the_streak(self):
         self.checkin()
@@ -487,10 +488,44 @@ class TestCheckinProgress(Base):
         self.assertIn('progress=commits none_streak=0 ', self.checkin())
         self.assertEqual(self.stamp()['none_streak'], 0)
 
-    def test_only_notes_growing_is_notes(self):
+    def test_only_notes_growing_is_files(self):
         self.checkin()
         self.notes('a finding\n')
-        self.assertIn('progress=notes none_streak=0 ', self.checkin())
+        self.assertIn('progress=files none_streak=0 ', self.checkin())
+
+    def baseline(self):
+        """A fresh check-in ladder (the ladder has four rungs per spawn), baseline recorded."""
+        shutil.rmtree(self.state, True)
+        self.assertIn('progress=unknown', self.checkin())
+
+    def write(self, name, text, base=None):
+        path = os.path.join(base or self.d, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'a') as fh:
+            fh.write(text)
+
+    def test_a_reviewer_that_only_grows_its_review_file_is_files_not_none(self):
+        for name in ('review.md', 'security-review.md', 'plan-review.md', 'plan.md', 'roadmap.md', 'visual-1.md',
+                     'm01-first/plan.md', 'sketches/step-1.md', 'guides/step-1.md', 'artifacts/visual/s1/r1/a.txt'):
+            with self.subTest(name):
+                self.baseline()
+                self.write(name, 'x\n')
+                self.assertIn('progress=files none_streak=0 ', self.checkin())
+                self.assertIn('progress=none none_streak=1 ', self.checkin())
+
+    def test_uncommitted_edits_alone_are_files(self):
+        for name in ('new.txt', 'one'):                                   # untracked; tracked, edited in place
+            with self.subTest(name):
+                self.baseline()
+                self.write(name, 'wip\n', base=self.wt)
+                self.assertIn('progress=files none_streak=0 ', self.checkin())
+                self.assertIn('progress=none none_streak=1 ', self.checkin())
+
+    def test_orchestrator_files_are_not_progress(self):
+        self.baseline()
+        for name in ('log.md', 'journal.jsonl', 'questions.md', 'briefs/implement-s1.md'):
+            self.write(name, 'x\n')
+        self.assertIn('progress=none none_streak=1 ', self.checkin())
 
     def test_neither_twice_is_none_with_a_growing_streak(self):
         self.checkin()
@@ -558,7 +593,23 @@ class TestCheckinProgress(Base):
         self.spawn_with_head(self.git('rev-parse', 'HEAD').decode().strip())
         self.notes('x\n')
         os.utime(os.path.join(self.d, 'notes.md'), (BASE + 600, BASE + 600))
-        self.assertIn('progress=notes none_streak=0 ', self.checkin())
+        self.assertIn('progress=files none_streak=0 ', self.checkin())
+
+    def test_the_first_check_in_sees_a_review_file_written_since_the_spawn(self):
+        self.spawn_with_head(self.git('rev-parse', 'HEAD').decode().strip())
+        self.write('review.md', 'x\n')
+        os.utime(os.path.join(self.d, 'review.md'), (BASE + 600, BASE + 600))
+        self.assertIn('progress=files none_streak=0 ', self.checkin())
+
+    def test_a_stamp_with_a_head_but_no_signature_reads_as_unknown(self):
+        os.makedirs(self.state, exist_ok=True)
+        head = self.git('rev-parse', 'HEAD').decode().strip()
+        with open(os.path.join(self.state, 'checkin-%s.json' % KEY), 'w') as fh:
+            json.dump({'implementer': {'spawn': '%s#0' % ts(BASE), 'n': 1, 'last': BASE + 1800, 'final': False,
+                                       'head': head, 'notes_size': 6, 'none_streak': 1}}, fh)
+        self.clock = Clock(BASE + 1800)
+        self.assertIn('progress=unknown none_streak=1 ', self.checkin())
+        self.assertIn('progress=none none_streak=2 ', self.checkin())
 
     def test_a_spawn_without_a_head_keeps_the_first_check_in_unknown(self):
         self.assertIn('progress=unknown none_streak=0 ', self.checkin())
