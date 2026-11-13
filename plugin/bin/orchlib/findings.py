@@ -35,6 +35,8 @@ FIELD_RE = re.compile(r"^-[ \t]+([A-Za-z][A-Za-z ]*?):[ \t]*(.*)$")
 PHRASE_SPLIT_RE = re.compile(r"\s[—–-](?:\s|$)")
 PLACEHOLDER_RE = re.compile(r"^<.*>$")
 ID_RE = re.compile(r"^[FS]\d+$")
+CLASS_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")     # a finding's optional `- class:` slug (matched lower-cased, exactly)
+ROUND_NO_RE = re.compile(r"\bround\s+(\d+)")
 
 
 # -- parsing -------------------------------------------------------------------------------------
@@ -51,6 +53,8 @@ class Finding(object):
         self.resolution = ""
         self.phrase = None          # the latest status phrase after this block, or None
         self.state = "open"
+        self.cls_raw = None         # the `- class:` text as written, None when the field is absent
+        self.cls = None             # its lower-cased slug when it is one, else None
 
     @property
     def number(self):
@@ -159,6 +163,9 @@ def parse_text(text, security=False, lenient_heads=False):
             f.severity = f.sev_raw.lower() if f.sev_raw.lower() in sev_set else None
             f.file = fields.get("file", "")
             f.resolution = fields.get("resolution", "")
+            f.cls_raw = fields.get("class")
+            if f.cls_raw is not None and CLASS_RE.match(f.cls_raw.strip().lower()):
+                f.cls = f.cls_raw.strip().lower()
             origin = fields.get("origin")
             if origin is not None:
                 first = re.match(r"^(introduced|pre-existing)(?=$|\s)", origin.lower())
@@ -237,7 +244,8 @@ def counted(f):
 
 def finding_line(f):
     summary = f.summary if len(f.summary) <= SUMMARY_CHARS else f.summary[:SUMMARY_CHARS - 1].rstrip() + "…"
-    return " | ".join((f.id, f.severity or "severity-unknown", f.origin or "-", f.file or "-", f.state, summary))
+    cols = (f.id, f.severity or "severity-unknown", f.origin or "-", f.file or "-", f.state, summary)
+    return " | ".join(cols + (("class:%s" % f.cls,) if f.cls else ()))
 
 
 def unparsed_line(u):
@@ -283,6 +291,8 @@ def check_block_fields(f, security):
         problems.append("%s: `- file:` is missing (PATH:LINE)" % f.id)
     if not security and (f.origin not in ORIGINS):
         problems.append("%s: `- origin:` must be introduced or pre-existing (then ` — evidence`)" % f.id)
+    if f.cls_raw is not None and f.cls_raw.strip() and f.cls is None:
+        problems.append("%s: `- class:` must be one short slug (letters, digits, - or _), or left out (got %r)" % (f.id, f.cls_raw))
     return problems
 
 
@@ -325,6 +335,50 @@ def validate_text(text, existing, security):
     for fid, line in frag.stray_status:
         problems.append("%s: status lines go under a `## Round N` or `## Check of round N` heading (line %d)" % (fid, line + 1))
     return problems, new_ids, statuses
+
+
+# -- bug classes across rounds --------------------------------------------------------------------
+
+def finding_rounds(parsed):
+    """{finding id: round number}: the round of the nearest `## Round N` / `## Check of round N` heading above the
+    block; a block above every such heading (the first round's `## Findings`) is round 1."""
+    heads = []
+    for i, l in enumerate(parsed.lines):
+        if not parsed.mask[i]:
+            m = LEVEL2_RE.match(l)
+            if m:
+                rm = ROUND_NO_RE.search(pl.norm_title(m.group(2)))
+                if rm:
+                    heads.append((i, int(rm.group(1))))
+    out = {}
+    for f in parsed.findings:
+        out[f.id] = next((n for i, n in reversed(heads) if i < f.head), 1)
+    return out
+
+
+def class_repeats(parsed_files, routed):
+    """[(class, earlier id, earlier round)] for the routed finding ids, one per class. `parsed_files` are the parsed
+    review.md and security-review.md of the task. A class repeats when another finding of the same class (any state,
+    either file) sits in a round before the latest round that class was routed from; the nearest such finding is named.
+    Findings without a class, and several findings of one round, are not a repeat."""
+    allf = [(f, rounds[f.id]) for parsed in parsed_files for rounds in [finding_rounds(parsed)] for f in parsed.findings if f.cls]
+    by_id = dict((f.id, (f, r)) for f, r in allf)
+    classes = []
+    for fid in routed:
+        if fid in by_id and by_id[fid][0].cls not in classes:
+            classes.append(by_id[fid][0].cls)
+    out = []
+    for cls in classes:
+        latest = max(r for f, r in allf if f.cls == cls and f.id in routed)
+        earlier = [(r, f.number, f.id) for f, r in allf if f.cls == cls and r < latest]
+        if earlier:
+            r, _, fid = max(earlier)
+            out.append((cls, fid, r))
+    return out
+
+
+def class_repeat_line(cls, fid, rnd):
+    return "class repeat: %s (%s, round %d) \u2192 raise one rung (TIERS.md \u00a7 Fix rounds)" % (cls, fid, rnd)
 
 
 # -- context -------------------------------------------------------------------------------------
@@ -434,6 +488,11 @@ def finding_add(ns):
         if not getattr(ns, name):
             raise OrchError("finding add needs --%s" % name, 1)
     security = ns.security
+    cls = None
+    if ns.cls is not None:
+        cls = ns.cls.strip().lower()
+        if not CLASS_RE.match(cls):
+            raise OrchError("--class must be one short slug (letters, digits, - or _), got %r" % ns.cls, 1)
     if security and ns.origin:
         raise OrchError("--origin belongs to code findings, not --security", 1)
     c = context(ns)
@@ -447,6 +506,8 @@ def finding_add(ns):
         if not security:
             block.append("- origin: %s" % (ns.origin or "").strip())
         block.append("- file: %s" % fpath)
+        if cls:
+            block.append("- class: %s" % cls)
         if details.strip():
             block.append(details)
         block.append("- resolution:")
@@ -530,7 +591,7 @@ def register(add):
     sp.add_argument("target", choices=["review"])
     sp.add_argument("--security", action="store_true")
 
-    sp = add("finding", cmd_finding, "`finding add --severity S --file PATH:LINE --summary T [--origin O]` or `finding resolve ID --text T`")
+    sp = add("finding", cmd_finding, "`finding add --severity S --file PATH:LINE --summary T [--origin O] [--class C]` or `finding resolve ID --text T`")
     sp.add_argument("action", choices=["add", "resolve"])
     sp.add_argument("fid", nargs="?", default=None, metavar="ID")
     sp.add_argument("--security", action="store_true")
@@ -538,6 +599,7 @@ def register(add):
     sp.add_argument("--file", default=None)
     sp.add_argument("--summary", default=None)
     sp.add_argument("--origin", default=None)
+    sp.add_argument("--class", dest="cls", default=None, help="optional bug-class slug (see your role file's list)")
     sp.add_argument("--text", default=None)
 
     sp = add("findings", cmd_findings, "list a review file's findings, their status and counts (read-only)")

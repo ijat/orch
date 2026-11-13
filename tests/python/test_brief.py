@@ -1439,6 +1439,50 @@ class TestReviseAndPlanReviewBrief(BriefBase):
             self.assertIn("takes no positional argument", self.refused(1, kind, "3"))
 
 
+class TestClassRepeatInFixBrief(BriefBase):
+    REVIEW = ("# Code review: add-login\n\n- round: 1\n\n## Findings\n\n"
+              "### F1 — unvalidated input\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/auth.py:12\n"
+              "- class: validation\n- what: a.\n- resolution:\n\n"
+              "### F2 — also unvalidated\n- severity: nit\n- origin: introduced\n- file: @R@/src/auth.py:20\n"
+              "- class: validation\n- what: b.\n- resolution:\n\n"
+              "### F3 — no class\n- severity: nit\n- origin: introduced\n- file: @R@/src/auth.py:30\n- what: c.\n\n"
+              "## Round 2\n\n- F1: resolved\n- F2: resolved\n\n"
+              "### F4 — unvalidated again\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/views.py:5\n"
+              "- class: Validation\n- what: d.\n- resolution:\n\n"
+              "### F5 — a new class\n- severity: nit\n- origin: introduced\n- file: @R@/src/views.py:6\n"
+              "- class: config\n- what: e.\n- resolution:\n")
+    SECURITY = ("# Security review: add-login\n\n## Findings\n\n"
+                "### S1 — config leak\n- severity: high\n- file: @R@/src/views.py:77\n- class: config\n- attack path: x.\n- resolution:\n")
+    FLAGS = ("--tier", "sonnet/high", "--escalation", "none", "--tradeoff", "t")
+
+    def setUp(self):
+        BriefBase.setUp(self)
+        wr(os.path.join(self.d, "review.md"), self.REVIEW.replace("@R@", self.repo))
+        wr(os.path.join(self.d, "security-review.md"), self.SECURITY.replace("@R@", self.repo))
+
+    LINE = "class repeat: %s (%s, round 1) \u2192 raise one rung (TIERS.md \u00a7 Fix rounds)"
+
+    def test_a_repeated_class_prints_one_line_after_the_prompt_and_in_the_brief(self):
+        path, text = self.brief("fix", "2", "--findings", "F4,F5", *self.FLAGS)
+        lines = self.last_out.splitlines()
+        self.assertEqual(lines.count(self.LINE % ("validation", "F2")), 1)
+        self.assertEqual(lines.count(self.LINE % ("config", "S1")), 1)
+        self.assertGreater(lines.index(self.LINE % ("validation", "F2")), lines.index("--- end ---"))
+        self.assertIn(self.LINE % ("validation", "F2"), sec(text, "Class repeat"))
+        self.assertIn("tier: sonnet/high\nescalation: none\ntradeoff: t\n\nYour whole context is this brief: %s" % path, self.last_out)
+
+    def test_same_round_duplicates_and_findings_without_a_class_are_no_repeat(self):
+        for ids in ("F1,F2", "F3", "F1,F2,F3"):
+            _, text = self.brief("fix", "1", "--findings", ids, *self.FLAGS)
+            self.assertNotIn("class repeat", self.last_out, ids)
+            self.assertNotIn("Class repeat", text, ids)
+
+    def test_a_review_with_no_class_at_all_prints_nothing_extra(self):
+        wr(os.path.join(self.d, "review.md"), self.REVIEW.replace("@R@", self.repo).replace("- class:", "- what-class:"))
+        self.brief("fix", "2", "--findings", "F4", *self.FLAGS)
+        self.assertNotIn("class repeat", self.last_out)
+
+
 class TestFixBrief(BriefBase):
     REVIEW = ("# Code review: add-login\n\n- round: 1\n- verdict: findings\n\n## Findings\n\n"
               "### F1 — hashing is unsalted\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/auth.py:12\n"
