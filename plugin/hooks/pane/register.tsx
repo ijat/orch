@@ -12,6 +12,7 @@ import {
   COMPACT_SEND_NOTE, COMPACT_TOOL, COMPACT_TOOL_FULL, COMPACT_WAKE_TEXT, busyReason,
 } from './lib'
 import type { ItemState, MdLine } from './lib'
+import { ensureLoaded, formatRow, pressFormat, pressSetting, settingRows } from '../ui/format-view'
 
 const PANE = 'orch-pane'
 const TITLE = 'Orchestration'
@@ -1653,6 +1654,27 @@ export const registerPane: Register = on => {
       </Box>
     )
 
+    // A row that cycles through values (orch-ui's settings): the same Button and layout as check(), drawing `<label>: <value>`.
+    const choice = (key: string, label: string, value: string, note: string | null, press: () => void) => (
+      <Box flexDirection="column" marginBottom={1}>
+        <Box paddingLeft={4}>
+          <Button key={key} plain onPress={press}>
+            {label}: {value}
+          </Button>
+        </Box>
+        {note ? <Box paddingLeft={4}><Text dimColor>{note}</Text></Box> : null}
+      </Box>
+    )
+
+    // orch-ui's settings (they moved here from the old /orch:ui pane): read only while the More tab is open.
+    let uiFormat: { on: boolean; note: string | null } | null = null
+    let uiRows: Awaited<ReturnType<typeof settingRows>> = []
+    if (openTab === 'more') {
+      await ensureLoaded($)
+      uiFormat = await formatRow($)
+      uiRows = await settingRows($)
+    }
+
     const moreTab = () => {
       const index = indexRows()
       return [
@@ -1664,6 +1686,14 @@ export const registerPane: Register = on => {
         check('opt-notify', notifyOn, 'Notify me when a question arrives', null, () => toggleNotify($)),
         check('opt-compact-send', compactSendOn, 'Compact, then send', 'sending answers compacts the conversation first; skipped while an agent runs', () => toggleCompactSend($)),
         check('opt-mythos', mythosOn, 'Offer Mythos security reviews', 'off: the orchestrator never offers one (you can still ask for it); on: it asks before a Mythos review of high-risk code and of a finished product', () => toggleMythos($)),
+        ...(uiFormat
+          ? [
+              subhead('orch-ui'),
+              blank,
+              check('opt-format', uiFormat.on, 'Format replies', uiFormat.note, () => pressFormat($)),
+              ...uiRows.map(row => choice(row.key, row.label, row.value, row.note, () => pressSetting($, row.id))),
+            ]
+          : []),
         ...(snap.about
           ? [
               subhead('About'),
@@ -1690,8 +1720,11 @@ export const registerPane: Register = on => {
         {TABS.flatMap((t, i) => [
           i > 0 ? <Text dimColor>{' │ '}</Text> : null,
           <Button key={`tab:${t.id}`} plain onPress={async () => {
+            if (t.id === 'more') {
+              await ensureLoaded($)   // orch-ui's stored settings, before the first draw of its section
+              await loadMythos($)     // the CLI's value, in case it changed since the last look
+            }
             await update($, tab, cur => (cur === t.id ? null : t.id))
-            if (t.id === 'more') await loadMythos($)   // the CLI's value, in case it changed since the last look
           }}>
             <Text bold={openTab === t.id ? true : undefined} underline={openTab === t.id ? true : undefined}
               color={openTab === t.id ? 'suggestion' : undefined} dimColor={openTab === t.id ? undefined : true}>{t.label}</Text>

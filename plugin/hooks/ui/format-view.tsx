@@ -447,7 +447,7 @@ async function formatLatest($: EngineInterface): Promise<string> {
   return 'formatting the latest reply now'
 }
 
-const OFF_TEXT = "Formatting is off in orch-ui's settings (/orch:ui); nothing changed."
+const OFF_TEXT = "Formatting is off in orch-ui's settings (the More tab of /orch:pane); nothing changed."
 
 async function setFormat($: EngineInterface, e: Record<string, unknown>): Promise<{ result: string }> {
   const format = e.format
@@ -464,7 +464,7 @@ async function setFormat($: EngineInterface, e: Record<string, unknown>): Promis
   }
   if (scope === 'session') {
     await update($, fmtRaw, () => true)
-    return { result: 'Scope session: every message in this session is shown as written and no new message is formatted. The stored option in orch-ui is untouched. Formatting returns on request (format "formatted"), from the Format replies row in orch-ui\'s settings (/orch:ui), or in a new session.' }
+    return { result: 'Scope session: every message in this session is shown as written and no new message is formatted. The stored option in orch-ui is untouched. Formatting returns on request (format "formatted"), from the Format replies row in orch-ui\'s settings (the More tab of /orch:pane), or in a new session.' }
   }
   const order = await orderOf($)
   const newest = order[order.length - 1]
@@ -582,7 +582,7 @@ export async function pressFormat($: EngineInterface) {
 }
 
 // -- the settings rows (D30, D43) ---------------------------------------------------------------------
-// Five rows under `Format replies` in the /orch:ui pane. Each press moves to the next value, stores it and lifts a
+// Five rows under `Format replies` in the orch-ui section of orch-pane's More tab. Each press moves to the next value, stores it and lifts a
 // pause; the new value applies from the next call. Nothing here reads or shows key material or a gateway value.
 
 export type SettingId = 'trigger' | 'model' | 'effort' | 'billing' | 'key'

@@ -1,4 +1,4 @@
 {
   "name": "orch",
-  "description": "Multi-agent orchestration for Claude Code: planner, implementer and reviewer roles, the orch CLI, the dashboard, and the orch-pane and orch-ui mods (/orch:pane, /orch:ui)."
+  "description": "Multi-agent orchestration for Claude Code: planner, implementer and reviewer roles, the orch CLI, the dashboard, and the orch-pane and orch-ui mods (/orch:pane)."
 }
