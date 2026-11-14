@@ -83,6 +83,8 @@ type World = {
   wakes: string[]; notes: string[]
   // The tools registered, `session.compact` calls (their instructions), how many of them fail first, and the order of effects.
   tools: string[]; compacts: (string | undefined)[]; compactFails: number; order: string[]
+  // `orch setting` runs, the stored value of `mythos_review` (the CLI's file, default off) and whether a `set` fails.
+  settingRuns: string[][]; mythos: 'on' | 'off'; settingRefuses?: boolean
 }
 
 const INDEX: IndexStatus = {
@@ -114,7 +116,7 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
                env: Record<string, string> = { HOME: '/home/u' }): World {
   const w: World = {
     runs: [], indexRuns: [], opens: 0, paneOpen: true, placed: true, result, index: INDEX_RAN,
-    answers: [], answered: { exitCode: 0, stdout: 'Q1 answered', stderr: '' }, onAnswers: () => {}, groups: {}, groupRuns: [], toasts: [], wakes: [], notes: [], tools: [], compacts: [], compactFails: 0, order: [],
+    answers: [], answered: { exitCode: 0, stdout: 'Q1 answered', stderr: '' }, onAnswers: () => {}, groups: {}, groupRuns: [], toasts: [], wakes: [], notes: [], tools: [], compacts: [], compactFails: 0, order: [], settingRuns: [], mythos: 'off',
   }
   mock.env(on, env)
   on('session.cwd', () => ({ value: '/proj' }))
@@ -136,6 +138,14 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
         ? `${w.installedAt ?? PLUGIN_ROOT} abc1234def56789`
         : e.argv[0]?.includes('orch-index') ? 'orch-index 0.2.0' : 'orch 0.1.0'
       return { value: { exitCode: 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+    if (e.argv.includes('setting')) {
+      // `orch setting get|set mythos_review`: the CLI's own file, here a field of the world.
+      const [verb, name, value] = e.argv.slice(e.argv.indexOf('setting') + 1)
+      w.settingRuns.push([...e.argv])
+      if (verb === 'set' && name === 'mythos_review' && !w.settingRefuses) w.mythos = value === 'on' ? 'on' : 'off'
+      const out = verb === 'get' ? `${w.mythos}\n` : verb === 'set' && !w.settingRefuses ? `${value}\n` : ''
+      return { value: { exitCode: verb === 'set' && w.settingRefuses ? 1 : 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
     if (e.argv.includes('answers')) {
       w.answers.push([...e.argv])
@@ -2279,6 +2289,56 @@ test('Compact, then send: off by default; on, the answers land, the conversation
   expect(w.order).toEqual(['answers', 'compact', 'wake'])
   expect(w.compacts[0]).toContain('read them back with `orch`')
   expect(w.wakes).toEqual([WAKE_TEXT, WAKE_TEXT])
+  await ui.unmount()
+})
+
+test('Offer Mythos security reviews: off by default, read from `orch setting get`, a press runs `orch setting set`', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  // Read at the session start; nothing in $.store holds it.
+  expect(w.settingRuns[0]).toEqual([ORCH, 'setting', 'get', 'mythos_review'])
+  await ui.press({ key: 'tab:more' })
+  expect(await buttonText(ui, 'opt-mythos')).toMatch(/^\[ \] Offer Mythos security reviews/)
+  await ui.press({ key: 'opt-mythos' })
+  expect(w.settingRuns.some(r => r.join(' ') === `${ORCH} setting set mythos_review on`)).toBe(true)
+  expect(w.mythos).toBe('on')
+  expect(await buttonText(ui, 'opt-mythos')).toMatch(/^\[x\] Offer Mythos security reviews/)
+  await ui.press({ key: 'opt-mythos' })
+  expect(w.settingRuns.some(r => r.join(' ') === `${ORCH} setting set mythos_review off`)).toBe(true)
+  expect(w.mythos).toBe('off')
+  expect(await buttonText(ui, 'opt-mythos')).toMatch(/^\[ \] /)
+  await ui.unmount()
+})
+
+test('Offer Mythos security reviews: the box shows the CLI value (a change made elsewhere, a refused write)', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  w.mythos = 'on'                                   // changed from a terminal, after the session start
+  await ui.press({ key: 'tab:more' })
+  expect(await buttonText(ui, 'opt-mythos')).toMatch(/^\[x\] /)
+  w.settingRefuses = true                           // the write fails: the box keeps what the CLI says
+  await ui.press({ key: 'opt-mythos' })
+  expect(w.mythos).toBe('on')
+  expect(await buttonText(ui, 'opt-mythos')).toMatch(/^\[x\] /)
+  await ui.unmount()
+})
+
+test('the More tab has an orch-ui section with the formatter settings (the old /orch:ui pane is gone), drawn only while More is open', async ($, on) => {
+  const { ui, store } = await pane($, on, [PROGRAM], { 'opt:format-model': 'sonnet' })
+  expect(await buttonText(ui, 'opt-format')).toBeUndefined()
+  await ui.press({ key: 'tab:more' })
+  expect((await ui.findAll({ type: 'Text' })).some(t => t.text === 'orch-ui')).toBe(true)
+  expect(await buttonText(ui, 'opt-format')).toBe('[ ] Format replies')
+  expect(await buttonText(ui, 'opt-format-trigger')).toBe('Format trigger: marked')
+  expect(await buttonText(ui, 'opt-format-model')).toBe('Format model: sonnet')
+  expect(await buttonText(ui, 'opt-format-billing')).toBe('Format billing: API key')       // the default
+  expect(await buttonText(ui, 'opt-format-key')).toBe('Format API key: ANTHROPIC_API_KEY')   // the key row only while billing is api
+  await ui.press({ key: 'opt-format' })
+  expect(store.get('opt:format')).toBe(true)                           // same storage as before the move
+  expect(await buttonText(ui, 'opt-format')).toBe('[x] Format replies')
+  await ui.press({ key: 'opt-format-billing' })
+  expect(store.get('opt:format-billing')).toBe('subscription')
+  expect(await buttonText(ui, 'opt-format-key')).toBeUndefined()
+  await ui.press({ key: 'tab:more' })                                  // folded again: the section is gone with it
+  expect(await buttonText(ui, 'opt-format')).toBeUndefined()
   await ui.unmount()
 })
 

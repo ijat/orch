@@ -49,7 +49,7 @@ without a sha can't satisfy `orch merge`: it refuses and the merge goes to the u
 
 One agent file per role; the **tier** is chosen per spawn by passing `model` and `effort` to the
 `Agent` tool (both override the file's defaults). Write a tier
-as `<model>/<effort>`, e.g. `opus/max`. Models: `haiku | sonnet | opus | fable` (aliases, never pinned IDs, so roles track the newest model — see `TIERS.md`). Efforts:
+as `<model>/<effort>`, e.g. `opus/max`. Models: `haiku | sonnet | opus | fable` (aliases, never pinned IDs, so roles track the newest model — see `TIERS.md`); the one pinned ID is Mythos, in the rendered agent `orch:security-reviewer-mythos` (step 5). Efforts:
 `low | medium | high | xhigh | max` (a level a model doesn't support falls back to the highest one
 below it).
 
@@ -58,7 +58,7 @@ below it).
 | Planner | `orch:planner` | `opus/high` | → `fable/high` only by § Tier selection (user, roadmap, planner flag, design failure); above it, the user |
 | Implementer | `orch:implementer` | `sonnet/high` | → `opus/medium` → `opus/high` → `opus/max` → `fable/high` (the ladder reaches Fable only after a failed `opus/max` pass; otherwise `TIERS.md` § Fable outside planning); `haiku/medium` for gated steps (`TIERS.md`) |
 | Code reviewer | `orch:code-reviewer` | `opus/high` | — |
-| Security reviewer | `orch:security-reviewer` | `opus/high` | — **by rule** (step 5) or on request; every run or skip journaled |
+| Security reviewer | `orch:security-reviewer` | `opus/high` | — **by rule** (step 5) or on request; every run or skip journaled. `orch:security-reviewer-mythos` (`mythos/high`) only after the user accepts a Mythos offer or asks (step 5) |
 | Plan reviewer | `orch:plan-reviewer` | `sonnet/high` | — roadmaps, plans written at `fable/high` and plans whose Summary names an `undo:` artifact only (`PROGRAM.md` §1) |
 | Director | `orch:director` | `opus/high` | → `opus/max` after the user reverses an accepted verdict — plan steps marked `visual:` only (step 7) |
 | Explorer | `orch:explorer` | `haiku/low` | read-only lookups and claim checks |
@@ -594,6 +594,23 @@ ran:=true rule=step5` (`rule`: `step5`, `late`, `request`, `policy`; a skip is `
 row (`orch role security-reviewer pending --note "<why>"`, or `not_offered` with the reason). If the user
 declines a due review, the merge goes to the user.
 
+**Mythos security review — optional, never automatic** (`TIERS.md` § Mythos security review). It runs only after the user
+accepts an offer or asks. The three automatic offer points below fire only when `orch setting get mythos_review` prints `on`
+(the orch-pane checkbox "Offer Mythos security reviews", default off); off means no offer, no question and no journal line. Each
+offer or request is journaled `orch journal mythos_offer trigger=<severe|program_end|init_first|request>
+answer=<accepted|declined> tier=mythos/high areas:='[…]'`:
+- `severe`: the rule above fires on a `boundary` step of the severe class (`TIERS.md`): offer Mythos for that diff review, recommended.
+- `program_end`: a program's last milestone, before its merge: offer a whole-repository review (`orch brief security --whole-repo`).
+- `init_first`: the merge that fires the init refresh (`init.md` says `refresh: pending`): the same whole-repository offer.
+- `request`: the user asks ("Mythos review"): no offer, and it runs whatever the setting says; a task in progress gets it as a security round, with none you make a review-only task.
+
+An offer is a panel question (`orch ask`, `--reversible yes`, `--blocks` the security review only), never assumed. Finish-point
+offers recommend Mythos when usage is `OK` and Opus (`opus/high`) at `WARN`, `STALE` or `UNKNOWN` (no proactive Mythos under pressure). An accepted offer
+makes the review due (`orch merge` reads it); a declined one changes nothing: the rule above stands. Run: `orch spawn security-reviewer --agent
+orch:security-reviewer-mythos --tier mythos/high …`, then the `Agent` tool with `subagent_type: orch:security-reviewer-mythos` and no `model` or
+`effort`; reuse by `SendMessage` as for any reviewer. A run that fails (no access, 404, refusal) falls back to `opus/high` on
+`orch:security-reviewer`, journaled as a `judgement`, and Mythos is not offered again in this task.
+
 ### 6. Create the worktree — only now
 
 ```bash
@@ -772,6 +789,10 @@ its pass. (A user request is `rule=request`, policy `always` is `rule=policy`.)
 If the repo has rules about user-facing output, grep the **built artefact** for the forbidden
 strings yourself before this gate — a green report checked the source. When you brief anyone to
 embed a whole file, say where it must and must not land.
+
+**Finish-point Mythos offers** (`program_end`, `init_first`; only when `orch setting get mythos_review` prints `on`) are asked once code review has passed and before the final gate, so an accepted
+whole-repository review is a security round on the task branch: its findings are fixed through step 9 before the merge, and
+`orch merge` waits for a clean round at the tip.
 
 When review passes (no routed finding still open):
 
