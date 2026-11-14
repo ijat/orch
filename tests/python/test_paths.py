@@ -154,6 +154,15 @@ class AgentNames(unittest.TestCase):
         self.assertEqual(instructions.legacy_spans(lines, None), [(0, 1)])
 
 
+class RoleCostPrices(unittest.TestCase):
+    def test_mythos_is_priced_like_fable_5_2(self):
+        rc = load_role_cost()
+        usage_row = {"input_tokens": 1000000, "output_tokens": 1000000}
+        self.assertAlmostEqual(rc.request_cost(usage_row, "claude-mythos-5-2"), 8 + 40)
+        self.assertEqual(rc.PRICES["claude-mythos-5-2"], rc.PRICES["claude-fable-5-2"])
+        self.assertIsNone(rc.request_cost(usage_row, "claude-newmodel-9"))      # an unknown id stays unpriced
+
+
 class RoleCostLabels(unittest.TestCase):
     """role-cost labels are identical for a transcript set in either spelling."""
 

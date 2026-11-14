@@ -587,6 +587,11 @@ class TestCompute(unittest.TestCase):
         self.assertAlmostEqual(e.est, 50 + k * 2.0)
         self.assertAlmostEqual(e.ext, 10.0)
 
+    def test_mythos_has_its_own_price_row(self):
+        self.assertEqual(usage.price('claude-mythos-5-2'), (8, 40, 0.025))      # not the top row ($10 / $50)
+        r = usage.Req(0, 'claude-mythos-5-2', 1000000, 0, 0, 0, 1000000, 'x')
+        self.assertAlmostEqual(usage.cost(r), 8 + 40)
+
     def test_unknown_model_priced_at_top_row(self):
         r = usage.Req(0, 'claude-newmodel-9', 1000000, 0, 0, 0, 1000000, 'x')
         top = usage.TOP_PRICE
