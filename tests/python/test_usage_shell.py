@@ -104,24 +104,24 @@ def make_writer_tests(label):
             self.assertIsNone(s5[0][-1])
 
         def test_acct_is_first_8_chars_of_uuid_dot_first_8_of_the_organization(self):
-            self.set_acct('0a1b2c3d-1111-2222-3333-444455556666', 'c36789b3-aaaa-bbbb-cccc-ddddeeeeffff')
+            self.set_acct('0a1b2c3d-1111-2222-3333-444455556666', '5e5e5e5e-aaaa-bbbb-cccc-ddddeeeeffff')
             self.run_writer()
-            self.assertEqual(self.accts(), ['0a1b2c3d.c36789b3'])
-            self.assertEqual(usage.load_account(os.path.join(self.home, '.claude')), '0a1b2c3d.c36789b3')
+            self.assertEqual(self.accts(), ['0a1b2c3d.5e5e5e5e'])
+            self.assertEqual(usage.load_account(os.path.join(self.home, '.claude')), '0a1b2c3d.5e5e5e5e')
 
         def test_an_unreadable_organization_gives_dash_after_the_dot(self):
-            for i, org in enumerate((None, 12345678, ['c36789b3'], 'ZZZZZZZZ-1', 'c367', '')):
+            for i, org in enumerate((None, 12345678, ['5e5e5e5e'], 'ZZZZZZZZ-1', '5e5e', '')):
                 self.set_acct('0a1b2c3d-1111', org)
                 self.run_writer(p5=50.0 + i)
             self.assertEqual(self.accts(), ['0a1b2c3d.-'] * 6)
             self.assertEqual(usage.load_account(os.path.join(self.home, '.claude')), '0a1b2c3d.-')
 
         def test_two_organizations_of_one_account_are_two_keys(self):
-            self.set_acct('0a1b2c3d-1111', 'c36789b3-1')
+            self.set_acct('0a1b2c3d-1111', '5e5e5e5e-1')
             self.run_writer()
             self.set_acct('0a1b2c3d-1111', 'd0d0d0d0-1')
             self.run_writer(p5=54.0)
-            self.assertEqual(self.accts(), ['0a1b2c3d.c36789b3', '0a1b2c3d.d0d0d0d0'])
+            self.assertEqual(self.accts(), ['0a1b2c3d.5e5e5e5e', '0a1b2c3d.d0d0d0d0'])
 
         def test_missing_or_invalid_acct_is_dash(self):
             raw = ('{"oauthAccount":{}}', '{}', 'not json', '', '{"oauthAccount":"abc"}', '{"oauthAccount":{"accountUuid":null}}',
@@ -167,7 +167,7 @@ def make_writer_tests(label):
             self.assertEqual(self.accts()[-1], 'ffeedd00.-')
 
         def test_an_old_8_char_tag_is_still_inherited(self):
-            self.set_acct('ffeedd00-2222', 'c36789b3-1')
+            self.set_acct('ffeedd00-2222', '5e5e5e5e-1')
             with open(self.log, 'w') as fh:
                 fh.write('%d 53.0 %d 57 %d sid-a 0a1b2c3d\n' % (int(time.time()) - 61, self.r5, self.r7))
             self.run_writer()                                            # same payload: the old tag is kept, not re-keyed
