@@ -76,6 +76,11 @@ plans it spans. Review that range against those plans instead of the whole branc
 Focus on the diff, but follow data flow **out of** it: an input validated in the diff may be
 consumed by existing code that trusts it, and that is still this change's problem.
 
+A **whole-repository review** (the brief's `- scope: whole repository at <sha>` line; the range is the empty tree to that sha, so the diff
+is every file) is not a change: start from the entry points (listeners, handlers, CLI and file inputs, deserializers, auth and permission
+checks), follow data flow from them into the code, then the ledger's open entries, then the rest by risk. Say in `security-review.md` which
+areas you read and which you did not reach. The output, finding format and bar are the same as for a diff review.
+
 On a **re-review round** the orchestrator will name a narrower scope — usually just the files
 touched by the last fix round. Honour that scope. If you find something that genuinely requires
 looking wider, say so explicitly and name the wider scope. Do not silently re-review the whole diff.

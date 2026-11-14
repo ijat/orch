@@ -22,6 +22,13 @@ v2.1.293+ (confirmed on 2.1.294, 2026-10-08), and sessions on older versions got
 | API default effort | medium | high | **medium** | high |
 | Notes | refuses in cyber, bio, frontier_llm, general_harms, with no server-side fallback | everyday coding/agent work; refuses in 5 categories (cyber, bio, frontier_llm, reasoning_extraction, general_harms) | the default model; medium ≈ Opus 5 at high on multistep coding; refuses in cyber, bio, reasoning_extraction | most capable; single turns on hard tasks can run **many minutes** (output up to 30% faster than 5.1 per the claude.dev model-choice post of 2026-11-09; not measured here) |
 
+**Mythos 5.2** is not an alias (probes 2026-11-14; price from the claude-api skill, cached 2026-11-03): the model ID is `claude-mythos-5-2`
+(`mythos`, `claude-mythos` and `claude-mythos-5` do not exist), $8 / $40 per 1M with cache read $0.20 (as Fable 5.2); Anthropic advises
+starting at effort `high`. It answers on the subscription login and is a 404 when `ANTHROPIC_API_KEY` is set. The `Agent` tool's
+`model` takes only `sonnet | opus | haiku | fable`, so it cannot be passed the ID; the rendered agent `orch:security-reviewer-mythos`
+carries `model: claude-mythos-5-2` and `effort: high` instead (generated from the security-reviewer role's `variants:` line by
+`scripts/build-agents.py`) and is spawned with no `model` or `effort`.
+
 **Cost here is usage-limit headroom, not dollars:** this account runs on the 5h/7d limits
 (`orch usage`). The API prices are the best available proxy for how hard each model draws on
 them (not verified for the subscription; a pilot's `orch usage` delta is the real measure).
@@ -109,7 +116,7 @@ The three cheap rows (Explorer, Executor, Graph) are enforced twice: the `orch h
 | Planner | `opus/high` | `fable/high`, only by SKILL.md § Tier selection: the user asks, a roadmap (`need: shape_roadmap` or a requested program), the planner's `need: escalate` flag (open forks and an expensive-to-undo artifact), or a plan whose design failed (`post-failure`). Never for size, "cross-cutting" or "complex". Revisions and milestone plans stay at `opus/high` | `opus/max`, `fable/max`, `opus/xhigh`, `opus/medium`, `sonnet/high`, `fable/medium`, `fable/low`, `haiku/*` unless the user asks for that tier (journal `override`); above `fable/high` nothing: a `fable/high` plan that fails on design parks a question for the user | [measured 2026-11-13, § Planner bench] |
 | Implementer | `sonnet/high` | § Implementer routing and § Escalation ladder: `haiku/medium` through its gate, `haiku/high` guided, Opus by signal or ladder rung. `fable/high` only by § Fable outside planning | the cells marked never or dominated in § Cells; `fable/medium`, `fable/low`, `fable/max` | [measured 2026-10-21, 2026-10-28; judgment for Fable] |
 | Code reviewer | `opus/high` | `opus/xhigh` for a large or sensitive diff. `fable/high` only by § Fable outside planning | `sonnet/*` and `haiku/*` as the reviewer; `fable/medium`, `fable/low`, `fable/max` | [judgment, observed] |
-| Security reviewer | `opus/high` | `opus/xhigh` for a large or sensitive diff. `fable/high` only by § Fable outside planning | `sonnet/*` and `haiku/*` (widest refusal sets, no fallback on Haiku; § The factors, Limitations); `fable/medium`, `fable/low`, `fable/max` | [judgment; model facts above] |
+| Security reviewer | `opus/high` | `opus/xhigh` for a large or sensitive diff. `mythos/high` (`orch:security-reviewer-mythos`) only after the user accepts a Mythos offer or asks (§ Mythos security review). `fable/high` only by § Fable outside planning | `sonnet/*` and `haiku/*` (widest refusal sets, no fallback on Haiku; § The factors, Limitations); `fable/medium`, `fable/low`, `fable/max` | [judgment; model facts above] |
 | Plan reviewer | `sonnet/high` | `opus/medium` if any milestone is sensitive. Runs only on a roadmap, a plan written at `fable/high` (or at a user-requested tier above `opus/high`), or a plan whose Summary names an `undo:` artifact. `fable/high` only by § Fable outside planning | `haiku/*`; `fable/medium`, `fable/low`, `fable/max` (it checks four questions, it does not re-plan) | [judgment] |
 | Director | `opus/high` | `opus/max` after the user reverses an accepted verdict; `visual:` plan steps only. `fable/high` only by § Fable outside planning | `fable/medium`, `fable/low`, `fable/max` | [judgment] |
 | Explorer | `haiku/low` | the default only (read-only lookups and claim checks) | anything else, `fable/*` included | [judgment] |
@@ -178,6 +185,23 @@ journals which:
 "Complex", "important" and "to be safe" are not reasons. A role that wants Fable returns `blocked` with
 `need: tier — <reason>`; the orchestrator grants it, picks an Opus rung instead, or re-briefs, and journals the
 decision.
+
+### Mythos security review
+
+A security review on `mythos/high` is optional and never automatic: the user accepts an offer or asks (SKILL.md step 5 has the four
+offer points, the offer form, the run path and the journal line). `mythos/high` is the only Mythos tier. It is not on the failure
+ladder, never a rung toward Fable and never a Fable substitute; no other role runs it.
+
+- **Severe class** (the `severe` offer; your judgment over the plan's `boundary` steps, journaled with the class in `areas`): authn/authz decisions;
+  crypto, key or token handling; parsing or deserializing untrusted input on a network-exposed path; sandbox or permission checks;
+  memory-unsafe code handling untrusted input; code execution from input (eval, shell-out). A `boundary` step outside these gets
+  the normal `opus/high` review with no offer.
+- **Offer form:** a panel question (`orch ask`, reversible, `--blocks` only the security review), never assumed. The `severe` offer
+  recommends Mythos. Finish-point offers (`program_end`, `init_first`: whole repository, `orch brief security --whole-repo`) recommend Mythos
+  when usage is `OK` and `opus/high` at 5h `WARN`, `STALE` or `UNKNOWN`: no proactive Mythos under pressure, as with Fable.
+- **Failure:** a run that fails (no access, 404 under an API key, refusal) falls back to `opus/high` on the normal subagent path,
+  journaled; the offer is not repeated in that task. A declined offer changes nothing about the security rule.
+- **Timing:** finish-point offers run before the merge (SKILL.md step 10), so the findings are fixed on the task branch.
 
 ## Implementer routing
 
@@ -357,7 +381,7 @@ never sideways or down for the same work (one exception: an exact-edit fix list,
 | Sonnet only | as no Opus; gate-passing steps → `sonnet/high` (`sonnet/medium` at 5h WARN) | [measured] |
 | No Fable | the ladder ends `opus/high → opus/max` → the user | [judgment] |
 | Effort ceiling, e.g. ≤ medium | `haiku/medium` gated, `sonnet/medium` otherwise, `opus/medium` for signals; escalate by model only | [observed] |
-| 5h WARN, STALE or UNKNOWN | no proactive `opus/high`, except a `boundary` step whose due security review the user declined (it keeps `opus/high`; if that can't run, pause); signal steps keep `opus/medium` (the plan earned it); no proactive Fable (an earned post-failure Fable pass still runs, as with `opus/max`); batch fix findings; never send a step that fails the gate to Haiku for budget — pause instead | [judgment] |
+| 5h WARN, STALE or UNKNOWN | no proactive `opus/high`, except a `boundary` step whose due security review the user declined (it keeps `opus/high`; if that can't run, pause); signal steps keep `opus/medium` (the plan earned it); no proactive Fable (an earned post-failure Fable pass still runs, as with `opus/max`); finish-point Mythos offers recommend `opus/high` (§ Mythos security review); batch fix findings; never send a step that fails the gate to Haiku for budget — pause instead | [judgment] |
 | 5h STOP | pause (SKILL.md) | [current rule] |
 | 7d ≥ 90% | ask as a parked question (SKILL.md § Checkpoints and questions: recommended option first; recommend continue-as-routed when the remaining work is flagged or sensitive, otherwise saver routing): continue as routed; **saver routing** — unflagged, non-`sensitive` steps that fail the gate → `sonnet/medium`, the gate admits any M step, `algorithm`/`state` flags → `sonnet/high` with the sketch and escalation on the first failure, Opus kept for concurrency, `unknown_cause`, `refusal`, `boundary` stays `sonnet/high`; or hold until the reset | [measured for `sonnet/medium`; judgment for the rest] |
 | User waiting / urgent | no Haiku; gate-passing steps → `sonnet/high`; Opus signal steps keep Opus, and say it is slower; no `opus/high` unless earned; Fable only under reason 4 of § Fable outside planning (it replaces an `opus/max` tier) | [measured wall time; judgment] |
