@@ -56,7 +56,9 @@ fi
 
 # Shared sample log for `orch usage`: one line per change per session, plus a 60 s heartbeat.
 #   <epoch> <p5> <reset5_epoch|-> <p7|-> <reset7_epoch|-> <sid|-> <acct|->
-# acct = first 8 hex/dash chars of oauthAccount.accountUuid in $HOME/.claude.json, '-' when unreadable.
+# acct = "<first 8 hex/dash chars of oauthAccount.accountUuid>.<first 8 of oauthAccount.organizationUuid, or - when
+# unreadable>" in $HOME/.claude.json (one login can sit in several organizations, each with its own limits); '-' when the
+# account id is unreadable. The old form, 8 chars alone, is still accepted by the reader and by the dedup below.
 # Appended only when the fields (acct included) differ from the last line of the same sid (looked up over the whole
 # log, one awk pass) or >= 60 s passed. When that last line has the same four numbers and a real tag, its tag is reused
 # (the payload is unchanged, so it is still that account's, whatever $HOME/.claude.json says now, however many lines
@@ -71,7 +73,7 @@ orch_usage_log() {  # <epoch> <p5> <reset5_epoch> <p7> <reset7_epoch> <sid> <acc
   [[ "$r5" =~ ^[0-9]+$ ]] || r5="-"
   [[ "$r7" =~ ^[0-9]+$ ]] || r7="-"
   [[ "$sid" =~ ^[A-Za-z0-9._-]+$ ]] || sid="-"
-  [[ "$acct" =~ ^[0-9a-f-]{8}$ ]] || acct="-"
+  [[ "$acct" =~ ^[0-9a-f-]{8}(\.([0-9a-f-]{8}|-))?$ ]] || acct="-"
   [ "$p5" = "-" ] && [ "$p7" = "-" ] && return 0
   if [ -f "$f" ]; then
     # res = "<skip 0|1> <acct>". Unchanged numbers on this sid's last line mean the same payload, hence the same account: a
@@ -85,7 +87,7 @@ orch_usage_log() {  # <epoch> <p5> <reset5_epoch> <p7> <reset7_epoch> <sid> <acc
       }' "$f" 2>/dev/null)
     case "$res" in
       "1 "*) return 0 ;;
-      "0 "*) acct="${res#0 }"; [[ "$acct" =~ ^[0-9a-f-]{8}$ ]] || acct="-" ;;
+      "0 "*) acct="${res#0 }"; [[ "$acct" =~ ^[0-9a-f-]{8}(\.([0-9a-f-]{8}|-))?$ ]] || acct="-" ;;
     esac
   fi
   echo "$now $p5 $r5 $p7 $r7 $sid $acct" >> "$f"
@@ -101,7 +103,7 @@ if [ -n "$r7" ] && ! [[ "$r7" =~ ^[0-9]+$ ]]; then
   c="${r7%%.*}"; c="${c%Z}"; c="${c/T/ }"
   r7=$(date -j -u -f "%Y-%m-%d %H:%M:%S" "$c" +%s 2>/dev/null || date -u -d "$r7" +%s 2>/dev/null)
 fi
-acct=$(jq -r '(.oauthAccount.accountUuid // "") | strings | .[0:8]' "$HOME/.claude.json" 2>/dev/null || true)
+acct=$(jq -r '((.oauthAccount.accountUuid | strings | .[0:8]) // "") as $a | ((.oauthAccount.organizationUuid | strings | .[0:8]) // "") as $o | if $a == "" then "" else $a + "." + (if ($o | test("^[0-9a-f-]{8}$")) then $o else "-" end) end' "$HOME/.claude.json" 2>/dev/null || true)
 orch_usage_log "$now" "$p5" "${e:-}" "$p7" "${r7:-}" "$(j '.session_id // empty')" "$acct" >/dev/null 2>&1 || true
 
 if [ "${1:-}" = "--print" ]; then
