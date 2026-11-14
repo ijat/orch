@@ -15,6 +15,7 @@ class Schema(object):
     def __init__(self):
         self.kinds = {}   # kind -> {"fields": [...], "choice": bool}
         self.types = {}   # (kind or "*", field) -> "integer" | "boolean" | "array"
+        self.enums = {}   # (kind, field) -> allowed string values
 
     def type_of(self, kind, field):
         return self.types.get((kind, field)) or self.types.get(("*", field))
@@ -67,6 +68,13 @@ def _expand_type_token(tok):
     raise OrchError("journal.md Types line: cannot read %r" % tok, 3)
 
 
+def _parse_enum_token(tok):
+    m = re.match(r"^([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)=\{([^}]*)\}$", tok)
+    if not m:
+        raise OrchError("journal.md enum line: cannot read %r" % tok, 3)
+    return (m.group(1), m.group(2)), [v.strip() for v in m.group(3).split(",") if v.strip()]
+
+
 def load_schema(templates_dir=None):
     path = os.path.join(templates_dir or TEMPLATES_DIR, "journal.md")
     try:
@@ -95,6 +103,12 @@ def load_schema(templates_dir=None):
                 for k in kinds:
                     schema.kinds[k] = {"fields": fields[k], "choice": choice}
             continue
+        m = re.match(r"^\s*[-*]\s*enum\b[^:]*:\s*(.*)$", line)
+        if m:
+            for tok in re.findall(r"`([^`]+)`", m.group(1)):
+                key, values = _parse_enum_token(tok)
+                schema.enums[key] = values
+            continue
         m = re.match(r"^\s*[-*]\s*(integer|boolean|array)\s*:\s*(.*)$", line)
         if m:
             for tok in re.findall(r"`([^`]+)`", m.group(2)):
@@ -117,7 +131,18 @@ def _no_constant(name):
     raise ValueError("%s is not valid JSON" % name)
 
 
+def _check_enum(schema, kind, key, value):
+    allowed = schema.enums.get((kind, key))
+    if allowed is not None and value is not None and value not in allowed:
+        raise OrchError("%s.%s must be one of: %s (got %s)" % (kind, key, ", ".join(allowed), json.dumps(value)), 1)
+    return value
+
+
 def coerce(schema, kind, key, mode, raw):
+    return _check_enum(schema, kind, key, _coerce_typed(schema, kind, key, mode, raw))
+
+
+def _coerce_typed(schema, kind, key, mode, raw):
     t = schema.type_of(kind, key)
     if mode == ":=":
         try:

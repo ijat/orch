@@ -1039,6 +1039,40 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.assertIn("- range: main...%s" % self.tip(), text)
         self.assertNotIn("whole range", self.last_err)
 
+    def test_whole_repo_security_brief_diffs_the_empty_tree_against_the_tip(self):
+        self.round_one()
+        tree = self.git(self.repo, "hash-object", "-t", "tree", "/dev/null")
+        tip = self.tip()
+        _, text = self.brief("security", "--whole-repo")
+        self.assertIn("- range: %s..%s" % (tree, tip), text)
+        self.assertIn("- reviewed sha: %s" % tip, text)
+        self.assertIn("- scope: whole repository at %s" % tip, text)
+        self.assertIn("whole-repository review", text)
+        self.assertNotIn("whole range", self.last_err)
+        # `orch diff --range` reads the same range: every tracked file shows up as added
+        out, _ = self.cmd_ok("diff", "--range", "%s..%s" % (tree, tip), "--name-only")
+        tracked = self.git(self.wt, "ls-tree", "-r", "--name-only", tip).split()
+        self.assertEqual(sorted(out.split()), sorted(tracked))
+        # the reader `orch journal` uses stores the tip, not the tree
+        self.assertEqual(merge.brief_header(os.path.join(self.d, "briefs", "review-security-r1.md"), 1, False, None), tip)
+
+    def test_whole_repo_is_security_only_and_excludes_range(self):
+        self.round_one()
+        self.assertIn("--range", self.refused(1, "security", "--whole-repo", "--range", "main..orch/add-login"))
+        self.assertIn("belongs to `orch brief security`", self.refused(1, "review", "--whole-repo"))
+
+    def test_a_three_dot_range_from_the_empty_tree_is_not_accepted(self):
+        tree = self.git(self.repo, "hash-object", "-t", "tree", "/dev/null")
+        rc, _, err = self.cmd("diff", "--range", "%s...%s" % (tree, self.tip()))
+        self.assertEqual(rc, 1, err)
+
+    def test_whole_repo_round_one_only_changes_the_range_existing_ranges_are_as_before(self):
+        self.round_one()
+        self.commit(self.wt, "fix.txt", "x\n")
+        _, text = self.brief("security", "--round", "2")
+        self.assertIn("- range: main...%s" % self.tip(), text)
+        self.assertNotIn("- scope:", text)
+
     def test_a_check_keeps_the_round_and_has_its_own_path(self):
         one = self.round_one()
         self.commit(self.wt, "fix.txt", "x\n")

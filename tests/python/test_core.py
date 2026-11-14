@@ -745,6 +745,22 @@ class TestJournal(Base):
             self.refuse(1, "journal", kind, arg, "-t", "myapp/add-login")
             self.assertEqual(len(self.journal_lines(self.d)), n, (kind, arg))
 
+    def test_mythos_offer_fields_and_enums(self):
+        sch = jr.load_schema()
+        self.assertEqual(sch.kinds["mythos_offer"]["fields"], ["trigger", "answer", "tier", "areas"])
+        self.assertEqual(sch.type_of("mythos_offer", "areas"), "array")
+        self.j("mythos_offer", "trigger=program_end", "answer=declined", "tier=mythos/high", "areas=auth,crypto")
+        rec = self.last()
+        self.assertEqual((rec["trigger"], rec["answer"], rec["areas"]), ("program_end", "declined", ["auth", "crypto"]))
+        self.j("mythos_offer", "trigger:=null", "answer=accepted", "tier=mythos/high", "areas:=[]")
+        self.assertIsNone(self.last()["trigger"])
+        for arg in ("trigger=sometimes", "answer=maybe", "answer:=1", "trigger:=\"Severe\""):
+            n = len(self.journal_lines(self.d))
+            self.refuse(1, "journal", "mythos_offer", arg, "-t", "myapp/add-login")
+            self.assertEqual(len(self.journal_lines(self.d)), n, arg)
+        # other kinds keep their free-text fields
+        self.j("security_offer", "areas=auth", "answer=whatever", "late=false")
+
     def test_integers_must_not_be_floats_or_bools(self):
         self.refuse(1, "journal", "return", "tokens:=true", "-t", "myapp/add-login")
         self.refuse(1, "journal", "return", "tokens:=2.0", "-t", "myapp/add-login")

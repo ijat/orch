@@ -20,6 +20,7 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 | `escalation` **choice** | a tier is raised | `role`, `from`, `to`, `trigger` (plan_flag/plan_shape/planner_escalate/review_pattern/prior_tier_failed/blocker/user), `tradeoff` |
 | `blocker` | a role returns blocked | `role`, `need` (≤ 1 line), `rung` (1/2/3 — where it got resolved), `resolved_by` |
 | `security_offer` | old lines; new tasks only when `policy.md` says `security: ask` and the user was asked | `areas` (array), `answer` (accepted/declined/not_offered), `late` (bool) |
+| `mythos_offer` | each offer of a Mythos security review (SKILL.md step 5 and step 10) and the user's answer | `trigger` (severe/program_end/init_first/request), `answer` (accepted/declined), `tier`, `areas` (array) |
 | `review_round` | each reviewer return | `round`, `reviewer`, `blockers`, `should_fix`, `nits`, `verdict`, `sha` |
 | `follow_up` | `orch follow-up` parked a should-fix or nit in the repo's `follow-ups.md` | `finding`, `severity` (should-fix/nit), `file`, `text` |
 | `gate` | plan or merge approval | `gate` (plan/roadmap/merge/pilot), `outcome` (approved/revised/declined) |
@@ -56,7 +57,9 @@ A field not listed is a string, or free JSON when written with `:=`:
 
 - integer: `review_round.{round,blockers,should_fix,nits,cycle}`, `plan_review.{round,blockers,should,notes}`, `return.{tokens,tool_uses,duration_ms}`, `spawn.{usage_5h,usage_7d}`, `pause.usage_5h`, `resume.usage_5h`, `blocker.rung`, `task_end.rounds`, `checker.{fails,warns}`, `checkin.silent_min`, `pilot.{items,tokens,rounds,est_rest_tokens}`, `plan_revision.n`, `milestone_plan.revision`, `milestone_end.rounds`, `review_point.{rounds,blockers,should_fix,nits,late}`, `checkpoint.questions`, `continue_gate.ctx`, `*.milestone`
 - boolean: `security_offer.late`, `sketch.{sketch_wrong,escalated}`, `plan_shape.overridden`, `checkpoint.asked`, `auto_security.ran`, `assumed_decision.reversible`, `merge_point.tree_equal`
-- array: `*.alternatives`, `spawn.steps`, `security_offer.areas`, `auto_security.areas`, `plan_shape.criteria`, `replan.changed`, `review_point.span`, `milestone_end.tiers`, `milestone_plan.rows`, `continue_gate.{steps,routed,reasons}`
+- array: `*.alternatives`, `spawn.steps`, `security_offer.areas`, `mythos_offer.areas`, `auto_security.areas`, `plan_shape.criteria`, `replan.changed`, `review_point.span`, `milestone_end.tiers`, `milestone_plan.rows`, `continue_gate.{steps,routed,reasons}`
+
+- enum: `mythos_offer.trigger={severe,program_end,init_first,request}`, `mythos_offer.answer={accepted,declined}` (any other value is refused; null stays allowed)
 
 In a program, every other line also carries `milestone` (number, or null before the first one).
 
