@@ -196,6 +196,10 @@ ladder, never a rung toward Fable and never a Fable substitute; no other role ru
   crypto, key or token handling; parsing or deserializing untrusted input on a network-exposed path; sandbox or permission checks;
   memory-unsafe code handling untrusted input; code execution from input (eval, shell-out). A `boundary` step outside these gets
   the normal `opus/high` review with no offer.
+- **Switch:** the automatic offers (`severe`, `program_end`, `init_first`) fire only when `orch setting get mythos_review` prints `on`:
+  the orch-pane checkbox "Offer Mythos security reviews" (More tab, Advanced options) writes it, and it is off by default. Off means no
+  offer, no question and no journal line; the normal `opus/high` review rule is untouched. The user's own request ("Mythos review")
+  runs whatever the setting says.
 - **Offer form:** a panel question (`orch ask`, reversible, `--blocks` only the security review), never assumed. The `severe` offer
   recommends Mythos. Finish-point offers (`program_end`, `init_first`: whole repository, `orch brief security --whole-repo`) recommend Mythos
   when usage is `OK` and `opus/high` at 5h `WARN`, `STALE` or `UNKNOWN`: no proactive Mythos under pressure, as with Fable.
