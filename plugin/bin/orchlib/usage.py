@@ -64,7 +64,7 @@ PROJ7_SPAN = 20 * 3600  # 7d_proj only from >= 20 h of same-window 7d samples (a
 
 # $/MTok input, output, cache-read multiplier (TIERS.md rows; older ids for history). Longest id prefix wins.
 PRICES = {
-    'claude-fable-5-2': (8, 40, 0.025), 'claude-fable-5-1': (10, 50, 0.025), 'claude-fable-5': (10, 50, 0.1),
+    'claude-mythos-5-2': (8, 40, 0.025), 'claude-fable-5-2': (8, 40, 0.025), 'claude-fable-5-1': (10, 50, 0.025), 'claude-fable-5': (10, 50, 0.1),
     'claude-opus-5-5': (4, 20, 0.05), 'claude-opus-5': (5, 25, 0.1),
     'claude-opus-4-8': (5, 25, 0.1), 'claude-opus-4-7': (5, 25, 0.1),
     'claude-sonnet-5-5': (2, 10, 0.1), 'claude-sonnet-5': (2, 10, 0.1),
