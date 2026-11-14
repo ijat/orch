@@ -8,9 +8,11 @@ Reads only local files under H = $ORCH_USAGE_HOME or ~/.claude, plus the .claude
 logged-in account); writes only its state dir ($ORCH_USAGE_STATE or <orch data>/cache/usage/, atomic writes, never required).
 No network. I/O loaders are separate from compute(), which is pure (no files, no clock) so replays can drive it.
 
-Account rule: the samples of one account only. Every log line may carry the account (7th field: first 8 chars of
-oauthAccount.accountUuid, '-' or absent = untagged). The current account is the logged-in one: oauthAccount.accountUuid
-in the .claude.json beside H (same 8-char rule); only when that gives no valid id, the tag of the newest log line (an
+Account rule: the samples of one account only. Every log line may carry the account (7th field: the key
+`<first 8 chars of oauthAccount.accountUuid>.<first 8 of oauthAccount.organizationUuid, or '-' when that is unreadable>`;
+'-' or absent = untagged). One login can sit in several organizations with separate limits, so the organization is part of
+the key; an old 8-char tag (the account alone) equals no key, so it reads as another subscription. The current account is
+the logged-in one: that key from the .claude.json beside H; only when that gives no valid id, the tag of the newest log line (an
 untagged newest line then filters nothing). A log with no tagged line at all filters nothing either. The current
 account's tagged lines are kept whenever they were written (A -> B -> A keeps A's earlier window), other accounts' lines
 are dropped, and untagged log lines and legacy-cache samples count only from T, the first line of the current account's
@@ -62,7 +64,7 @@ PROJ7_SPAN = 20 * 3600  # 7d_proj only from >= 20 h of same-window 7d samples (a
 
 # $/MTok input, output, cache-read multiplier (TIERS.md rows; older ids for history). Longest id prefix wins.
 PRICES = {
-    'claude-fable-5-2': (8, 40, 0.025), 'claude-fable-5-1': (10, 50, 0.025), 'claude-fable-5': (10, 50, 0.1),
+    'claude-mythos-5-2': (8, 40, 0.025), 'claude-fable-5-2': (8, 40, 0.025), 'claude-fable-5-1': (10, 50, 0.025), 'claude-fable-5': (10, 50, 0.1),
     'claude-opus-5-5': (4, 20, 0.05), 'claude-opus-5': (5, 25, 0.1),
     'claude-opus-4-8': (5, 25, 0.1), 'claude-opus-4-7': (5, 25, 0.1),
     'claude-sonnet-5-5': (2, 10, 0.1), 'claude-sonnet-5': (2, 10, 0.1),
@@ -367,10 +369,33 @@ def _num(s):
     return v
 
 
+def _id8(tok):
+    return bool(tok) and len(tok) == 8 and all(c in '0123456789abcdef-' for c in tok) and tok != '-' * 8
+
+
 def _acct(tok):
-    """The log's 7th field -> account id, or None (untagged: '-', absent or malformed)."""
-    ok = tok and len(tok) == 8 and all(c in '0123456789abcdef-' for c in tok) and tok != '-' * 8
-    return tok if ok else None
+    """The log's 7th field -> account key, or None (untagged: '-', absent or malformed). A key is `<acct8>.<org8>`, org8 = '-'
+    when the organization was unreadable; the old form, `<acct8>` alone, is still read (it equals no new key)."""
+    if not tok:
+        return None
+    head, dot, org = tok.partition('.')
+    if not _id8(head):
+        return None
+    if dot and not (_id8(org) or org == '-'):
+        return None
+    return tok
+
+
+def account_key(account_uuid, org_uuid):
+    """The key for an oauthAccount's accountUuid and organizationUuid (either may be anything): '<acct8>.<org8|->', or None
+    when the account id is not a string of at least 8 valid chars. The one place that builds a key on the Python side."""
+    if not isinstance(account_uuid, str):
+        return None
+    head = account_uuid[:8]
+    if not _id8(head):
+        return None
+    org = org_uuid[:8] if isinstance(org_uuid, str) and _id8(org_uuid[:8]) else '-'
+    return head + '.' + org
 
 
 def load_log(home, with_acct=False):
@@ -419,15 +444,17 @@ def _drop_other_account(legacy, others):
 
 
 def load_account(home):
-    """The logged-in account: the first 8 chars of oauthAccount.accountUuid (a string) in the .claude.json beside H
-    (~/.claude -> ~/.claude.json), or None when the file, the key or the id is missing or invalid. Never raises."""
+    """The logged-in account key (account_key) from oauthAccount in the .claude.json beside H (~/.claude -> ~/.claude.json),
+    or None when the file, the key or the account id is missing or invalid. An unreadable organization gives '<acct8>.-'.
+    Never raises."""
     try:
         with open(os.path.join(os.path.dirname(os.path.abspath(home)), '.claude.json'), encoding='utf-8') as fh:
             d = json.load(fh)
-        u = d.get('oauthAccount', {}).get('accountUuid') if isinstance(d, dict) else None
+        o = d.get('oauthAccount') if isinstance(d, dict) else None
+        u, org = (o.get('accountUuid'), o.get('organizationUuid')) if isinstance(o, dict) else (None, None)
     except (OSError, ValueError, AttributeError):
         return None
-    return _acct(u[:8]) if isinstance(u, str) else None
+    return account_key(u, org)
 
 
 def by_account(log5, log7, legacy5, legacy7, current=None):

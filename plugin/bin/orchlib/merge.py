@@ -88,6 +88,12 @@ def commit_of(repo, name):
     return r.text if r.ok and HEX_RE.match(r.text) else None
 
 
+def empty_tree(repo):
+    """Sha of the empty tree in this repo's hash format (`git hash-object -t tree /dev/null`), or None."""
+    r = git(repo, "hash-object", "-t", "tree", "/dev/null")
+    return r.text if r.ok and HEX_RE.match(r.text) else None
+
+
 def branch_tip(repo, branch):
     return commit_of(repo, "refs/heads/%s" % branch)
 
@@ -445,6 +451,9 @@ def security_signals(ctx):
     for r in scoped(ctx, "security_offer", strict=False, null_ok=True):
         if str(r.get("answer")).strip().lower() == "accepted":
             sig.append("security_offer accepted")
+    for r in scoped(ctx, "mythos_offer", strict=False, null_ok=True):
+        if str(r.get("answer")).strip().lower() == "accepted":
+            sig.append("mythos_offer accepted")
     for r in scoped(ctx, "spawn", strict=False, null_ok=True):
         if str(r.get("role")).startswith("security-reviewer") or agent_key(r.get("agent")) == "orch-security-reviewer":
             sig.append("security reviewer spawned")

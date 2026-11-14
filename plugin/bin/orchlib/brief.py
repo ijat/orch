@@ -817,7 +817,10 @@ def check_range(repo, text):
         if merge.bad_ref(side):
             raise OrchError("--range: %r is %s" % (side, merge.bad_ref(side)), 1)
     sha = merge.commit_of(repo, right)
-    base_sha = merge.commit_of(repo, left)
+    if op == ".." and left.lower() == merge.empty_tree(repo):     # the whole-repository range: a tree, not a commit
+        base_sha = left
+    else:
+        base_sha = merge.commit_of(repo, left)
     if not sha or not base_sha:
         raise OrchError("--range %s does not resolve in %s" % (text, repo), 1)
     return left, op, right, sha
@@ -825,7 +828,13 @@ def check_range(repo, text):
 
 def review_range(c, ns, tip, reviewer="code", rnd=1, check=False, start=None):
     """(range text, reviewed sha). From round 2 (and for a check) the code review covers only what changed
-    since the last reviewed sha; security and round 1 keep the whole branch."""
+    since the last reviewed sha; security and round 1 keep the whole branch. `--whole-repo` (security only)
+    diffs the empty tree against the tip, so every file of the tree at the tip is in the range."""
+    if getattr(ns, "whole_repo", False):
+        tree = merge.empty_tree(c.repo_path)
+        if not tree:
+            raise OrchError("--whole-repo: cannot compute the empty tree in %s" % c.repo_path, 1)
+        return "%s..%s" % (tree, tip), tip
     if ns.range:
         left, op, _, sha = check_range(c.repo_path, ns.range)
         return "%s%s%s" % (left, op, sha), sha
@@ -951,6 +960,7 @@ def check_not_repinned(c, reviewer, rnd, path, sha):
 
 
 def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fresh=False):
+    whole = bool(getattr(ns, "whole_repo", False))
     plan = c.plan
     steps = plan.steps
     all_files = []
@@ -971,6 +981,8 @@ def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fre
     if c.program:
         head.append("- milestone: %d" % c.ms)
     head.append("- range: %s" % rng)
+    if whole:
+        head.append("- scope: whole repository at %s" % sha)
     cli_head = orch_head(c)
     head.append("- diff: %s diff --range %s  (add --step <id> or -- <path> to read one part)" % (cli_head, rng))
     if check:
@@ -979,6 +991,10 @@ def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fre
     out = ["\n".join(head),
            "Review exactly this range. If the branch has moved past %s, say so in your review file and don't "
            "review the newer commits. Read it with the `- diff:` command above, run in the worktree." % sha]
+    if whole:
+        out.append("This is a whole-repository review: the range is the empty tree to %s, so the diff is every file of "
+                   "the tree at that commit, not a change. Review the repository as a finished product; use `git ls-tree` "
+                   "and read by path when the diff is too long to read whole." % sha)
     if check:
         heading = "## Check of round %d" % rnd if cycle == 1 else "## Check %d of round %d" % (cycle, rnd)
         out.append("This is check %d of the fix commits for round %d, not a new round. Judge whether the fixes are "
@@ -1260,6 +1276,10 @@ def cmd_brief(ns, extra):
         raise OrchError("--escalation must be none, proactive or post-failure", 1)
     if ns.check and ns.kind != "review":
         raise OrchError("--check belongs to `orch brief review` (the fix-batch check of the code review)", 1)
+    if ns.whole_repo and ns.kind != "security":
+        raise OrchError("--whole-repo belongs to `orch brief security` (a whole-repository security review)", 1)
+    if ns.whole_repo and ns.range:
+        raise OrchError("--whole-repo and --range both set the range; give one", 1)
     c = load_ctx(ns, target=ns.kind in ("revise", "plan-review"))
     if ns.kind == "revise":
         return cmd_brief_revise(ns, c)
@@ -1287,5 +1307,7 @@ def register(add):
     sp.add_argument("--range", default=None)
     sp.add_argument("--round", type=int, default=None)
     sp.add_argument("--check", action="store_true")
+    sp.add_argument("--whole-repo", action="store_true", dest="whole_repo",
+                    help="security only: review every file at the tip (range = empty tree..tip)")
     sp.add_argument("--extra", default=None)
     pl.register(add)

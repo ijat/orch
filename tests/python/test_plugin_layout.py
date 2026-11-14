@@ -15,6 +15,7 @@ ROLES_DIR = os.path.join(SKILLS, "orchestrate", "roles")
 AGENTS_DIR = os.path.join(PLUGIN, "agents")
 ROLES = ("code-reviewer", "director", "executor", "explorer", "graph", "implementer", "init", "plan-reviewer",
          "planner", "security-reviewer")
+VARIANTS = ("security-reviewer-mythos",)   # rendered from a role's `variants:` line; they exist only in AGENTS_DIR
 NO_INIT = "|".join(sorted((r for r in ROLES if r != "init"), key=len, reverse=True))
 
 LEGACY_AGENT = re.compile(r"(?<![\w.:-])orch-(%s)(?![\w-])" % NO_INIT)
@@ -122,8 +123,8 @@ class Layout(unittest.TestCase):
     def test_t5_agent_files_names_and_tokens(self):
         for d in (ROLES_DIR, AGENTS_DIR):
             stems = sorted(os.path.splitext(os.path.basename(p))[0] for p in glob.glob(os.path.join(d, "*.md")))
-            self.assertEqual(stems, sorted(ROLES), d)
-            for r in ROLES:
+            self.assertEqual(stems, sorted(ROLES + (VARIANTS if d == AGENTS_DIR else ())), d)
+            for r in ROLES + (VARIANTS if d == AGENTS_DIR else ()):
                 with open(os.path.join(d, r + ".md"), encoding="utf-8") as fh:
                     head = fh.read().split("\n---", 1)[0]
                 self.assertRegex(head, r"(?m)^name: %s$" % re.escape(r), "%s/%s.md" % (d, r))
@@ -131,7 +132,7 @@ class Layout(unittest.TestCase):
         for rel, text in self.files:
             for m in AGENT_WORD.finditer(text):
                 w = m.group(1)
-                if w not in ROLES and w != "*" and w not in MARKERS:
+                if w not in ROLES and w not in VARIANTS and w != "*" and w not in MARKERS:
                     unknown.append("%s: %s" % (rel, m.group(0)))
         self.assertEqual(unknown, [], "orch:<x> where x is no role")
         self.assertEqual(hits(self.files, re.compile(r"mcp__orch-(pane|ui)__")), [])

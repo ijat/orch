@@ -226,8 +226,8 @@ class TestAnchor(Home):
 
 
 class TestAccount(Home):
-    """The account rule: one account's samples only (usage.py docstring). Accounts are fake 8-char ids."""
-    A, B = 'aaaaaaaa', 'bbbbbbbb'
+    """The account rule: one account's samples only (usage.py docstring). Accounts are fake keys '<acct8>.<org8>'."""
+    A, B = 'aaaaaaaa.a0a0a0a0', 'bbbbbbbb.b0b0b0b0'
     R7 = 1793890800            # the 2026-11-01 log shape: both accounts share this weekly reset (fixed-timestamp tests only)
 
     def setUp(self):
@@ -312,9 +312,13 @@ class TestAccount(Home):
         self.assertEqual(e.p7, 99)       # the instrument sees the bug when the rule is off
 
     def set_acct(self, body):
-        """A fake .claude.json beside H: a str is the accountUuid, anything else is written verbatim (bytes)."""
+        """A fake .claude.json beside H: a key ('<acct8>.<org8>') is written as accountUuid and organizationUuid, an
+        (account uuid, organization uuid) tuple as given, anything else verbatim (bytes)."""
+        if isinstance(body, str):
+            body = (body[:8] + '-1111', body[9:] + '-2222')
         with open(os.path.join(os.path.dirname(self.home), '.claude.json'), 'wb') as fh:
-            fh.write(json.dumps({'oauthAccount': {'accountUuid': body}}).encode() if isinstance(body, str) else body)
+            fh.write(json.dumps({'oauthAccount': {'accountUuid': body[0], 'organizationUuid': body[1]}}).encode()
+                     if isinstance(body, tuple) else body)
 
     def stale_newest(self):
         """The review's F4 probe: idle sid-y renders its stale A payload (inherited tag A) after B's latest line."""
@@ -325,7 +329,7 @@ class TestAccount(Home):
 
     def test_logged_in_account_beats_a_stale_newest_line(self):
         self.stale_newest()
-        self.set_acct(self.B + '-1111-2222')
+        self.set_acct(self.B)
         for now in (1793520150, 1793520400):
             e = self.at(now)
             self.assertEqual((e.p7, e.p5), (21, 48))
@@ -340,7 +344,7 @@ class TestAccount(Home):
 
     def test_load_account(self):
         self.assertIsNone(usage.load_account(self.home))
-        self.set_acct(self.B + '-1111')
+        self.set_acct(self.B)
         self.assertEqual(usage.load_account(self.home), self.B)
         self.assertEqual(usage.load_account(self.home + os.sep), self.B)
         self.set_acct(b'{"oauthAccount": null}')
@@ -352,7 +356,7 @@ class TestAccount(Home):
         self.line(now - 60, 30, r5, 5, self.r7, None)
         self.legacy('5h', r5, [(now - 30, 31)])
         before = self.est()
-        self.set_acct(self.B + '-1111')
+        self.set_acct(self.B)
         after = self.est()
         self.assertEqual((after.p5, after.p7, after.age5), (before.p5, before.p7, before.age5))
         self.assertEqual((after.p5, after.p7), (60, 50))
@@ -362,7 +366,7 @@ class TestAccount(Home):
         self.line(now - 900, 60, r5, 50, self.r7, self.A)
         self.line(now - 60, 30, r5, 52, self.r7, None)                 # untagged: not known to be B's
         self.legacy('5h', r5, [(now - 30, 31)])
-        self.set_acct(self.B + '-1111')
+        self.set_acct(self.B)
         e = self.est()
         self.assertEqual((e.p5, e.p7), (None, None))
         self.line(now - 20, 5, r5, 3, self.r7, self.B)                # B's first line: its run starts, T = now - 20
@@ -378,6 +382,53 @@ class TestAccount(Home):
         self.assertEqual(l7, [(200, 5, 9), (220, 6, 9), (230, 7, 9)])  # B's run back from 220 stops at A's 210: T = 220
         self.assertEqual(g7, [(225, 9, 9)])                             # 205 before T; 305 matches A's stale 97
         self.assertEqual(usage.by_account([], log7, [], leg7)[0], A)   # no current: newest line (the old rule)
+
+    def test_two_organizations_of_one_account_do_not_mix(self):
+        # the 2026-11-14 bug: one accountUuid, two organizations, the same weekly reset; the other one's 98 won the max
+        a_o1, a_o2 = 'aaaaaaaa.11111111', 'aaaaaaaa.22222222'
+        r5, now = self.r5, self.now
+        self.line(now - 7200, 80, r5, 98, self.r7, a_o1)
+        self.line(now - 3600, 90, r5, 97, self.r7, a_o1)
+        self.line(now - 300, 12, r5, 41, self.r7, a_o2)
+        self.line(now - 60, 14, r5, 42, self.r7, a_o2)
+        self.set_acct(a_o2)
+        e = self.est()
+        self.assertEqual((e.p5, e.p7), (14, 42))
+        self.assertEqual(int(e.age7), 60)                 # the chosen key's newest sample
+        self.set_acct(a_o1)
+        e = self.est()
+        self.assertEqual((e.p5, e.p7), (90, 98))
+        self.assertEqual(int(e.age7), 7200)               # age is the newest 98, the key's own high-water sample
+        self.set_acct(('aaaaaaaa-1', None))               # unreadable organization: key 'aaaaaaaa.-', no line of it yet
+        self.assertEqual(usage.load_account(self.home), 'aaaaaaaa.-')
+        e = self.est()
+        self.assertEqual((e.p5, e.p7), (None, None))
+        self.line(now - 30, 5, r5, 3, self.r7, 'aaaaaaaa.-')
+        e = self.est()
+        self.assertEqual((e.p5, e.p7), (5, 3))
+
+    def test_an_old_8_char_tag_is_another_subscription_after_the_upgrade(self):
+        r5, now = self.r5, self.now
+        self.line(now - 900, 60, r5, 98, self.r7, 'aaaaaaaa')              # the old writer's tag
+        self.set_acct('aaaaaaaa.22222222')
+        self.assertEqual((self.est().p5, self.est().p7), (None, None))      # no sample of the new key yet
+        self.line(now - 20, 5, r5, 41, self.r7, 'aaaaaaaa.22222222')
+        e = self.est()
+        self.assertEqual((e.p5, e.p7), (5, 41))
+        self.assertEqual(usage.by_account([(1, 9, 9, 's', 'aaaaaaaa')], [(1, 9, 9, 'aaaaaaaa')], [], [],
+                                          current='aaaaaaaa.22222222')[0], 'aaaaaaaa.22222222')
+
+    def test_key_forms(self):
+        self.assertEqual(usage._acct('aaaaaaaa.11111111'), 'aaaaaaaa.11111111')
+        self.assertEqual(usage._acct('aaaaaaaa.-'), 'aaaaaaaa.-')
+        self.assertEqual(usage._acct('aaaaaaaa'), 'aaaaaaaa')
+        for bad in (None, '', '-', 'aaaaaaaa.', 'aaaaaaaa.1111', '.11111111', 'aaaaaaaa.ZZZZZZZZ', 'aaaaaaaa.11111111.1', '--------.-'):
+            self.assertIsNone(usage._acct(bad), bad)
+        self.assertEqual(usage.account_key('aaaaaaaa-1111', 'bbbbbbbb-2222'), 'aaaaaaaa.bbbbbbbb')
+        for org in (None, 5, 'short', 'ZZZZZZZZ-1'):
+            self.assertEqual(usage.account_key('aaaaaaaa-1111', org), 'aaaaaaaa.-')
+        for acct in (None, 5, 'short', 'AAAAAAAA-1'):
+            self.assertIsNone(usage.account_key(acct, 'bbbbbbbb-2222'))
 
     def test_a_b_a_keeps_earlier_a_window(self):
         r5, now = self.r5, self.now
@@ -535,6 +586,11 @@ class TestCompute(unittest.TestCase):
         self.assertAlmostEqual(e.k, k)
         self.assertAlmostEqual(e.est, 50 + k * 2.0)
         self.assertAlmostEqual(e.ext, 10.0)
+
+    def test_mythos_has_its_own_price_row(self):
+        self.assertEqual(usage.price('claude-mythos-5-2'), (8, 40, 0.025))      # not the top row ($10 / $50)
+        r = usage.Req(0, 'claude-mythos-5-2', 1000000, 0, 0, 0, 1000000, 'x')
+        self.assertAlmostEqual(usage.cost(r), 8 + 40)
 
     def test_unknown_model_priced_at_top_row(self):
         r = usage.Req(0, 'claude-newmodel-9', 1000000, 0, 0, 0, 1000000, 'x')
