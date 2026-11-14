@@ -289,6 +289,8 @@ declare module 'claude-code' {
       notify: boolean
       compactSend: boolean
       auto: boolean
+      // "Offer Mythos security reviews": the value `orch setting get mythos_review` printed (the CLI's file is the source)
+      mythos: boolean
       drafts: Shaped<{ loaded: boolean; byTask: Drafts }>
       qstate: QState
       hist: { query: string; page: number }
