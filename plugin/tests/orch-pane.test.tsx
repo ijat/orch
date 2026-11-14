@@ -2321,6 +2321,27 @@ test('Offer Mythos security reviews: the box shows the CLI value (a change made 
   await ui.unmount()
 })
 
+test('the More tab has an orch-ui section with the formatter settings (the old /orch:ui pane is gone), drawn only while More is open', async ($, on) => {
+  const { ui, store } = await pane($, on, [PROGRAM], { 'opt:format-model': 'sonnet' })
+  expect(await buttonText(ui, 'opt-format')).toBeUndefined()
+  await ui.press({ key: 'tab:more' })
+  expect((await ui.findAll({ type: 'Text' })).some(t => t.text === 'orch-ui')).toBe(true)
+  expect(await buttonText(ui, 'opt-format')).toBe('[ ] Format replies')
+  expect(await buttonText(ui, 'opt-format-trigger')).toBe('Format trigger: marked')
+  expect(await buttonText(ui, 'opt-format-model')).toBe('Format model: sonnet')
+  expect(await buttonText(ui, 'opt-format-billing')).toBe('Format billing: API key')       // the default
+  expect(await buttonText(ui, 'opt-format-key')).toBe('Format API key: ANTHROPIC_API_KEY')   // the key row only while billing is api
+  await ui.press({ key: 'opt-format' })
+  expect(store.get('opt:format')).toBe(true)                           // same storage as before the move
+  expect(await buttonText(ui, 'opt-format')).toBe('[x] Format replies')
+  await ui.press({ key: 'opt-format-billing' })
+  expect(store.get('opt:format-billing')).toBe('subscription')
+  expect(await buttonText(ui, 'opt-format-key')).toBeUndefined()
+  await ui.press({ key: 'tab:more' })                                  // folded again: the section is gone with it
+  expect(await buttonText(ui, 'opt-format')).toBeUndefined()
+  await ui.unmount()
+})
+
 test('Compact, then send skips the compaction while an agent runs, and still sends and wakes', async ($, on) => {
   const { ui, w } = await pane($, on, [withQs(PROGRAM, [mkq(1)])])
   await ui.press({ key: 'tab:more' })

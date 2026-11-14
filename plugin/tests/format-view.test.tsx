@@ -100,7 +100,7 @@ async function boot($: Engine, on: On, seed: Record<string, unknown> = { 'opt:fo
   on('session.cwd', () => ({ value: '/proj' }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', (_, e) => {
-    // Neither mod registers a bare command (/orch:pane and /orch:ui are the plugin's command files): recorded so a test
+    // Neither mod registers a bare command (/orch:pane is the plugin's command file): recorded so a test
     // can say none was.
     w.commands.push(e.name)
     return { value: { command: e.name } }
@@ -241,12 +241,15 @@ type Ui = Awaited<ReturnType<typeof show>>
 const isOriginal = async (ui: Ui) => (await ui.drawn()).type === 'engine'
 const texts = async (ui: Ui) => (await ui.findAll({ type: 'Text' })).map(t => t.text)
 
+// orch-ui's settings are the "orch-ui" section of orch-pane's More tab (the old /orch:ui pane is gone).
 const PANE = {
-  plugin: 'orch', component: 'Pane', requestId: 'orch-ui', surface: 'terminal',
-  props: { title: 'orch-ui', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} },
+  plugin: 'orch', component: 'Pane', requestId: 'orch-pane', surface: 'terminal',
+  props: { title: 'Orchestration', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} },
 } as const
 async function settingsPane($: Engine) {
-  return $.ui.mount(PANE as never)
+  const ui = await $.ui.mount(PANE as never)
+  if (!(await ui.find({ type: 'Button', key: 'opt-format' }))) await ui.press({ key: 'tab:more' })   // the tab atom outlives a mount
+  return ui
 }
 const optionRow = async (ui: Awaited<ReturnType<typeof settingsPane>>) => {
   const row = await ui.find({ type: 'Button', key: 'opt-format' })
@@ -407,20 +410,22 @@ test('summary rows and other surfaces are left as they are', async ($, on) => {
 
 // -- the settings pane ----------------------------------------------------------------------------------
 
-test('session start registers no bare command and /orch:ui opens the pane', async ($, on) => {
+test('session start registers no bare command and the orch-ui settings show under the More tab of orch-pane', async ($, on) => {
   const b = await boot($, on)
   expect(b.w.commands).toEqual([])
-  const out = await $.command.run({ command: 'orch:ui', args: '' } as never)
+  const ui = await settingsPane($)
   await b.clock.settle()
-  expect(out.text).toBe('orch-ui settings opened.')
-  expect(b.w.opened).toHaveLength(1)
-  expect(b.w.opened[0]).toMatchObject({ id: 'orch-ui', title: 'orch-ui', closeOnEscape: true })
+  expect(await ui.find({ type: 'Button', key: 'opt-format' })).toBeDefined()
+  expect((await texts(ui)).some(t => t === 'orch-ui')).toBe(true)
+  // The orch-ui mod has no pane or command of its own any more.
+  expect(b.w.opened.filter(o => (o as { id?: string }).id === 'orch-ui')).toEqual([])
+  await ui.unmount()
 })
 
 test('the pane holds the Format replies row and the five setting rows, in order', async ($, on) => {
   await boot($, on, SETTINGS_SEED)
   const ui = await settingsPane($)
-  expect((await ui.findAll({ type: 'Button' })).map(x => x.key)).toEqual(['opt-format', ...ROW_KEYS])
+  expect(await buttonKeys(ui)).toEqual(['opt-format', ...ROW_KEYS])
   expect((await optionRow(ui)).label).toBe('[x] Format replies')
   await ui.unmount()
 })
@@ -430,7 +435,8 @@ const SETTINGS_SEED = { 'opt:format': true, 'opt:format-trigger': undefined }
 const ROW_KEYS = ['opt-format-trigger', 'opt-format-model', 'opt-format-effort', 'opt-format-billing', 'opt-format-key']
 type SettingsPane = Awaited<ReturnType<typeof settingsPane>>
 const buttonText = async (ui: SettingsPane, key: string) => (await ui.find({ type: 'Button', key }))?.text
-const buttonKeys = async (ui: SettingsPane) => (await ui.findAll({ type: 'Button' })).map(x => x.key)
+// Only the orch-ui section's buttons: the pane's own tabs and options are not this suite's.
+const buttonKeys = async (ui: SettingsPane) => (await ui.findAll({ type: 'Button' })).map(x => x.key).filter(k => k?.startsWith('opt-format'))
 const paneTexts = async (ui: SettingsPane) => (await ui.findAll({ type: 'Text' })).map(t => t.text)
 
 // -- the settings row ------------------------------------------------------------------------------------
@@ -718,7 +724,7 @@ test('with the option off the tool says so and changes nothing', async ($, on) =
   await boot($, on, {})
   await orchestrate($)
   for (const input of [{ format: 'raw' }, { format: 'raw', scope: 'session' }, { format: 'formatted' }]) {
-    expect(resultOf(await callTool($, input))).toBe("Formatting is off in orch-ui's settings (/orch:ui); nothing changed.")
+    expect(resultOf(await callTool($, input))).toBe("Formatting is off in orch-ui's settings (the More tab of /orch:pane); nothing changed.")
   }
   const ui = await settingsPane($)
   expect((await optionRow(ui)).note).toBeUndefined()
@@ -780,11 +786,6 @@ async function bootThenStore($: Engine, on: On, stored: Record<string, unknown> 
 
 test('after a /clear the stored model, effort and billing are the ones a conversion uses and the pane draws', async ($, on) => {
   const b = await bootThenStore($, on)
-  // The instrument: the atoms really read their defaults here (a pane left open draws them; see the README).
-  const before = await settingsPane($)
-  expect((await optionRow(before)).label).toBe('[ ] Format replies')
-  expect(await buttonText(before, 'opt-format-model')).toBe('Format model: opus')
-  await before.unmount()
   await convertOne($, b)
   expect(b.w.calls).toHaveLength(1)
   // Stored subscription billing: no --bare, so no API key can pay for this call.
@@ -799,9 +800,8 @@ test('after a /clear the stored model, effort and billing are the ones a convers
   await ui.unmount()
 })
 
-test('after a /clear /orch:ui loads the stored settings before the pane opens', async ($, on) => {
+test('after a /clear the More tab loads the stored settings before it draws the orch-ui section', async ($, on) => {
   const b = await bootThenStore($, on)
-  await $.command.run({ command: 'orch:ui', args: '' } as never)
   await b.clock.settle()
   const ui = await settingsPane($)
   expect((await optionRow(ui)).label).toBe('[x] Format replies')
@@ -1653,7 +1653,7 @@ test('"formatted" says why and makes no call when formatting is off or paused, o
   const off = await boot($, on, { 'opt:format': false })
   await orchestrate($)
   await finish($, off, options.source)
-  expect(resultOf(await callTool($, { format: 'formatted' }))).toBe("Formatting is off in orch-ui's settings (/orch:ui); nothing changed.")
+  expect(resultOf(await callTool($, { format: 'formatted' }))).toBe("Formatting is off in orch-ui's settings (the More tab of /orch:pane); nothing changed.")
   expect(off.w.calls).toEqual([])
 })
 

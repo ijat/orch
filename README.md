@@ -105,9 +105,9 @@ The pane sits beside the chat and shows each task:
 - **Needs you**: the questions agents have parked, each option explained in plain words. Pick one and the
   session carries on.
 
-It opens by itself when you start a session in a repo with an active task. `/orch:ui` opens the settings for
-orch-ui, an optional mod that redraws the orchestrator's longer replies in a cleaner layout. It is off by
-default, and each redraw costs one model call.
+It opens by itself when you start a session in a repo with an active task. Its More tab holds the settings,
+including the "orch-ui" section for the optional mod that redraws the orchestrator's longer replies in a cleaner
+layout. That mod is off by default, and each redraw costs one model call.
 
 Prefer a browser? `orch dashboard --serve` serves a read-only page on `127.0.0.1:8765`.
 

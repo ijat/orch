@@ -3,7 +3,7 @@ import type { On } from 'claude-code'
 import type { Engine, MockClock } from 'claude-code/testing'
 
 // The plugin's one module (hooks/register.tsx) runs both mods' session starts, each in its own try/catch. Neither start
-// registers a bare command (/orch:pane and /orch:ui are the plugin's command files, served by command.run hooks), and
+// registers a bare command (/orch:pane is the plugin's command file, served by a command.run hook), and
 // neither makes an engine call left uncaught, so no test here can make one start fail: this checks what both do.
 
 type World = { commands: string[]; tools: string[]; logs: string[]; clock: MockClock }
