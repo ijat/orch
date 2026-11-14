@@ -657,6 +657,18 @@ class TestSecurityCondition(GitBase):
     def offer(self, answer="accepted", **kw):
         self.cmd_ok("journal", "security_offer", "areas=auth", "answer=" + answer, "late:=%s" % kw.get("late", "false"))
 
+    def mythos(self, answer="accepted", trigger="severe"):
+        self.cmd_ok("journal", "mythos_offer", "trigger=" + trigger, "answer=" + answer, "tier=mythos/high", "areas=auth")
+
+    def test_an_accepted_mythos_offer_makes_the_review_due(self):
+        self.mythos("accepted")
+        err = self.refuse_merge("security")
+        self.assertIn("mythos_offer accepted", err)
+
+    def test_a_declined_mythos_offer_changes_nothing(self):
+        self.mythos("declined")
+        self.merge_ok("--check", "--recheck-ok")
+
     def auto(self, ran, rule="step5", ms=None):
         args = ["journal", "auto_security", "areas=auth", "ran:=%s" % ran, "rule=%s" % rule]
         if ms is not None:
