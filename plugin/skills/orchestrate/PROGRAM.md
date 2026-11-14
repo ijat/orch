@@ -111,7 +111,9 @@ every remaining milestone depends on open questions.
 ## 5. Program end
 
 The last milestone is always a merge point, and a review point unless the user approved `skip` (the
-checker enforces it). Then SKILL.md step
+checker enforces it). Before that merge, offer the Mythos whole-repository security review (`mythos_offer trigger=program_end`,
+SKILL.md steps 5 and 10); an accepted one is a security round on the program branch and its findings are fixed before the merge.
+Then SKILL.md step
 11 cleanup, `task_end`, and `retro.md` with its **Milestones: planned vs actual** table filled.
 
 ## Resume
