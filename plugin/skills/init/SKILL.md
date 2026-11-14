@@ -115,7 +115,7 @@ instead. Never overwrite an existing `CLAUDE.md`.
    `docs/STATE.md`, `docs/DECISIONS.md` and `~/.claude/orch-data/tasks/<repo-name>/init.md` as required
    reading (each "if set up": after a skip they do not exist and the brief omits them), and the init
    commit is the base the plan is made against. The planner treats DECISIONS.md rows as settled ("don't re-open unless the
-   user asks"). The refresh runs once after the first merge (below). Before that merge orchestrate offers a whole-repository Mythos
+   user asks"). The refresh runs once after the first merge (below). Before that merge, when `orch setting get mythos_review` prints `on`, orchestrate offers a whole-repository Mythos
    security review (SKILL.md step 5, `init_first`): optional, asked as a panel question, never assumed.
 
 ## Mode `refresh`

@@ -595,12 +595,14 @@ row (`orch role security-reviewer pending --note "<why>"`, or `not_offered` with
 declines a due review, the merge goes to the user.
 
 **Mythos security review — optional, never automatic** (`TIERS.md` § Mythos security review). It runs only after the user
-accepts an offer or asks, at four points, each journaled `orch journal mythos_offer trigger=<severe|program_end|init_first|request>
+accepts an offer or asks. The three automatic offer points below fire only when `orch setting get mythos_review` prints `on`
+(the orch-pane checkbox "Offer Mythos security reviews", default off); off means no offer, no question and no journal line. Each
+offer or request is journaled `orch journal mythos_offer trigger=<severe|program_end|init_first|request>
 answer=<accepted|declined> tier=mythos/high areas:='[…]'`:
 - `severe`: the rule above fires on a `boundary` step of the severe class (`TIERS.md`): offer Mythos for that diff review, recommended.
 - `program_end`: a program's last milestone, before its merge: offer a whole-repository review (`orch brief security --whole-repo`).
 - `init_first`: the merge that fires the init refresh (`init.md` says `refresh: pending`): the same whole-repository offer.
-- `request`: the user asks ("Mythos review"): no offer; a task in progress gets it as a security round, with none you make a review-only task.
+- `request`: the user asks ("Mythos review"): no offer, and it runs whatever the setting says; a task in progress gets it as a security round, with none you make a review-only task.
 
 An offer is a panel question (`orch ask`, `--reversible yes`, `--blocks` the security review only), never assumed. Finish-point
 offers recommend Mythos when usage is `OK` and Opus (`opus/high`) at `WARN`, `STALE` or `UNKNOWN` (no proactive Mythos under pressure). An accepted offer
@@ -788,7 +790,7 @@ If the repo has rules about user-facing output, grep the **built artefact** for 
 strings yourself before this gate — a green report checked the source. When you brief anyone to
 embed a whole file, say where it must and must not land.
 
-**Finish-point Mythos offers** (`program_end`, `init_first`) are asked once code review has passed and before the final gate, so an accepted
+**Finish-point Mythos offers** (`program_end`, `init_first`; only when `orch setting get mythos_review` prints `on`) are asked once code review has passed and before the final gate, so an accepted
 whole-repository review is a security round on the task branch: its findings are fixed through step 9 before the merge, and
 `orch merge` waits for a clean round at the tip.
 

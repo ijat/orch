@@ -44,6 +44,10 @@ const NOTIFY_KEY = 'opt:notify'
 const compactSend = atom({ plugin: 'orch', key: 'compactSend' } as const, false)
 const COMPACT_SEND_KEY = 'opt:compact-send'
 const auto = atom({ plugin: 'orch', key: 'auto' } as const, false)
+// Offer Mythos security reviews: the value lives in orch's settings.json (`orch setting`), not in $.store, so the CLI the
+// orchestrator reads and this checkbox always agree. The atom only serves the drawing; it starts off, as the setting does.
+const mythos = atom({ plugin: 'orch', key: 'mythos' } as const, false)
+const MYTHOS_SETTING = 'mythos_review'
 // Unsent answers (D5): the atom serves the drawing, $.store keeps them; a pane whose atom was lost reloads them.
 const EMPTY_DRAFTS: { loaded: boolean; byTask: Drafts } = { loaded: false, byTask: {} }
 const drafts = atom({ plugin: 'orch', key: 'drafts' } as const, EMPTY_DRAFTS, { shape: 'drafts-1' })
@@ -720,6 +724,31 @@ async function loadAi($: EngineInterface) {
   }
 }
 
+// `orch setting get mythos_review` -> the atom (on only when the CLI prints `on`; any failure leaves it as it was).
+async function loadMythos($: EngineInterface) {
+  const where = await whereIsOrch($)
+  if (!where) return
+  try {
+    const ran = await $.process.run([...(where.windows ? ['python'] : []), where.orch, 'setting', 'get', MYTHOS_SETTING], { timeoutMs: RUN_TIMEOUT_MS })
+    if (ran.exitCode === 0) await update($, mythos, () => ran.stdout.trim() === 'on')
+  } catch {
+    // The atom keeps what it had: off at the start of a session.
+  }
+}
+
+// Flip the setting through the CLI, then show what the CLI now says (a refused write leaves the box as it was).
+async function toggleMythos($: EngineInterface) {
+  const where = await whereIsOrch($)
+  if (!where) return
+  const next = (await read($, mythos)) === true ? 'off' : 'on'
+  try {
+    await $.process.run([...(where.windows ? ['python'] : []), where.orch, 'setting', 'set', MYTHOS_SETTING, next], { timeoutMs: RUN_TIMEOUT_MS })
+  } catch {
+    // Read back below: the box shows the stored value either way.
+  }
+  await loadMythos($)
+}
+
 async function toggleNotify($: EngineInterface) {
   const next = (await read($, notify)) !== true
   await update($, notify, () => next)
@@ -944,6 +973,7 @@ export async function startPane($: EngineInterface): Promise<void> {
   autoDone.clear()
   autoBusy = false
   void loadAi($)
+  void loadMythos($)
   void loadDrafts($)
   void (async () => {
     const data = await fetchStatus($)
@@ -1006,6 +1036,7 @@ export const registerPane: Register = on => {
     const autoOn = (await read($, auto)) === true
     const notifyOn = (await read($, notify)) === true
     const compactSendOn = (await read($, compactSend)) === true
+    const mythosOn = (await read($, mythos)) === true
     const qs = await readQ($)
     const stored = await read($, drafts)
     const ds: Drafts = stored && typeof stored.byTask === 'object' && stored.byTask ? stored.byTask : {}
@@ -1632,6 +1663,7 @@ export const registerPane: Register = on => {
         check('opt-auto', autoOn, 'Auto-answer with recommended', 'reversible questions only; History shows ◆ Auto', () => toggleAuto($)),
         check('opt-notify', notifyOn, 'Notify me when a question arrives', null, () => toggleNotify($)),
         check('opt-compact-send', compactSendOn, 'Compact, then send', 'sending answers compacts the conversation first; skipped while an agent runs', () => toggleCompactSend($)),
+        check('opt-mythos', mythosOn, 'Offer Mythos security reviews', 'off: the orchestrator never offers one (you can still ask for it); on: it asks before a Mythos review of high-risk code and of a finished product', () => toggleMythos($)),
         ...(snap.about
           ? [
               subhead('About'),
@@ -1657,7 +1689,10 @@ export const registerPane: Register = on => {
       <Box flexDirection="row" flexWrap="wrap">
         {TABS.flatMap((t, i) => [
           i > 0 ? <Text dimColor>{' │ '}</Text> : null,
-          <Button key={`tab:${t.id}`} plain onPress={() => update($, tab, cur => (cur === t.id ? null : t.id))}>
+          <Button key={`tab:${t.id}`} plain onPress={async () => {
+            await update($, tab, cur => (cur === t.id ? null : t.id))
+            if (t.id === 'more') await loadMythos($)   // the CLI's value, in case it changed since the last look
+          }}>
             <Text bold={openTab === t.id ? true : undefined} underline={openTab === t.id ? true : undefined}
               color={openTab === t.id ? 'suggestion' : undefined} dimColor={openTab === t.id ? undefined : true}>{t.label}</Text>
           </Button>,
