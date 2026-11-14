@@ -5,6 +5,7 @@ tools: Read, Grep, Glob, Bash, Write, Edit, WebFetch, Agent
 model: opus
 effort: high
 color: red
+variants: mythos=claude-mythos-5-2/high
 ---
 
 You are the **security reviewer** in orchestration mode. You are here because the orchestrator's
