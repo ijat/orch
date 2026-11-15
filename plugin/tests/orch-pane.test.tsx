@@ -6,7 +6,7 @@ import {
   agentPalette, agentPct, agentPctTail, askContext, barCells, barLayout, countTail, fold, goalLine, hhmm, idleMinutes, isStale, lastActivity, lineText, mdLite,
   bytesText, indexDetails, indexHeadline, indexLook, overallTail, parseIndex, placeText, plainInput, scopeLabel, shimmer,
   sortByAttention, splitScope, isMine, spawnOf, sparkline, stepsTail, textKey,
-  WAKE_TEXT, acceptable, answerOf, answersArgv, autoPairs, historyRows, isCritical, mergeOrder, metaText, nextInQueue, optionNote,
+  MEMORY_PROMPT, WAKE_TEXT, memoryStateOf, acceptable, answerOf, answersArgv, autoPairs, historyRows, isCritical, mergeOrder, metaText, nextInQueue, optionNote,
   pageCount, pickCurrent, pickedLabel, staleQuestion, togglePick, isChosen, isMulti, needsHoldRow, openListOf, skipFor,
   COMPACT_TOOL_FULL, COMPACT_WAKE_TEXT, busyReason,
 } from '../hooks/pane/lib'
@@ -85,6 +85,9 @@ type World = {
   tools: string[]; compacts: (string | undefined)[]; compactFails: number; order: string[]
   // `orch setting` runs, the stored value of `mythos_review` (the CLI's file, default off) and whether a `set` fails.
   settingRuns: string[][]; mythos: 'on' | 'off'; settingRefuses?: boolean
+  // `orch memory` runs, the value `autoMemoryEnabled` has in the project's local settings file ('false' | 'unset'), the
+  // global file's value, and whether a switch fails.
+  memoryRuns: string[][]; memoryLocal: 'false' | 'unset'; memoryGlobal: 'false' | 'unset'; memoryRefuses?: boolean
 }
 
 const INDEX: IndexStatus = {
@@ -116,7 +119,7 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
                env: Record<string, string> = { HOME: '/home/u' }): World {
   const w: World = {
     runs: [], indexRuns: [], opens: 0, paneOpen: true, placed: true, result, index: INDEX_RAN,
-    answers: [], answered: { exitCode: 0, stdout: 'Q1 answered', stderr: '' }, onAnswers: () => {}, groups: {}, groupRuns: [], toasts: [], wakes: [], notes: [], tools: [], compacts: [], compactFails: 0, order: [], settingRuns: [], mythos: 'off',
+    answers: [], answered: { exitCode: 0, stdout: 'Q1 answered', stderr: '' }, onAnswers: () => {}, groups: {}, groupRuns: [], toasts: [], wakes: [], notes: [], tools: [], compacts: [], compactFails: 0, order: [], settingRuns: [], mythos: 'off', memoryRuns: [], memoryLocal: 'unset', memoryGlobal: 'unset',
   }
   mock.env(on, env)
   on('session.cwd', () => ({ value: '/proj' }))
@@ -138,6 +141,26 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
         ? `${w.installedAt ?? PLUGIN_ROOT} abc1234def56789`
         : e.argv[0]?.includes('orch-index') ? 'orch-index 0.2.0' : 'orch 0.1.0'
       return { value: { exitCode: 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+    if (e.argv.includes('memory')) {
+      // `orch memory status --json | auto-off | auto-on --project <cwd>`: the project's local settings file is a field of the world.
+      const verb = e.argv[e.argv.indexOf('memory') + 1]
+      w.memoryRuns.push([...e.argv])
+      if (verb === 'auto-off' && !w.memoryRefuses) w.memoryLocal = 'false'
+      if (verb === 'auto-on' && !w.memoryRefuses) w.memoryLocal = 'unset'
+      const out = verb === 'status'
+        ? JSON.stringify({
+          project: '/proj', folder: null,
+          settings: [
+            { source: 'project local', file: '/proj/.claude/settings.local.json', value: w.memoryLocal },
+            { source: 'project shared', file: '/proj/.claude/settings.json', value: 'no file' },
+            { source: 'global', file: '/home/u/.claude/settings.json', value: w.memoryGlobal },
+          ],
+          env: { name: 'CLAUDE_CODE_DISABLE_AUTO_MEMORY', value: 'unset' },
+          live: { state: 'not yet verified', why: 'no session started after the settings change', since: null },
+        })
+        : `${verb} done\n`
+      return { value: { exitCode: verb !== 'status' && w.memoryRefuses ? 1 : 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
     if (e.argv.includes('setting')) {
       // `orch setting get|set mythos_review`: the CLI's own file, here a field of the world.
@@ -2318,6 +2341,59 @@ test('Offer Mythos security reviews: the box shows the CLI value (a change made 
   await ui.press({ key: 'opt-mythos' })
   expect(w.mythos).toBe('on')
   expect(await buttonText(ui, 'opt-mythos')).toMatch(/^\[x\] /)
+  await ui.unmount()
+})
+
+test('memoryStateOf reads the CLI status: the local file decides, other sources and the live check go to the note, anything else is null', () => {
+  const rep = (local: string, glob: string, live: string) => JSON.stringify({
+    settings: [{ source: 'project local', value: local }, { source: 'project shared', value: 'no file' }, { source: 'global', value: glob }],
+    live: { state: live },
+  })
+  expect(memoryStateOf(rep('false', 'unset', 'verified off'))).toEqual({ off: true, note: 'live check: verified off' })
+  expect(memoryStateOf(rep('unset', 'false', 'not yet verified'))).toEqual({ off: false, note: 'also off in: global; live check: not yet verified' })
+  expect(memoryStateOf('not json')).toBeNull()
+  expect(memoryStateOf('{}')).toBeNull()
+})
+
+test('Auto-memory off for this project: read from `orch memory status --json`, a press runs auto-off / auto-on for the cwd', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  await ui.press({ key: 'tab:more' })
+  expect(w.memoryRuns[0]).toEqual([ORCH, 'memory', 'status', '--json', '--project', '/proj'])
+  expect(await buttonText(ui, 'opt-memory-off')).toMatch(/^\[ \] Auto-memory off for this project/)
+  await ui.press({ key: 'opt-memory-off' })
+  expect(w.memoryRuns.some(r => r.join(' ') === `${ORCH} memory auto-off --project /proj`)).toBe(true)
+  expect(w.memoryLocal).toBe('false')
+  expect(await buttonText(ui, 'opt-memory-off')).toMatch(/^\[x\] Auto-memory off for this project/)
+  await ui.press({ key: 'opt-memory-off' })
+  expect(w.memoryRuns.some(r => r.join(' ') === `${ORCH} memory auto-on --project /proj`)).toBe(true)
+  expect(w.memoryLocal).toBe('unset')
+  expect(await buttonText(ui, 'opt-memory-off')).toMatch(/^\[ \] /)
+  // The global switch is never run from the pane.
+  expect(w.memoryRuns.some(r => r.includes('--global'))).toBe(false)
+  await ui.unmount()
+})
+
+test('Auto-memory off for this project: the box shows the CLI value (a refused write, the global file), and nothing changes without a press', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  w.memoryGlobal = 'false'
+  w.memoryRefuses = true
+  await ui.press({ key: 'tab:more' })
+  expect(await buttonText(ui, 'opt-memory-off')).toMatch(/^\[ \] /)       // the global file alone does not tick the project row
+  expect(w.memoryRuns.every(r => r[2] === 'status')).toBe(true)         // opening More only reads
+  await ui.press({ key: 'opt-memory-off' })
+  expect(w.memoryLocal).toBe('unset')
+  expect(await buttonText(ui, 'opt-memory-off')).toMatch(/^\[ \] /)       // the write failed: the box keeps what the CLI says
+  await ui.unmount()
+})
+
+test('Move memory to orch lessons: a press submits the one fixed prompt that names the orch:memory skill', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  await ui.press({ key: 'tab:more' })
+  expect(w.wakes).toEqual([])
+  await ui.press({ key: 'act-memory-move' })
+  expect(w.wakes).toEqual([MEMORY_PROMPT])
+  expect(MEMORY_PROMPT).toContain('orch:memory')
+  expect(w.memoryRuns.every(r => r[2] === 'status')).toBe(true)         // the pane itself changes nothing
   await ui.unmount()
 })
 

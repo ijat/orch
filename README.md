@@ -191,6 +191,12 @@ The plugin's own CLI does the bookkeeping, one call per change:
 - **Questions:** `orch ask` and `orch answer`.
 - **Merging:** `orch merge`.
 
+- **Lessons and Claude's memory:** `orch lessons` keeps the short, checked lessons orch briefs carry (`add`, `check`,
+  `usage`, `audit`); `orch memory` lists (`audit`), backs up and empties (`clear`, `restore`) and switches off
+  (`auto-off`, `auto-on`, `status`) Claude's auto-memory. Auto-memory decides nothing in a task. The `/orch:memory`
+  skill walks a project's memory with you and asks before every change; the pane's More tab has two rows for it
+  ("Move memory to orch lessons", "Auto-memory off for this project").
+
 Agents use path-free commands that work out which task they are in by themselves: `orch plan --step 3`,
 `orch diff`, `orch append notes`, `orch write review`, `orch findings`. `orch --help` lists everything.
 

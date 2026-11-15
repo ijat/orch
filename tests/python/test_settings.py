@@ -56,6 +56,14 @@ class TestSetting(core.Base):
                 os.environ.pop(k, None)
             self.assertEqual(settings.settings_path(), os.path.join(self.home, ".claude", "orch-data", "settings.json"))
 
+    def test_memory_global_offered_defaults_to_no_and_takes_yes_no(self):
+        self.assertEqual(self.ok("setting", "get", "memory_global_offered")[0], "no\n")
+        self.ok("setting", "set", "memory_global_offered", "yes")
+        self.assertEqual(self.ok("setting", "get", "memory_global_offered")[0], "yes\n")
+        self.assertIn("must be one of", self.refuse(1, "setting", "set", "memory_global_offered", "maybe"))
+        with open(self.file()) as fh:
+            self.assertEqual(json.load(fh), {"memory_global_offered": "yes"})
+
     def test_unknown_name_and_bad_values_exit_1(self):
         self.assertIn("unknown setting", self.refuse(1, "setting", "get", "nope"))
         self.assertIn("unknown setting", self.refuse(1, "setting", "set", "nope", "on"))

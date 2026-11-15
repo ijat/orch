@@ -6,12 +6,12 @@ import {
   GREY, agentPalette, agentPct, agentPctTail, ago, askContext, barCells, barLayout, clip, countTail, elapsed, fold, goalLine, hhmm, idleMinutes, indexDetails, indexHeadline,
   indexLook, indexNeedsAnswerWarning, isRunning, isStale, lastActivity, mdLite, overallTail, parseIndex, placeText, plainInput,
   isMine, scopeLabel, shimmer, splitScope, spawnOf, stateColor, stepsTail, stripMarks, textKey,
-  HISTORY_PAGE, NO_DRAFT, WAKE_TEXT, acceptable, activeGroupOf, answerOf, answersArgv, autoPairs, confirmedOf, groupKey, hasOptions,
+  HISTORY_PAGE, MEMORY_PROMPT, NO_DRAFT, WAKE_TEXT, memoryStateOf, acceptable, activeGroupOf, answerOf, answersArgv, autoPairs, confirmedOf, groupKey, hasOptions,
   historyRows, isChosen, isCritical, isMulti, togglePick, mergeOrder, metaText, needsHoldRow, nextInQueue, openListOf, optionNote, pageCount, pickCurrent, pickedLabel,
   recommendedOf, skipFor, staleQuestion, UNGROUPED, HOLD_LABEL, HOLD_NOTE,
   COMPACT_SEND_NOTE, COMPACT_TOOL, COMPACT_TOOL_FULL, COMPACT_WAKE_TEXT, busyReason,
 } from './lib'
-import type { ItemState, MdLine } from './lib'
+import type { ItemState, MdLine, MemoryState } from './lib'
 import { ensureLoaded, formatRow, pressFormat, pressSetting, settingRows } from '../ui/format-view'
 
 const PANE = 'orch-pane'
@@ -49,6 +49,9 @@ const auto = atom({ plugin: 'orch', key: 'auto' } as const, false)
 // orchestrator reads and this checkbox always agree. The atom only serves the drawing; it starts off, as the setting does.
 const mythos = atom({ plugin: 'orch', key: 'mythos' } as const, false)
 const MYTHOS_SETTING = 'mythos_review'
+// Auto-memory off for this project: read from `orch memory status --json` (the settings file is the truth, not $.store).
+const MEMORY_START: MemoryState = { off: false, note: null }
+const memory = atom({ plugin: 'orch', key: 'memory' } as const, MEMORY_START, { shape: 'memory-1' })
 // Unsent answers (D5): the atom serves the drawing, $.store keeps them; a pane whose atom was lost reloads them.
 const EMPTY_DRAFTS: { loaded: boolean; byTask: Drafts } = { loaded: false, byTask: {} }
 const drafts = atom({ plugin: 'orch', key: 'drafts' } as const, EMPTY_DRAFTS, { shape: 'drafts-1' })
@@ -750,6 +753,41 @@ async function toggleMythos($: EngineInterface) {
   await loadMythos($)
 }
 
+// `orch memory status --json --project <cwd>` -> the atom (any failure leaves it as it was).
+async function loadMemory($: EngineInterface) {
+  const where = await whereIsOrch($)
+  if (!where) return
+  try {
+    const ran = await $.process.run([...(where.windows ? ['python'] : []), where.orch, 'memory', 'status', '--json', '--project', where.cwd], { timeoutMs: RUN_TIMEOUT_MS })
+    const state = ran.exitCode === 0 ? memoryStateOf(ran.stdout) : null
+    if (state) await update($, memory, () => state)
+  } catch {
+    // The atom keeps what it had.
+  }
+}
+
+// Switch auto-memory off (or back to Claude's default) for this project through the CLI, then show what it now says.
+async function toggleMemory($: EngineInterface) {
+  const where = await whereIsOrch($)
+  if (!where) return
+  const verb = (await read($, memory)).off ? 'auto-on' : 'auto-off'
+  try {
+    await $.process.run([...(where.windows ? ['python'] : []), where.orch, 'memory', verb, '--project', where.cwd], { timeoutMs: RUN_TIMEOUT_MS })
+  } catch {
+    // Read back below: the box shows the stored value either way.
+  }
+  await loadMemory($)
+}
+
+// "Move memory to orch lessons": one fixed prompt; the session loads the skill and asks the user before anything changes.
+async function moveMemory($: EngineInterface) {
+  try {
+    await $.prompt.submit({ text: MEMORY_PROMPT })
+  } catch {
+    // The row stays; the user can type /orch:memory.
+  }
+}
+
 async function toggleNotify($: EngineInterface) {
   const next = (await read($, notify)) !== true
   await update($, notify, () => next)
@@ -1038,6 +1076,7 @@ export const registerPane: Register = on => {
     const notifyOn = (await read($, notify)) === true
     const compactSendOn = (await read($, compactSend)) === true
     const mythosOn = (await read($, mythos)) === true
+    const memoryState = await read($, memory)
     const qs = await readQ($)
     const stored = await read($, drafts)
     const ds: Drafts = stored && typeof stored.byTask === 'object' && stored.byTask ? stored.byTask : {}
@@ -1654,6 +1693,16 @@ export const registerPane: Register = on => {
       </Box>
     )
 
+    // A row that runs something once: the same Button and layout as check(), no box.
+    const action = (key: string, label: string, note: string | null, press: () => void) => (
+      <Box flexDirection="column" marginBottom={1}>
+        <Box paddingLeft={4}>
+          <Button key={key} plain onPress={press}>{label}</Button>
+        </Box>
+        {note ? <Box paddingLeft={4}><Text dimColor>{note}</Text></Box> : null}
+      </Box>
+    )
+
     // A row that cycles through values (orch-ui's settings): the same Button and layout as check(), drawing `<label>: <value>`.
     const choice = (key: string, label: string, value: string, note: string | null, press: () => void) => (
       <Box flexDirection="column" marginBottom={1}>
@@ -1686,6 +1735,8 @@ export const registerPane: Register = on => {
         check('opt-notify', notifyOn, 'Notify me when a question arrives', null, () => toggleNotify($)),
         check('opt-compact-send', compactSendOn, 'Compact, then send', 'sending answers compacts the conversation first; skipped while an agent runs', () => toggleCompactSend($)),
         check('opt-mythos', mythosOn, 'Offer Mythos security reviews', 'off: the orchestrator never offers one (you can still ask for it); on: it asks before a Mythos review of high-risk code and of a finished product', () => toggleMythos($)),
+        action('act-memory-move', 'Move memory to orch lessons', 'asks the session to go through this project\'s Claude memory with you: it moves what orch should keep into lessons and changes nothing without your yes', () => moveMemory($)),
+        check('opt-memory-off', memoryState.off, 'Auto-memory off for this project', memoryState.note ?? 'Claude stops writing and loading memory for this project; the setting applies to sessions that start after it', () => toggleMemory($)),
         ...(uiFormat
           ? [
               subhead('orch-ui'),
@@ -1723,6 +1774,7 @@ export const registerPane: Register = on => {
             if (t.id === 'more') {
               await ensureLoaded($)   // orch-ui's stored settings, before the first draw of its section
               await loadMythos($)     // the CLI's value, in case it changed since the last look
+              await loadMemory($)
             }
             await update($, tab, cur => (cur === t.id ? null : t.id))
           }}>
