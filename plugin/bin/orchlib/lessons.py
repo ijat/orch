@@ -1080,18 +1080,225 @@ def cmd_usage(ns):
     return 0
 
 
+# -- orch lessons audit | archive | restore ---------------------------------------------------------
+#
+# Audit reads and reports; it never writes. Archive and restore move one file between lessons/ and lessons/archive/;
+# nothing is ever deleted.
+
+UNUSED_DAYS = 60
+BACKTICK_RE = re.compile(r"`([^`\n]+)`")
+REL_PATH_RE = re.compile(r"^(?:\.\.?/)*[\w.@+-]+(?:/[\w.@+-]+)+/?$")
+ABS_PATH_RE = re.compile(r"^~?(?:/[\w.@+-]+)+/?$")
+VERB_RE = re.compile(r"^orch[ \t]+([a-z][a-z-]*)\b")
+TRAIL = ".,;:)"
+
+
+def repo_checkout(scope_dir):
+    """(path, why) of the checkout of a repo scope, from the `- repo:` line of a task's status.md under it."""
+    try:
+        names = sorted(os.listdir(scope_dir))
+    except OSError:
+        return None, "cannot read %s" % scope_dir
+    seen = False
+    for n in names:
+        sp = os.path.join(scope_dir, n, "status.md")
+        text = read_text(sp)
+        if text is None:
+            continue
+        seen = True
+        m = re.search(r"^- repo:[ \t]*(\S.*?)[ \t]*$", text, re.M)
+        if m:
+            path = os.path.expanduser(m.group(1))
+            if os.path.isdir(path):
+                return path, None
+            return None, "the repo path %s in %s/status.md is not a folder" % (m.group(1), n)
+    return None, "no task status.md with a repo: line" if seen else "no task under the scope"
+
+
+def cli_verbs():
+    cli.build_parser()
+    return set(cli.HANDLERS)
+
+
+def stale_names(text, repo, verbs):
+    """[(token, why)] for the backticked tokens of `text` that name something that does not exist. A repo-relative path
+    is checked only when `repo` (the checkout) is known; a token with <>*$ or { } is a pattern and is skipped."""
+    out, seen = [], set()
+    for raw in BACKTICK_RE.findall(text):
+        tok = raw.strip()
+        if tok in seen:
+            continue
+        seen.add(tok)
+        m = VERB_RE.match(tok)
+        if m:
+            if m.group(1) not in verbs:
+                out.append((tok, "no `orch %s` command" % m.group(1)))
+            continue
+        word = tok.split()[0].rstrip(TRAIL) if tok.split() else ""
+        if not word or re.search(r"[<>*$?{}|\\]", word):
+            continue
+        if ABS_PATH_RE.match(word):
+            if not os.path.exists(os.path.expanduser(word)):
+                out.append((word, "does not exist"))
+        elif REL_PATH_RE.match(word) and repo:
+            # `and/or` is not a path: a relative token counts when it ends in "/", its last segment has an extension,
+            # or its first segment exists in the checkout
+            segs = word.rstrip("/").split("/")
+            first = next((x for x in segs if x not in (".", "..")), "")
+            looks = word.endswith("/") or "." in segs[-1] or os.path.exists(os.path.join(repo, *segs[:segs.index(first) + 1]))
+            if looks and not os.path.exists(os.path.join(repo, word)):
+                out.append((word, "not in the repo checkout"))
+    return out
+
+
+def audit_report(root, logs, today):
+    since = tracking_since(root)
+    verbs = cli_verbs()
+    if since is None:
+        disuse = {"state": "not started", "from": None}
+    else:
+        start = (datetime.datetime.strptime(since, "%Y-%m-%d") + datetime.timedelta(days=UNUSED_DAYS)).strftime("%Y-%m-%d")
+        disuse = {"state": "active" if today >= start else "waits", "from": start}
+    cites = citations(root, logs)
+    scopes, rows = [], []
+    for label, scope, d in scope_roots(root):
+        repo, why = (None, None)
+        if scope == "project":
+            repo, why = repo_checkout(d)
+        scopes.append({"label": label, "scope": scope, "repo": repo,
+                       "repo_paths_checked": scope == "global" or repo is not None,
+                       "note": None if scope == "global" or repo else "not checked: no repo checkout (%s)" % why})
+        for l in read_lessons(d, scope):
+            lid = "%s/%s" % (label, l.name)
+            flags = [{"kind": "invalid", "detail": p} for p in problems(l, scope)]
+            if l.get("status") == "open":
+                for tok, w in stale_names(" ".join(filter(None, [l.get("summary"), l.get("lesson")])), repo, verbs):
+                    flags.append({"kind": "stale-name", "detail": "`%s` %s" % (tok, w)})
+                review = l.get("review-by")
+                if review and valid_date(review) and review < today:
+                    flags.append({"kind": "review-due", "detail": "review-by %s is past" % review})
+                if disuse["state"] == "active" and (l.get("exempt") or "").strip() == "no" \
+                        and not any(c[0] >= since for c in cites.get(lid, [])):
+                    flags.append({"kind": "unused", "detail": "no citation since %s" % since})
+            rows.append({"id": lid, "scope": scope, "date": l.date, "summary": " ".join((l.get("summary") or "").split()),
+                         "flags": flags})
+    return {"today": today, "tracking_since": since, "disuse_checks": disuse, "scopes": scopes, "lessons": rows}
+
+
+def cmd_audit(ns):
+    from .paths import logs_dir
+    report = audit_report(orch_root(), logs_dir(), now()[:10])
+    if ns.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0
+    dz = report["disuse_checks"]
+    print("audit of %d open and other lesson file%s, %s" % (len(report["lessons"]), "" if len(report["lessons"]) == 1 else "s", report["today"]))
+    if dz["state"] == "not started":
+        print("disuse checks: not started (no tracking date; orch lessons migrate writes it)")
+    elif dz["state"] == "waits":
+        print("disuse checks: start %s (tracking since %s, %d days)" % (dz["from"], report["tracking_since"], UNUSED_DAYS))
+    else:
+        print("disuse checks: active (tracking since %s)" % report["tracking_since"])
+    for sc in report["scopes"]:
+        if sc["note"]:
+            print("%s: %s" % (sc["label"], sc["note"]))
+    flagged = [r for r in report["lessons"] if r["flags"]]
+    for r in flagged:
+        print("%s  [%s]  %s" % (r["id"], r["scope"], r["summary"]))
+        for f in r["flags"]:
+            print("    %s: %s" % (f["kind"], f["detail"]))
+    print("%d flagged, %d clean" % (len(flagged), len(report["lessons"]) - len(flagged)))
+    return 0
+
+
+def find_archived(lesson_id):
+    """(scope_root, scope, Lesson) of the file lessons/archive/<name>.md for an id."""
+    label, _, name = (lesson_id or "").partition("/")
+    if not label or not name or "/" in name or not NAME_RE.match(name):
+        raise OrchError("lesson id is global/<name> or <repo>/<name> (<name> = <YYYY-MM-DD>-<slug>)", 1)
+    root = orch_root()
+    if label == "global":
+        d, scope = root, "global"
+    else:
+        if not REPO_RE.match(label):
+            raise OrchError("bad lesson id %r" % lesson_id, 1)
+        d, scope = os.path.join(root, label), "project"
+    path = os.path.join(lesson_dir(d), "archive", name + ".md")
+    if not os.path.isfile(path):
+        raise OrchError("no archived lesson %s (looked for %s)" % (lesson_id, path), 1)
+    return d, scope, parse_lesson(path, read_text(path) or "")
+
+
+def cmd_archive(ns):
+    if not ns.arg:
+        raise OrchError("archive takes a lesson id", 1)
+    why = one(ns.reason, "--reason")
+    require_write_allowed()
+    d, scope, l = find_lesson(ns.arg)
+    if l.get("status") != "open":
+        raise OrchError("%s is %s, not open" % (ns.arg, l.get("status")), 1)
+    dest = os.path.join(lesson_dir(d), "archive", os.path.basename(l.path))
+    if os.path.exists(dest):
+        raise OrchError("%s already exists" % dest, 1)
+    out, done = [], False
+    for line in (read_text(l.path) or "").split("\n"):
+        m = FIELD_RE.match(line)
+        if m and m.group(1) == "status" and not done:
+            out += ["- status: archived", "- archived: %s \u2014 %s" % (now()[:10], why)]
+            done = True
+        else:
+            out.append(line)
+    if not done:
+        raise OrchError("the lesson has no status line", 1)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    write_atomic(dest, "\n".join(out).encode("utf-8"), 0o644)
+    os.unlink(l.path)
+    write_index(d, scope)
+    print("archived %s" % ns.arg)
+    print("undo: orch lessons restore %s" % ns.arg)
+    return 0
+
+
+def cmd_restore(ns):
+    if not ns.arg:
+        raise OrchError("restore takes a lesson id", 1)
+    require_write_allowed()
+    d, scope, l = find_archived(ns.arg)
+    if l.get("status") != "archived":
+        raise OrchError("%s is %s, not archived (a promoted lesson stays where it was promoted)" % (ns.arg, l.get("status")), 1)
+    dest = os.path.join(lesson_dir(d), os.path.basename(l.path))
+    if os.path.exists(dest):
+        raise OrchError("%s already exists" % dest, 1)
+    out, st_done, ar_done = [], False, False
+    for line in (read_text(l.path) or "").split("\n"):
+        m = FIELD_RE.match(line)
+        if m and m.group(1) == "status" and not st_done:
+            out.append("- status: open")
+            st_done = True
+        elif m and m.group(1) == "archived" and not ar_done:
+            ar_done = True
+        else:
+            out.append(line)
+    write_atomic(dest, "\n".join(out).encode("utf-8"), 0o644)
+    os.unlink(l.path)
+    write_index(d, scope)
+    print("restored %s" % ns.arg)
+    return 0
+
+
 def cmd_lessons(ns, extra):
     handler = {"add": cmd_add, "promote": cmd_promote, "index": cmd_index, "check": cmd_check,
-               "migrate": cmd_migrate, "usage": cmd_usage}[ns.action]
-    if ns.action != "promote" and ns.arg:
+               "migrate": cmd_migrate, "usage": cmd_usage, "audit": cmd_audit,
+               "archive": cmd_archive, "restore": cmd_restore}[ns.action]
+    if ns.action not in ("promote", "archive", "restore") and ns.arg:
         raise OrchError("%s takes no positional argument" % ns.action, 1)
     return handler(ns)
 
 
 def register(add):
-    sp = add("lessons", cmd_lessons, "lesson files: add | promote ID --to WHERE | index | check | migrate | usage")
+    sp = add("lessons", cmd_lessons, "lesson files: add | promote ID --to WHERE | index | check | migrate | usage | audit | archive ID --reason WHY | restore ID")
     sp._optionals.conflict_handler = "resolve"      # --task here is the lesson's `task:` field; -t stays the task selector
-    sp.add_argument("action", choices=["add", "promote", "index", "check", "migrate", "usage"])
+    sp.add_argument("action", choices=["add", "promote", "index", "check", "migrate", "usage", "audit", "archive", "restore"])
     sp.add_argument("arg", nargs="?", default=None, metavar="ID")
     sp.add_argument("--scope", default=None, help="add: project | global; index: restrict to one")
     sp.add_argument("--repo", default=None, help="the repo folder (add with --scope project; index)")
@@ -1108,10 +1315,11 @@ def register(add):
     sp.add_argument("--to", default=None, help="promote: where the lesson went (a file, a rule)")
     sp.add_argument("--root", default=None, help="check: the tasks root (default: the orch root)")
     sp.add_argument("--dry-run", dest="dry_run", action="store_true", help="migrate: report, write nothing")
-    sp.add_argument("--json", action="store_true", help="migrate --dry-run: JSON")
+    sp.add_argument("--json", action="store_true", help="migrate --dry-run, usage, audit: JSON")
     sp.add_argument("--apply", action="store_true", help="migrate: convert the legacy LESSONS.md files")
     sp.add_argument("--summaries", default=None, help="migrate --apply: JSON file, id -> {summary, exempt}")
     sp.add_argument("--restore", default=None, metavar="BACKUP_DIR", help="migrate: undo an apply from its backup")
+    sp.add_argument("--reason", default=None, help="archive: why the lesson goes out of the briefs")
     sp.add_argument("--reads", action="store_true", help="usage: also count Read calls on each file in the transcripts since the tracking date")
 
     sp = add("cite", cmd_cite, "record that a lesson line changed what you did (a `cite` journal line)")

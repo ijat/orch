@@ -519,6 +519,13 @@ role's source, `plugin/skills/orchestrate/roles/<role>.md` in this plugin's sour
 overwritten by the next build; then `orch lessons promote <id> --to "<where it now lives>"`, which adds the row to
 `lessons/PROMOTED.md` and moves the file to `lessons/archive/`. Open lessons are only those not yet promoted anywhere.
 
+**Audit.** `orch lessons audit` (read-only) flags a lesson as `stale-name` (a backticked path or `orch` verb that no
+longer exists), `review-due` (`review-by` is past), `unused` (60 days after the tracking date, not exempt, no citation
+since it) or `invalid`; a repo scope whose checkout it cannot find is reported "not checked". Take each flagged lesson to
+the user with its summary, date and scope: keep (set a new `review-by`), fix, or `orch lessons archive <id> --reason
+"<why>"` (`orch lessons restore <id>` brings it back; nothing is deleted). An exempt lesson is rechecked, never archived
+for disuse.
+
 ## Procedure
 
 Every spawn below follows the **Dispatch protocol**. In lite mode, read

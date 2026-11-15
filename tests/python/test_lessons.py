@@ -698,5 +698,173 @@ class TestCiteAndUsage(LessonBase):
         self.assertIn("require_write_allowed", inspect.getsource(ls.cmd_cite))
 
 
+class TestAuditArchive(LessonBase):
+    """`orch lessons audit` reports and changes nothing; archive and restore move a file out and back, byte for byte."""
+
+    def setUp(self):
+        LessonBase.setUp(self)
+        self.repo = os.path.join(self.tmp, "proj-checkout")
+        os.makedirs(os.path.join(self.repo, "scripts"))
+        self.write(os.path.join(self.repo, "scripts", "check.py"), "x\n")
+        self.ok("init", "proj", "t1", "--repo-path", self.repo, "--base", "main", "--request", "x")
+        self.pdir = os.path.join(self.root, "proj", "lessons")
+
+    def addp(self, title, lesson, *extra, **kw):
+        return self.add("--title", title, "--lesson", lesson, *extra, scope="project", repo="proj", **kw)
+
+    def audit(self, **kw):
+        out, _ = self.ok("lessons", "audit", "--json", **kw)
+        return json.loads(out)
+
+    def flags(self, report, lid):
+        return [(f["kind"], f["detail"]) for r in report["lessons"] if r["id"] == lid for f in r["flags"]]
+
+    def kinds(self, report, lid):
+        return sorted(k for k, _ in self.flags(report, lid))
+
+    def test_a_missing_repo_path_is_stale_and_an_existing_one_is_not(self):
+        self.addp("Old script", "Run `scripts/sync-live.py --dry-run` from the worktree before each round.")
+        self.addp("Live script", "Run `scripts/check.py` before each round, never `docs/` by hand.")
+        before = core.tree_hash(self.root)
+        r = self.audit(now="2026-03-01T10:00Z")
+        self.assertEqual(core.tree_hash(self.root), before)
+        old, live = "proj/2026-03-01-old-script", "proj/2026-03-01-live-script"
+        self.assertEqual(self.flags(r, old), [("stale-name", "`scripts/sync-live.py` not in the repo checkout")])
+        self.assertEqual(self.flags(r, live), [])
+        sc = [s for s in r["scopes"] if s["label"] == "proj"][0]
+        self.assertEqual((sc["repo"], sc["repo_paths_checked"], sc["note"]), (self.repo, True, None))
+
+    def test_the_2026_11_02_entry_text_is_flagged(self):
+        self.addp("Denylist round trip",
+                  "in this repo, verify public-safety and integrity with `scripts/sync-live.py --dry-run` (from the task "
+                  "worktree) before each review round and quote its refusal count; never a self-written denylist grep.")
+        r = self.audit()
+        self.assertEqual(self.kinds(r, "proj/%s-denylist-round-trip" % TODAY), ["stale-name"])
+
+    def test_orch_verbs_and_absolute_paths(self):
+        gone = os.path.join(self.tmp, "gone", "file.txt")
+        self.add("--title", "Verbs", "--lesson", "Run `orch frobnicate now`, then `orch lessons add`, see `%s` and `%s` and "
+                 "`~/definitely/not/here` and `/var/lib/<operator>` and `and/or`." % (gone, self.tmp))
+        f = self.flags(self.audit(), "global/%s-verbs" % TODAY)
+        self.assertEqual(sorted(d for _, d in f), sorted(["`orch frobnicate now` no `orch frobnicate` command",
+                                                          "`%s` does not exist" % gone,
+                                                          "`~/definitely/not/here` does not exist"]))
+
+    def test_a_scope_without_a_checkout_is_not_checked_not_clean(self):
+        os.makedirs(os.path.join(self.root, "lonely"))
+        self.add("--title", "Rel path", "--lesson", "See `scripts/nothing.py`.", scope="project", repo="lonely")
+        r = self.audit()
+        sc = [s for s in r["scopes"] if s["label"] == "lonely"][0]
+        self.assertFalse(sc["repo_paths_checked"])
+        self.assertIn("not checked", sc["note"])
+        self.assertEqual(self.flags(r, "lonely/%s-rel-path" % TODAY), [])
+        out, _ = self.ok("lessons", "audit")
+        self.assertIn("lonely: not checked", out)
+
+    def test_review_due_is_strictly_past(self):
+        self.add("--title", "Due", "--review-by", "2026-03-10", now="2026-03-01T10:00Z")
+        self.assertEqual(self.kinds(self.audit(now="2026-03-10T10:00Z"), "global/2026-03-01-due"), [])
+        r = self.audit(now="2026-03-11T10:00Z")
+        self.assertEqual(self.flags(r, "global/2026-03-01-due"), [("review-due", "review-by 2026-03-10 is past")])
+
+    def test_unused_waits_for_day_60_skips_exempt_and_cited(self):
+        self.write(os.path.join(self.root, "lessons", ".tracking"), json.dumps({"since": "2026-03-01"}))
+        for title, extra in (("plain", ()), ("exempt", ("--exempt", "rare event")), ("cited", ())):
+            self.add("--title", title, "--review-by", "2030-01-01", *extra, now="2026-03-01T10:00Z")
+        gid = lambda t: "global/2026-03-01-" + t
+        r = self.audit(now="2026-04-29T10:00Z")        # day 59
+        self.assertEqual((r["disuse_checks"]["state"], r["disuse_checks"]["from"]), ("waits", "2026-04-30"))
+        self.assertEqual([k for t in ("plain", "exempt", "cited") for k in self.kinds(r, gid(t))], [])
+        out, _ = self.ok("lessons", "audit", now="2026-04-29T10:00Z")
+        self.assertIn("disuse checks: start 2026-04-30", out)
+        self.ok("cite", gid("cited"), "--for", "used", "-t", "proj/t1", now="2026-04-10T10:00Z")
+        r = self.audit(now="2026-04-30T10:00Z")        # day 60
+        self.assertEqual(r["disuse_checks"]["state"], "active")
+        self.assertEqual(self.flags(r, gid("plain")), [("unused", "no citation since 2026-03-01")])
+        self.assertEqual(self.kinds(r, gid("exempt")), [])
+        self.assertEqual(self.kinds(r, gid("cited")), [])
+
+    def test_no_tracking_date_means_no_disuse_checks(self):
+        self.add("--title", "Old", "--review-by", "2030-01-01", now="2026-01-01T10:00Z")
+        r = self.audit(now="2027-01-01T10:00Z")
+        self.assertEqual(r["disuse_checks"]["state"], "not started")
+        self.assertEqual(self.kinds(r, "global/2026-01-01-old"), [])
+
+    def test_an_invalid_file_is_reported(self):
+        self.add()
+        bad = os.path.join(self.gdir(), TODAY + "-broken.md")
+        self.write(bad, "# Broken\n- status: open\n- role: planner\n")
+        r = self.audit()
+        self.assertIn("invalid", self.kinds(r, "global/%s-broken" % TODAY))
+
+    def test_text_report_counts(self):
+        self.add("--title", "Due", "--review-by", "2020-01-01")
+        self.add("--title", "Fine", "--review-by", "2030-01-01")
+        out, _ = self.ok("lessons", "audit")
+        self.assertIn("review-due: review-by 2020-01-01 is past", out)
+        self.assertIn("1 flagged, 1 clean", out)
+
+    def test_archive_then_restore_is_byte_equal(self):
+        self.addp("Keep me", "Run `scripts/check.py`.", "--task", "t", "--what-happened", "w", now="2026-03-01T10:00Z")
+        lid = "proj/2026-03-01-keep-me"
+        path = os.path.join(self.pdir, "2026-03-01-keep-me.md")
+        before, index = self.read(path), self.text(self.root, "proj", "LESSONS.md")
+        self.assertIn("keep-me", index)
+        out, _ = self.ok("lessons", "archive", lid, "--reason", "superseded by the rule", now="2026-05-01T10:00Z")
+        self.assertIn("orch lessons restore " + lid, out)
+        self.assertFalse(os.path.exists(path))
+        arch = self.text(self.pdir, "archive", "2026-03-01-keep-me.md")
+        self.assertIn("- status: archived\n- archived: 2026-05-01 \u2014 superseded by the rule\n", arch)
+        self.assertNotIn("keep-me", self.text(self.root, "proj", "LESSONS.md").split("\n", 1)[1].split("Promoted")[0])
+        self.assertIn("lessons/archive/", self.text(self.root, "proj", "LESSONS.md"))
+        self.assertIn("clean", self.check())
+        self.assertNotIn(lid, [r["id"] for r in self.audit()["lessons"]])
+        self.ok("lessons", "restore", lid)
+        self.assertEqual(self.read(path), before)
+        self.assertFalse(os.path.exists(os.path.join(self.pdir, "archive", "2026-03-01-keep-me.md")))
+        self.assertIn("keep-me", self.text(self.root, "proj", "LESSONS.md"))
+        self.assertIn("clean", self.check())
+
+    def test_archive_and_restore_refusals_change_nothing(self):
+        self.add(now="2026-03-01T10:00Z")
+        gid = "global/2026-03-01-check-the-export-round-trip"
+        before = core.tree_hash(self.root)
+        for argv, want in (
+                (("lessons", "archive", gid), "--reason is required"),
+                (("lessons", "archive", gid, "--reason", "  "), "--reason is required"),
+                (("lessons", "archive", "global/2020-01-01-nope", "--reason", "x"), "no open lesson"),
+                (("lessons", "archive", "--reason", "x"), "takes a lesson id"),
+                (("lessons", "restore", gid), "no archived lesson"),
+                (("lessons", "restore"), "takes a lesson id")):
+            rc, out, err = self.run_orch(*argv)
+            self.assertEqual(rc, 1, argv)
+            self.assertIn(want, err)
+            self.assertEqual(core.tree_hash(self.root), before, argv)
+        self.ok("lessons", "archive", gid, "--reason", "x")
+        rc, _, err = self.run_orch("lessons", "archive", gid, "--reason", "x")
+        self.assertEqual(rc, 1)
+        self.assertIn("no open lesson", err)
+
+    def test_a_clash_on_restore_and_a_promoted_lesson(self):
+        self.add(now="2026-03-01T10:00Z")
+        gid = "global/2026-03-01-check-the-export-round-trip"
+        self.ok("lessons", "archive", gid, "--reason", "x")
+        name = "2026-03-01-check-the-export-round-trip.md"      # `add` refuses this name, so put a file there by hand
+        self.write(os.path.join(self.gdir(), name), self.text(self.gdir(), "archive", name))
+        rc, _, err = self.run_orch("lessons", "restore", gid)
+        self.assertEqual(rc, 1)
+        self.assertIn("already exists", err)
+        self.add("--title", "Promote me", now="2026-03-02T10:00Z")
+        self.ok("lessons", "promote", "global/2026-03-02-promote-me", "--to", "SKILL.md")
+        rc, _, err = self.run_orch("lessons", "restore", "global/2026-03-02-promote-me")
+        self.assertEqual(rc, 1)
+        self.assertIn("not archived", err)
+
+    def test_archive_and_restore_are_write_guarded(self):
+        import inspect
+        for fn in (ls.cmd_archive, ls.cmd_restore):
+            self.assertIn("require_write_allowed", inspect.getsource(fn))
+
+
 if __name__ == "__main__":
     unittest.main()
