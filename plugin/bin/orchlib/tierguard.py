@@ -1,17 +1,23 @@
-"""`orch hook tier`: a PreToolUse hook on the Agent tool that keeps the cheap roles cheap.
+"""`orch hook tier`: a PreToolUse hook on the Agent tool with two checks.
 
 Reads the PreToolUse JSON on stdin; prints the deny JSON or nothing (allow). Always exits 0 and fails open: a
 parse error or any other surprise allows the call.
 
-Guarded roles: orch:explorer, orch:executor, orch:graph. They run on haiku at effort low (sonnet is allowed only
-at effort low: the Haiku-ban cap). A spawn is denied when its `model` or `effort` is above that, or when the
-session env would put the role on another model (CLAUDE_CODE_SUBAGENT_MODEL, CLAUDE_CODE_SUBAGENT_MODEL_FORCE).
-ORCH_TIER_GUARD=0 in the env turns the guard off. Denials are appended to `<orch data>/logs/tier-guard.jsonl`,
-never with the prompt text."""
+1. Cheap roles: orch:explorer, orch:executor, orch:graph run on haiku at effort low (sonnet is allowed only at
+   effort low: the Haiku-ban cap). A spawn is denied when its `model` or `effort` is above that, or when the
+   session env would put the role on another model (CLAUDE_CODE_SUBAGENT_MODEL, CLAUDE_CODE_SUBAGENT_MODEL_FORCE).
+2. Escalation: every other orch role with a default tier (tiers.py). A spawn above its default needs a `basis:`
+   first line in the prompt with a recorded, allowed reason (tiers.py checks the form, the token against the role
+   and tier, and for a `user` basis finds the user's quote in the session transcript). A spawn at or below the
+   default is never refused or delayed. A guard bug (an exception) allows the spawn and logs `decision: error`.
+
+ORCH_TIER_GUARD=0 in the env turns both off. Denials, and every decision on an above-default spawn, are appended
+to `<orch data>/logs/tier-guard.jsonl`, never with the prompt text (the basis line, clipped, is the only part of it)."""
 import json
 import os
 import sys
 
+from . import tiers
 from .paths import agent_key, logs_dir
 
 GUARDED = ("orch-explorer", "orch-executor", "orch-graph")
@@ -66,16 +72,18 @@ def _verdict(role, tool_input, env):
     return None
 
 
-def _log(code, payload, role, tool_input):
+def _log(code, payload, role, tool_input, decision="deny", extra=None):
     """One JSON line, never the prompt. Never raises."""
     try:
         import datetime
         root = logs_dir()
         os.makedirs(root, exist_ok=True)
         rec = {"ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-               "decision": "deny", "code": code, "role": role, "model": tool_input.get("model"),
+               "decision": decision, "code": code, "role": role, "model": tool_input.get("model"),
                "effort": tool_input.get("effort"), "caller": payload.get("agent_type"),
                "session_id": payload.get("session_id")}
+        if extra:
+            rec.update(extra)
         with open(os.path.join(root, "tier-guard.jsonl"), "a") as f:
             f.write(json.dumps(rec, sort_keys=True) + "\n")
     except Exception:
@@ -93,16 +101,44 @@ def decide(payload, env=None):
     if not isinstance(tool_input, dict):
         return None
     sub = tool_input.get("subagent_type")
-    if agent_key(sub) not in GUARDED:
-        return None
-    role = "orch:" + agent_key(sub)[len("orch-"):]
-    res = _verdict(role, tool_input, env)
-    if res is None:
-        return None
-    code, reason = res
-    _log(code, payload, role, tool_input)
+    key = agent_key(sub)
+    if key in GUARDED:
+        role = "orch:" + key[len("orch-"):]
+        res = _verdict(role, tool_input, env)
+        if res is None:
+            return None
+        code, reason = res
+        _log(code, payload, role, tool_input)
+        return _deny(reason)
+    if isinstance(key, str) and tiers.checked(key):
+        return _escalation(payload, tool_input, key)
+    return None
+
+
+def _deny(reason):
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                    "permissionDecisionReason": reason}}
+
+
+def _escalation(payload, tool_input, key):
+    """The basis check for a spawn of a role with a default tier. Any exception allows the spawn and is logged."""
+    role = "orch:" + key[len("orch-"):]
+    try:
+        verdict = tiers.check_spawn(tool_input, payload.get("transcript_path"))
+        if verdict.code == "default":
+            return None
+        line = tiers.basis_line(tool_input.get("prompt"))
+        extra = {"basis": line[:tiers.BASIS_CLIP] if line else None, "found": verdict.found}
+        try:
+            parsed = tiers.parse_basis(tool_input.get("prompt"))
+            extra["basis_kind"] = parsed.kind if parsed else None
+        except tiers.BasisError:
+            extra["basis_kind"] = None
+        _log(verdict.code, payload, role, tool_input, "allow" if verdict.allow else "deny", extra)
+        return None if verdict.allow else _deny(verdict.reason)
+    except Exception as exc:
+        _log("error", payload, role, tool_input, "error", {"error": "%s: %s" % (type(exc).__name__, str(exc)[:200])})
+        return None
 
 
 def run(stdin=None, stdout=None):
