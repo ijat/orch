@@ -583,8 +583,11 @@ absolute task dir and `plan.md` path; the tier and one-line reason for the heade
 from the lessons files; and that it's read-only on the codebase (writes only `plan.md` or `roadmap.md`, `sketches/`,
 `guides/`, `notes.md`, `status.md`, `log.md`).
 
-**Shape.** Every plan states `shape: single | roadmap` (first Summary line of `plan.md`, header of
-`roadmap.md`). A `roadmap` (or a planner
+**Shape.** Name no shape before the plan exists: not to the user, not in a question, not in the planner's brief.
+`status.md` keeps `tbd (planner decides)` until the plan's `shape:` line is read. A user's request for a roadmap
+goes to the planner verbatim. Every plan states `shape: single | roadmap` (first Summary line of `plan.md`, header of
+`roadmap.md`); a roadmap names the test that held (the user asked, or a premise only earlier work settles; the
+planner's "Choose the shape" has the two tests). A `roadmap` (or a planner
 returning `need: shape_roadmap`) → read `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/PROGRAM.md` and follow it from
 here. A single plan written at `fable/high` (or at a user-requested tier above `opus/high`), or whose Summary names an `undo:` artifact, gets the plan reviewer (`PROGRAM.md` §1.3) before the gate.
 Journal `plan_shape`; show the shape line at the gate, and if the user overrules it, journal

@@ -17,7 +17,7 @@
      what every later role reads first, so it must stand on its own. Detail belongs in the sections
      below. -->
 
-- shape: single — <why not a roadmap, one line>
+- shape: single — <neither roadmap test holds, or why: the user did not ask for a roadmap, and no later work waits on an earlier result>
 - undo: <artifact expensive to reverse: persisted format, schema/migration, public API, security/network boundary, live prod/infra, install path every session uses> | none
 - goal: <one sentence>
 - approach: <2–4 bullets>

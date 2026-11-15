@@ -515,6 +515,40 @@ class TestPlanCheckCommand(core.Base):
         self.assertEqual(warns("standard", "opus/high → opus/max"), [])
         self.assertEqual(warns("lite", "lite opus/medium"), [])
 
+    def test_program_checker_warns_when_the_shape_line_gives_no_roadmap_test(self):
+        checker = os.path.join(BIN, "orch-program-check.py")
+        table = ("## Milestones\n\n| M | goal | depends on | mode | tiers | sensitive | review | merge | you | size | confidence |\n"
+                 "|---|---|---|---|---|---|---|---|---|---|---|\n"
+                 "| 1 | auth | - | standard | opus/high | - | code | yes | merge | M | high |\n"
+                 "| 2 | ui | 1 | standard | opus/high | - | code | yes | merge | M | high |\n"
+                 "| 3 | api | 2 | standard | opus/high | - | code | yes | merge | M | high |\n")
+
+        def shape_warns(head):
+            path = self.write("shape/roadmap.md", head + table)
+            r = subprocess.run([sys.executable, checker, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               universal_newlines=True)
+            self.assertEqual(r.returncode, 0, r.stdout)
+            return [l for l in r.stdout.splitlines() if "shape" in l.lower() and l.startswith("WARN")]
+
+        bad = shape_warns("# Roadmap: x\n\n- shape: roadmap \u2014 it is a big feature\n\n")
+        self.assertEqual(len(bad), 1, bad)
+        self.assertIn("neither 'user asked' nor 'premise:'", bad[0])
+        self.assertEqual(len(shape_warns("# Roadmap: x\n\n")), 1)                                   # no shape line at all
+        self.assertEqual(shape_warns('# Roadmap: x\n\n- shape: roadmap \u2014 user asked: "plan it in milestones"\n\n'), [])
+        self.assertEqual(shape_warns("# Roadmap: x\n\n- shape: roadmap \u2014 premise: the wire format is only known after M1\n\n"), [])
+        # the template's own placeholder carries both tests, so a filled-in copy passes
+        with open(os.path.join(BIN, "..", "skills", "orchestrate", "templates", "roadmap.md"), encoding="utf-8") as fh:
+            self.assertIn("user asked:", fh.read().split("- shape:")[1].splitlines()[0])
+
+    def test_program_checker_shape_warns_are_unchanged(self):
+        checker = os.path.join(BIN, "orch-program-check.py")
+        head = ("# Roadmap\n\n- shape: roadmap \u2014 user asked: \"milestones\"\n\n## Milestones\n\n| M | goal | depends on | mode | tiers | sensitive | review | merge | you | size | confidence |\n"
+                "|---|---|---|---|---|---|---|---|---|---|---|\n")
+        path = self.write("keep/roadmap.md", head + "| 1 | auth | - | standard | opus/high | - | code | yes | merge | M | high |\n")
+        r = subprocess.run([sys.executable, checker, path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        self.assertIn("WARN only 1 milestone(s) \u2014 consider a single plan", r.stdout)
+        self.assertNotIn("neither", r.stdout)
+
     def test_main_restores_argv(self):
         saved = list(sys.argv)
         with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):

@@ -86,7 +86,7 @@ Say **"orchestrate this"** and describe the work. Claude asks which mode to run:
 | **Interactive** (recommended) | most work: you shape the plan together | your session, with you | implementer agents |
 | **Standard** | larger or riskier changes | a planner agent | implementer agents |
 | **Lite** | small, low-risk tasks | one agent | the same agent |
-| **Program** | big features in milestones | a roadmap, then a plan per milestone | implementer agents |
+| **Program** | work you ask to plan in milestones, or whose later steps wait on earlier results | a roadmap, then a plan per milestone | implementer agents |
 
 In every mode you approve the plan, and review runs before the merge.
 

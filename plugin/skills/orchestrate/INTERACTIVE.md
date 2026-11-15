@@ -4,7 +4,7 @@ Read this when the task's mode is interactive. Everything in `SKILL.md` applies 
 
 **You** are the planner as well as the orchestrator: the user talks to you while the plan takes shape,
 and implementers, reviewers and the merge run exactly as in standard mode. Use it when the user picks
-"interactive mode" / "orchestrate interactive" / "plan it with me". Any size of task, including a roadmap.
+"interactive mode" / "orchestrate interactive" / "plan it with me". Any size of task; a roadmap only when the user asks for one or later work cannot be planned until earlier work's real result exists (the planner's "Choose the shape" has the two tests). Draft the steps first; name no shape before the plan exists.
 
 **The boundary is the point of the mode: you never write product code.** Not while planning, not after
 the gate, not in fix rounds. Your writes are the task directory (the planner's files plus your

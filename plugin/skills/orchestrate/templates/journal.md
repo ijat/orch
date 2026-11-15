@@ -35,7 +35,7 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 | `mode_switch` | lite or interactive task moved to standard | `from`, `to`, `reason` (scope_exceeded/ineligible/review_rounds/user), `phase` (plan/implement/review) |
 | `judgement` **choice** | any other non-obvious decision you made | `decision`, `confidence` (low/medium/high) |
 | `task_end` | task ends, any outcome | `outcome` (merged/declined/failed_merge/abandoned/handed_to_user), `rounds` |
-| `plan_shape` **choice** | every planner return | `shape` (single/roadmap), `criteria` (array of the planner's criterion numbers hit), `tier`, `overridden` (bool) |
+| `plan_shape` **choice** | every planner return | `shape` (single/roadmap), `criteria` (array of the planner's test numbers hit: 1 the user asked for a roadmap, 2 a premise only earlier work settles; empty for a single plan), `tier`, `overridden` (bool) |
 | `checker` | each `orch-program-check.py` run | `fails`, `warns`, `verdict` (OK/FAIL) |
 | `plan_review` | each plan-reviewer return | `round`, `blockers`, `should`, `notes`, `verdict` |
 | `milestone_plan` | roadmap approved, and after each approved revision | `revision`, `rows` (array of objects, one per table row, keys as the table header) |
