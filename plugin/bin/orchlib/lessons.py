@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 
 from . import cli
@@ -532,6 +533,7 @@ class Planned(object):
 
     def __init__(self, label, name, title, body):
         self.label, self.name, self.title, self.body = label, name, title, body
+        self.rule_summary, self.rule_exempt = None, None      # set for an entry made from a standing rule
         self.fields = parse_lesson("", "# t\n" + "\n".join(body)).fields
 
     @property
@@ -605,6 +607,56 @@ def split_legacy(label, text):
     return entries, (rest + "\n") if rest.strip() else ""
 
 
+RULE_RE = re.compile(r"^- \*\*(.+?)\*\*")
+SPLIT_ROLE_RE = re.compile(r"^[a-z][a-z-]*(, [a-z][a-z-]*)*$")
+
+
+def parse_rules(text):
+    """([(title, text)] one per top-level `- **Name.** ...` bullet outside fences, its continuation lines joined; the
+    rest of the text with the bullets cut out)."""
+    lines = text.split("\n")
+    mask = fence_mask(lines)
+    cut, rules, i = set(), [], 0
+    while i < len(lines):
+        m = None if mask[i] else RULE_RE.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        j = i + 1
+        while j < len(lines) and lines[j].strip() and not mask[j] and not lines[j].startswith("- ") \
+                and not HEADING_RE.match(lines[j]):
+            j += 1
+        body = " ".join(" ".join(l.split()) for l in lines[i:j])[2:].replace("**", "")
+        rules.append((m.group(1).strip().rstrip(".,:;").strip(), " ".join(body.split())))
+        cut.update(range(i, j))
+        i = j
+    rest = "\n".join(l for k, l in enumerate(lines) if k not in cut).rstrip("\n")
+    return rules, (rest + "\n") if rest.strip() else ""
+
+
+def split_into_rules(scope, directive, today):
+    """Turn a scope's standing-rule bullets into entries, one lesson file per rule (the user's `split_rules` choice).
+    Sets scope.entries and scope.rest; returns the number of rules."""
+    rules, rest = parse_rules(scope.text)
+    if not rules:
+        raise OrchError("%s: split_rules found no top-level `- **Name.** ...` rule in %s" % (scope.label, scope.path), 1)
+    given = directive.get("summaries") or {}
+    used, entries = set(), []
+    for title, text in rules:
+        slug = slugify(title) or "rule"
+        name, n = "%s-%s" % (today, slug), 1
+        while name in used:
+            n += 1
+            suffix = "-%d" % n
+            name = "%s-%s%s" % (today, slug[:60 - len(suffix)].strip("-"), suffix)
+        used.add(name)
+        e = Planned(scope.label, name, title, ["- role: %s" % directive["role"], "- lesson: %s" % text])
+        e.rule_summary, e.rule_exempt = given.get(title), directive.get("exempt") or "no"
+        entries.append(e)
+    scope.entries, scope.rest = entries, rest
+    return len(rules)
+
+
 def legacy_scopes(root):
     """([LegacyScope] global first then repos sorted, [labels of scopes already migrated])."""
     out, done = [], []
@@ -638,6 +690,12 @@ def entry_problems(scope, e, summary, exempt, today):
     return problems(parse_lesson(os.path.join(lesson_dir(scope.dir), e.name + ".md"), text), scope.scope)
 
 
+def needs_retire_decision(scope):
+    """True for a scope with no open entry and text that is not empty (standing rules, header prose, a Promoted table):
+    it would move to lessons/PROMOTED.md, which no brief reads, so the user decides: retire it, or write entries."""
+    return not scope.entries and bool(scope.rest.strip())
+
+
 def migrate_dry_run(root, as_json):
     scopes, done = legacy_scopes(root)
     today = now()[:10]
@@ -650,10 +708,17 @@ def migrate_dry_run(root, as_json):
                          "needs_summary": e.needs_summary, "summary": summ,
                          "problems": entry_problems(s, e, summ or "x", "no", today)})
         note = None
-        if not s.entries:
-            note = ("no open entry: the whole file moves to lessons/PROMOTED.md and stops reaching briefs; "
-                    "LESSONS.md becomes an empty index")
+        needs_retire = needs_retire_decision(s)
+        if needs_retire:
+            note = ("no open entry: the whole file moves to lessons/PROMOTED.md and stops reaching briefs; LESSONS.md "
+                    "becomes an empty index. --apply refuses this scope until the summaries file names it: "
+                    '{"%s": {"retire": "<why>"}}, or {"%s": {"split_rules": {"role": "...", "exempt": "no"}}} '
+                    "(one lesson file per top-level `- **Name.** ...` rule: %d found)"
+                    % (s.label, s.label, len(parse_rules(s.text)[0])))
+        elif not s.entries:
+            note = "no open entry and no other text: LESSONS.md becomes an empty index"
         report["scopes"].append({"label": s.label, "path": s.path, "entries": rows, "note": note,
+                                 "needs_retire": needs_retire, "rules": len(parse_rules(s.text)[0]) if needs_retire else 0,
                                  "moves_to_promoted": len(s.rest.splitlines())})
         report["entries"] += len(rows)
         report["need_summary"] += sum(1 for r in rows if r["needs_summary"])
@@ -686,9 +751,23 @@ def load_summaries(path):
     except (OSError, ValueError) as exc:
         raise OrchError("cannot read --summaries %s: %s" % (path, exc.__class__.__name__), 1)
     if not isinstance(data, dict):
-        raise OrchError("--summaries must be a JSON object: id -> {summary, exempt}", 1)
+        raise OrchError("--summaries must be a JSON object: id -> {summary, exempt}, scope -> {retire}", 1)
     out, bad = {}, []
     for k, v in data.items():
+        if "/" not in k:         # a scope label (an entry id is <label>/<name>): retire it, or split its rules
+            if isinstance(v, dict) and set(v) == {"retire"} and isinstance(v["retire"], str) and v["retire"].strip():
+                out[k] = v
+                continue
+            d = v.get("split_rules") if isinstance(v, dict) and set(v) == {"split_rules"} else None
+            if isinstance(d, dict) and not set(d) - {"role", "exempt", "summaries"} and isinstance(d.get("role"), str) \
+                    and SPLIT_ROLE_RE.match(d["role"]) and isinstance(d.get("exempt", "no"), str) \
+                    and isinstance(d.get("summaries", {}), dict) \
+                    and all(isinstance(a, str) and isinstance(b, str) for a, b in d.get("summaries", {}).items()):
+                out[k] = v
+                continue
+            bad.append('%s: a scope takes {"retire": "<why its text stops reaching briefs>"} or {"split_rules": '
+                       '{"role": "<role>[, <role>]", "exempt": "no" | "yes — <why>", "summaries": {"<rule name>": "<one line>"}}}' % k)
+            continue
         if not isinstance(v, dict) or set(v) - {"summary", "exempt"} or \
                 not all(isinstance(v.get(f), str) for f in ("summary", "exempt") if v.get(f) is not None):
             bad.append("%s: the value must be {\"summary\": \"...\", \"exempt\": \"no\" | \"yes — <why>\"}" % k)
@@ -708,17 +787,37 @@ def migrate_plan(root, summaries):
         for archive in (False, True):
             known.update("%s/%s" % (label, l.name) for l in read_lessons(d, scope, archive))
     errors, chosen = [], {}
+    by_label = {s.label: s for s in scopes}
+    for k in sorted(summaries):
+        if "/" not in k:
+            if k not in by_label and k not in done:
+                errors.append("%s: no such scope" % k)
+            elif k in by_label and by_label[k].entries:
+                errors.append("%s: retire and split_rules apply to a scope with no open entry (it has %d)"
+                              % (k, len(by_label[k].entries)))
+            elif k in by_label and "split_rules" in summaries[k]:
+                try:
+                    split_into_rules(by_label[k], summaries[k]["split_rules"], today)
+                except OrchError as exc:
+                    errors.append(str(exc))
     planned = {e.id for s in scopes for e in s.entries}
     for k in sorted(summaries):
-        if k not in planned and k not in known:
+        if "/" in k and k not in planned and k not in known:
             errors.append("%s: no such entry" % k)
     for s in scopes:
+        if needs_retire_decision(s) and s.label not in summaries:
+            errors.append("%s: no open entry, and its text (%d line%s: standing rules, header prose or a Promoted table) "
+                          "would move to lessons/PROMOTED.md, which no brief reads. Turn the rules into dated entries, "
+                          'or retire the scope: {"%s": {"retire": "<why>"}}, or make each top-level rule a lesson: '
+                          '{"%s": {"split_rules": {"role": "<role words>", "exempt": "no" | "yes — <why>"}}} in --summaries' % (
+                              s.label, len(s.rest.splitlines()), "" if len(s.rest.splitlines()) == 1 else "s", s.label,
+                              s.label))
         for e in s.entries:
             given = summaries.get(e.id) or {}
             summary = given.get("summary")
             if summary is None:
-                summary = e.proposed()
-            exempt = given.get("exempt") or "no"
+                summary = e.rule_summary if e.rule_summary is not None else e.proposed()
+            exempt = given.get("exempt") or e.rule_exempt or "no"
             if summary is None:
                 errors.append("%s: needs a summary (the lesson is %d characters%s)" % (
                     e.id, len(e.lesson), ", more than one line" if "\n" in e.lesson else ""))
@@ -776,7 +875,10 @@ def write_scope(s, chosen, today, bdir):
 
 
 def migrate_apply(root, summaries_path, dry):
-    scopes, chosen = migrate_plan(root, load_summaries(summaries_path))
+    summaries = load_summaries(summaries_path)
+    scopes, chosen = migrate_plan(root, summaries)
+    retired = {s.label: summaries[s.label]["retire"] for s in scopes if "retire" in summaries.get(s.label, {})}
+    split = {s.label: len(s.entries) for s in scopes if "split_rules" in summaries.get(s.label, {})}
     count = sum(len(s.entries) for s in scopes)
     if dry:
         print("apply would write %d lesson file%s in %d scope%s; nothing written" % (
@@ -807,20 +909,29 @@ def migrate_apply(root, summaries_path, dry):
             if fh.read() != orig:
                 raise OrchError("backup of %s does not match the original; nothing migrated" % s.path, 3)
     manifest = {"root": os.path.realpath(root), "scopes": {s.label: os.path.relpath(s.dir, root) for s in scopes},
-                "created": created}
+                "created": created, "retired": retired, "split_rules": split}
     write_atomic(os.path.join(bdir, "manifest.json"), (json.dumps(manifest, indent=2) + "\n").encode("utf-8"), 0o644)
-    written = 0
-    for s in scopes:
-        write_scope(s, chosen, today, bdir)
-        written += len(s.entries)
-        print("%s: %d lesson file%s, LESSONS.md regenerated%s" % (
-            s.label, len(s.entries), "" if len(s.entries) == 1 else "s", ", PROMOTED.md" if s.rest else ""))
-    assert written == count, (written, count)      # no entry is dropped: the files written equal the dry-run's count
-    if not os.path.exists(stamp):
-        os.makedirs(lesson_dir(root), exist_ok=True)
-        write_atomic(stamp, (json.dumps({"since": today}) + "\n").encode("utf-8"), 0o644)
-    if not os.path.exists(os.path.join(root, "LESSONS.md")):
-        write_index(root, "global")
+    written, done_labels = 0, []
+    try:
+        for s in scopes:
+            write_scope(s, chosen, today, bdir)
+            done_labels.append(s.label)
+            written += len(s.entries)
+            print("%s: %d lesson file%s, LESSONS.md regenerated%s%s" % (
+                s.label, len(s.entries), "" if len(s.entries) == 1 else "s", ", PROMOTED.md" if s.rest else "",
+                "; retired: %s" % retired[s.label] if s.label in retired else
+                "; one lesson per rule" if s.label in split else ""))
+        assert written == count, (written, count)      # no entry is dropped: the files written equal the dry-run's count
+        if not os.path.exists(stamp):
+            os.makedirs(lesson_dir(root), exist_ok=True)
+            write_atomic(stamp, (json.dumps({"since": today}) + "\n").encode("utf-8"), 0o644)
+        if not os.path.exists(os.path.join(root, "LESSONS.md")):
+            write_index(root, "global")
+    except BaseException:
+        # the backup and manifest exist and the scopes before the failing one stay migrated: say where the way back is
+        print("partial: migrated %s; undo: orch lessons migrate --restore %s" % (", ".join(done_labels) or "none", bdir),
+              file=sys.stderr)
+        raise
     print("migrated %d entr%s in %d scope%s; backup %s" % (written, "y" if written == 1 else "ies", len(scopes),
                                                           "" if len(scopes) == 1 else "s", bdir))
     out, nscopes, files = check_root(root)

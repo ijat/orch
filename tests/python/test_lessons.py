@@ -387,9 +387,11 @@ Rules only.
 
 OS_ID = "orch-skill/2026-11-02-reviewer-reported-denylist-0-hits-the-export-round-trip-foun"     # slug cut at 60
 LONG_ID = "global/2026-11-01-a-long-lesson-over-two-lines"
+RETIRE_WHY = "its one rule is already in the repo's CLAUDE.md"
 SUMMARIES = {OS_ID: {"summary": "Verify public safety with `scripts/sync-live.py --dry-run` before each review round."},
              LONG_ID: {"summary": "Build replay fixtures with the real writer, never by hand-labelling.",
-                       "exempt": "yes — it guards every replay test"}}
+                       "exempt": "yes — it guards every replay test"},
+             "myapp": {"retire": RETIRE_WHY}}      # myapp is a rules-only file: the user decides, --apply never does
 
 
 class TestMigrate(LessonBase):
@@ -441,6 +443,9 @@ class TestMigrate(LessonBase):
         myapp = [s for s in rep["scopes"] if s["label"] == "myapp"][0]
         self.assertEqual(myapp["entries"], [])
         self.assertIn("no open entry", myapp["note"])
+        self.assertTrue(myapp["needs_retire"])
+        self.assertIn('{"myapp": {"retire": "<why>"}}', myapp["note"])
+        self.assertEqual([s["needs_retire"] for s in rep["scopes"] if s["label"] != "myapp"], [False, False])
         out, _ = self.ok("lessons", "migrate", "--dry-run")
         self.assertIn("4 open entries in 3 legacy scopes; 2 need a summary; nothing written", out)
         self.assertIn("    summary: (needs one)", out)
@@ -478,6 +483,138 @@ class TestMigrate(LessonBase):
         out, _ = self.ok("lessons", "migrate", "--apply", "--dry-run", "--summaries", self.summ)
         self.assertIn("apply would write 4 lesson files in 3 scopes; nothing written", out)
         self.assertEqual(core.tree_hash(self.tmp), before)
+
+    def test_a_rules_only_scope_is_refused_unless_the_user_retires_it(self):
+        """A rules-only scope: no dated entry, standing rules that every brief carries today. After the move they would reach
+        no brief, so --apply refuses (before any write) until the summaries file names the scope."""
+        before = core.tree_hash(self.root)
+        no_retire = {k: v for k, v in SUMMARIES.items() if k != "myapp"}
+        err = self.refuse(1, "lessons", "migrate", "--apply", "--summaries", self.summaries(no_retire, "n.json"))
+        self.assertIn("myapp: no open entry", err)
+        self.assertIn("which no brief reads", err)
+        self.assertIn('{"myapp": {"retire": "<why>"}}', err)
+        self.assertEqual(core.tree_hash(self.root), before)
+        self.assertFalse(os.path.exists(self.backups()))
+        out, _ = self.ok("lessons", "migrate", "--apply", "--dry-run", "--summaries", self.summ)     # the named scope passes
+        self.assertIn("apply would write 4 lesson files", out)
+        out, _ = self.ok("lessons", "migrate", "--apply", "--summaries", self.summ)
+        self.assertIn("myapp: 0 lesson files, LESSONS.md regenerated, PROMOTED.md; retired: " + RETIRE_WHY, out)
+        bdir = [l for l in out.splitlines() if l.startswith("undo:")][0].split(" --restore ", 1)[1]
+        self.assertEqual(json.loads(self.text(bdir, "manifest.json"))["retired"], {"myapp": RETIRE_WHY})
+
+    def test_retire_is_checked(self):
+        before = core.tree_hash(self.root)
+        cases = [({"myapp": {"retire": ""}}, "a scope takes"), ({"myapp": {"retire": "x", "summary": "y"}}, "a scope takes"),
+                 ({"myapp": "x"}, "a scope takes"), ({"myapp": {"retire": 3}}, "a scope takes"),
+                 (dict(SUMMARIES, **{"global": {"retire": "x"}}), "global: retire and split_rules apply to a scope with no open entry (it has 2)"),
+                 (dict(SUMMARIES, **{"nowhere": {"retire": "x"}}), "nowhere: no such scope")]
+        for i, (data, want) in enumerate(cases):
+            err = self.refuse(1, "lessons", "migrate", "--apply", "--summaries", self.summaries(data, "r%d.json" % i))
+            self.assertIn(want, err)
+            self.assertEqual(core.tree_hash(self.root), before)
+        self.assertFalse(os.path.exists(self.backups()))
+
+    STANDING = """# Standing rules (condensed 2026-11-05)
+
+Rules only. The incident behind each is in the archive.
+
+- **Evidence.** A matching formula is not a mechanism. Evaluate an expression, do not read it.
+- **Before changing a check,** work out what property its odd-looking metric has.
+  Assume it is load-bearing.
+- **Long gates.** The gate posts its own pct (`--pct-cmd`). No pct watcher.
+"""
+
+    def test_split_rules_makes_one_exempt_lesson_per_rule(self):
+        self.write(os.path.join(self.root, "myapp", "LESSONS.md"), self.STANDING)
+        why = "standing rule: no incident date, guards every task"
+        data = dict(SUMMARIES)
+        data["myapp"] = {"split_rules": {"role": "planner, implementer", "exempt": "yes — " + why,
+                                         "summaries": {"Long gates": "Let the gate post its own pct; no pct watcher."}}}
+        rep = self.dry()
+        self.assertEqual([s["rules"] for s in rep["scopes"] if s["label"] == "myapp"], [3])
+        out, _ = self.ok("lessons", "migrate", "--apply", "--dry-run", "--summaries", self.summaries(data, "s.json"))
+        self.assertIn("apply would write 7 lesson files in 3 scopes", out)
+        out, _ = self.ok("lessons", "migrate", "--apply", "--summaries", self.summaries(data, "s.json"))
+        self.assertIn("myapp: 3 lesson files, LESSONS.md regenerated, PROMOTED.md; one lesson per rule", out)
+        self.assertIn("clean", out)
+        names = sorted(os.listdir(os.path.join(self.root, "myapp", "lessons")))
+        self.assertEqual(names, ["%s-before-changing-a-check.md" % TODAY, "%s-evidence.md" % TODAY,
+                                 "%s-long-gates.md" % TODAY, "PROMOTED.md"])
+        text = self.text(self.root, "myapp", "lessons", "%s-before-changing-a-check.md" % TODAY)
+        self.assertEqual(text.splitlines()[0], "# Before changing a check")
+        for line in ("- status: open", "- scope: project", "- quote: none (observed: migrated %s)" % TODAY,
+                     "- exempt: yes — " + why, "- role: planner, implementer",
+                     "- summary: Before changing a check, work out what property its odd-looking metric has. Assume it is load-bearing.",
+                     "- lesson: Before changing a check, work out what property its odd-looking metric has. Assume it is load-bearing."):
+            self.assertIn(line + "\n", text)
+        self.assertIn("- summary: Let the gate post its own pct; no pct watcher.\n",
+                      self.text(self.root, "myapp", "lessons", "%s-long-gates.md" % TODAY))
+        self.assertEqual(self.text(self.root, "myapp", "lessons", "PROMOTED.md"),
+                         "# Standing rules (condensed 2026-11-05)\n\nRules only. The incident behind each is in the archive.\n")
+        self.assertEqual(len(self.text(self.root, "myapp", "LESSONS.md").splitlines()), 5)     # notice, 3 lessons, pointer
+        self.assertIn("clean", self.check())
+
+    def test_split_rules_is_checked(self):
+        self.write(os.path.join(self.root, "myapp", "LESSONS.md"), self.STANDING)
+        before = core.tree_hash(self.root)
+        good = {"role": "planner", "exempt": "no"}
+        cases = [({"role": "planner", "exempt": "maybe"}, "exempt"),          # not `no` / `yes — why`
+                 ({"exempt": "no"}, "a scope takes"), ({"role": "", "exempt": "no"}, "a scope takes"),
+                 (dict(good, extra=1), "a scope takes"), (dict(good, summaries={"Evidence": 3}), "a scope takes"),
+                 (dict(good, role="Bad Role!"), "role")]
+        for i, (d, want) in enumerate(cases):
+            err = self.refuse(1, "lessons", "migrate", "--apply", "--summaries",
+                              self.summaries(dict(SUMMARIES, myapp={"split_rules": d}), "c%d.json" % i))
+            self.assertIn(want, err, d)
+            self.assertEqual(core.tree_hash(self.root), before)
+        # a rule over 200 characters needs a summary; none given, none invented
+        long_rule = "- **Long one.** " + "word " * 50 + "\n"
+        self.write(os.path.join(self.root, "myapp", "LESSONS.md"), "# t\n\n" + long_rule)
+        err = self.refuse(1, "lessons", "migrate", "--apply", "--summaries",
+                          self.summaries(dict(SUMMARIES, myapp={"split_rules": good}), "l.json"))
+        self.assertIn("needs a summary", err)
+        # no rule bullet in the file
+        self.write(os.path.join(self.root, "myapp", "LESSONS.md"), "# t\n\nJust prose.\n")
+        err = self.refuse(1, "lessons", "migrate", "--apply", "--summaries",
+                          self.summaries(dict(SUMMARIES, myapp={"split_rules": good}), "p.json"))
+        self.assertIn("found no top-level", err)
+        # a scope that has dated entries cannot be split
+        err = self.refuse(1, "lessons", "migrate", "--apply", "--summaries",
+                          self.summaries(dict(SUMMARIES, **{"orch-skill": {"split_rules": good}}), "e.json"))
+        self.assertIn("apply to a scope with no open entry", err)
+
+    def test_a_scope_with_no_text_needs_no_decision(self):
+        self.write(os.path.join(self.root, "myapp", "LESSONS.md"), "\n\n")
+        no_retire = {k: v for k, v in SUMMARIES.items() if k != "myapp"}
+        rep = self.dry()
+        self.assertFalse([s for s in rep["scopes"] if s["label"] == "myapp"][0]["needs_retire"])
+        self.ok("lessons", "migrate", "--apply", "--summaries", self.summaries(no_retire, "n.json"))
+
+    def test_a_failure_part_way_prints_the_way_back(self):
+        original = ls.write_scope
+        calls = []
+
+        def flaky(scope, chosen, today, bdir):
+            calls.append(scope.label)
+            if scope.label == "myapp":
+                raise ls.OrchError("disk full", 3)
+            return original(scope, chosen, today, bdir)
+        before = {rel: self.read(self.root, rel) for rel in ("LESSONS.md", "orch-skill/LESSONS.md", "myapp/LESSONS.md")}
+        from unittest import mock
+        with mock.patch.object(ls, "write_scope", flaky):
+            rc, out, err = self.run_orch("lessons", "migrate", "--apply", "--summaries", self.summ)
+        self.assertEqual(rc, 3, err)
+        self.assertEqual(calls, ["global", "myapp"])
+        line = [l for l in err.splitlines() if l.startswith("partial:")]
+        self.assertEqual(len(line), 1, err)
+        self.assertIn("partial: migrated global; undo: orch lessons migrate --restore ", line[0])
+        bdir = line[0].split(" --restore ", 1)[1]
+        self.assertTrue(os.path.isfile(os.path.join(bdir, "manifest.json")))
+        self.assertTrue(os.path.isdir(self.gdir()))                  # global stays migrated
+        self.assertFalse(os.path.exists(os.path.join(self.root, "myapp", "lessons")))
+        self.ok("lessons", "migrate", "--restore", bdir)               # the printed command works
+        for rel, data in before.items():
+            self.assertEqual(self.read(self.root, rel), data)
 
     def test_an_entry_without_a_role_is_refused(self):
         self.write(os.path.join(self.root, "orch-skill", "LESSONS.md"), REPO_LEGACY.replace("- role: planner\n", ""))
@@ -549,7 +686,7 @@ class TestMigrate(LessonBase):
         self.assertEqual(sorted(rep["already_migrated"]), ["global", "orch-skill"])
         summ = self.summaries({OS_ID: {"summary": "s"}}, "stale.json")     # an id of a migrated scope that has no such file
         self.assertIn("no such entry", self.refuse(1, "lessons", "migrate", "--apply", "--summaries", summ))
-        self.ok("lessons", "migrate", "--apply", "--summaries", self.summaries({}, "none.json"))
+        self.ok("lessons", "migrate", "--apply", "--summaries", self.summaries({"myapp": {"retire": "x"}}, "none.json"))
         self.assertEqual(self.text(self.gdir(), ".tracking"), '{"since": "2026-01-01"}\n')
         self.assertIn("clean", self.check())
 
