@@ -56,8 +56,11 @@ moved into a lesson, which has a quote, a scope and a review date, is shown to e
    when it is `yes`, do not offer again unless the user asks).
 
 7. **Status.** Run `orch memory status` and say what it shows: the value in each settings file, the environment
-   variable, and the live check (`verified off`, `still loading`, `not yet verified`). A change takes effect for
-   a session that starts after it; `not yet verified` after a switch is normal until then.
+   variable, and the live check: `verified off` and `still loading` are shown only when a source says off and a
+   `MEMORY.md` exists to be loaded; `not switched off` means no source says off; `not verifiable (no MEMORY.md)`
+   (after a clear) and `not verifiable (autoMemoryDirectory)` (a moved folder, which the check does not read) prove
+   nothing either way, so do not tell the user it is off. A change takes effect for a session that starts after it;
+   `not yet verified` after a switch is normal until then.
 
 8. **`--all`** (on request only): `orch memory audit --all` lists the projects with a count first. Work one
    project at a time, each with its own table and its own confirmations; never clear or switch off a project

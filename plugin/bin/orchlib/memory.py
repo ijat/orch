@@ -20,6 +20,7 @@ import shutil
 from .paths import BIN_DIR, OrchError, backups_dir, claude_home, now, require_write_allowed, write_atomic
 
 KEY = "autoMemoryEnabled"
+DIR_KEY = "autoMemoryDirectory"      # moves the memory folder; only its presence is read, never its value
 ENV = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
 REQUIRED = ("quote", "scope", "review-by", "exempt")
 MANIFEST = "MANIFEST.json"
@@ -513,9 +514,42 @@ def iso(epoch):
     return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def has_key(path, key):
+    """True when the settings file is a JSON object with this key. Nothing else from the file is read out."""
+    try:
+        _, data = read_object(path)
+    except OrchError:
+        return False
+    return data is not None and key in data
+
+
+def says_off(setting_files):
+    """True when some source switches auto-memory off: a settings value `false`, or the environment variable set."""
+    for p in setting_files:
+        try:
+            _, data = read_object(p)
+        except OrchError:
+            continue
+        if data is not None and data.get(KEY) is False:
+            return True
+    v = os.environ.get(ENV)
+    return v is not None and v.strip().lower() not in ("", "0", "false", "no", "off")
+
+
 def live_check(folder, setting_files):
+    """What the newest session after the switch shows. It proves the switch only when a source says off and there is
+    a MEMORY.md in the default folder that a session could have loaded."""
     if folder is None:
         return {"state": "not yet verified", "why": "no Claude project folder records this project"}
+    if any(has_key(p, DIR_KEY) for p in setting_files):
+        return {"state": "not verifiable (autoMemoryDirectory)",
+                "why": "a settings file sets %s, which moves the memory folder; this check reads the default one" % DIR_KEY}
+    if not says_off(setting_files):
+        return {"state": "not switched off", "why": "no settings file says %s: false and %s is not set" % (KEY, ENV)}
+    memory_md = os.path.join(folder, "memory", "MEMORY.md")
+    if not os.path.isfile(memory_md):
+        return {"state": "not verifiable (no MEMORY.md)",
+                "why": "%s does not exist, so no session could have loaded it, switch or no switch" % memory_md}
     changed = max([os.path.getmtime(p) for p in setting_files if os.path.isfile(p)] or [0])
     newest = None
     for t in transcripts(folder):
@@ -527,7 +561,6 @@ def live_check(folder, setting_files):
     since = iso(changed) if changed else None
     if newest is None:
         return {"state": "not yet verified", "why": "no session started after the settings change", "since": since}
-    memory_md = os.path.join(folder, "memory", "MEMORY.md")
     state = "still loading" if names_memory(newest[0], memory_md) else "verified off"
     return {"state": state, "transcript": os.path.basename(newest[0]), "started": iso(newest[1]), "since": since}
 

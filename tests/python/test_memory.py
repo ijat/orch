@@ -365,6 +365,44 @@ class TestStatus(MemoryBase):
         self.assertEqual(rep["live"]["transcript"], "44444444-4444-4444-8444-444444444444.jsonl")
         self.assertEqual(rep["env"]["value"], "unset")
 
+    def test_never_switched_off_is_not_verified_off(self):
+        """No source says off: a session without MEMORY.md in it proves nothing about a switch."""
+        self.transcript("44444444-4444-4444-8444-444444444444", "2026-11-14T12:00:00.000Z", memory_loaded=False)
+        rep = self.status()
+        self.assertEqual(rep["live"]["state"], "not switched off")
+        self.assertEqual([s["value"] for s in rep["settings"]], ["no file", "no file", "no file"])
+        for env in ("0", "false", ""):
+            self.assertEqual(self.status(**{memory.ENV: env})["live"]["state"], "not switched off", env)
+        self.write(os.path.join(self.proj, ".claude", "settings.local.json"), json.dumps({"autoMemoryEnabled": True}))
+        self.assertEqual(self.status()["live"]["state"], "not switched off")
+        out, _ = self.ok("memory", "status", "--project", self.proj)
+        self.assertIn("live check: not switched off", out)
+
+    def test_the_environment_variable_alone_counts_as_off(self):
+        self.transcript("44444444-4444-4444-8444-444444444444", "2026-11-14T12:00:00.000Z", memory_loaded=False)
+        self.assertEqual(self.status(**{memory.ENV: "1"})["live"]["state"], "verified off")
+
+    def test_no_memory_md_cannot_verify_anything(self):
+        """Right after `clear` no session can load MEMORY.md, whether or not the switch worked."""
+        self.ok("memory", "clear", "--project", self.proj, "--reason", "test")
+        self.assertFalse(os.path.exists(os.path.join(self.mem, "MEMORY.md")))
+        self.transcript("44444444-4444-4444-8444-444444444444", "2026-11-16T12:00:00.000Z", memory_loaded=False)
+        self.ok("memory", "auto-off", "--project", self.proj)
+        rep = self.status()
+        self.assertEqual(rep["live"]["state"], "not verifiable (no MEMORY.md)")
+        self.assertEqual(rep["settings"][0]["value"], "false")
+        out, _ = self.ok("memory", "status", "--project", self.proj)
+        self.assertIn("live check: not verifiable (no MEMORY.md)", out)
+
+    def test_a_moved_memory_folder_is_reported_not_called_off(self):
+        self.set_off(memory.parse_ts("2026-11-14T11:00:00Z"))
+        self.transcript("44444444-4444-4444-8444-444444444444", "2026-11-14T12:00:00.000Z", memory_loaded=False)
+        self.write(os.path.join(self.ch, "settings.json"), json.dumps({"autoMemoryDirectory": "/elsewhere/" + SECRET}))
+        rep = self.status()
+        self.assertEqual(rep["live"]["state"], "not verifiable (autoMemoryDirectory)")
+        self.assertNotIn("/elsewhere", json.dumps(rep))        # the key is named, its value never read out
+        self.assertIn("autoMemoryDirectory", rep["live"]["why"])
+
     def test_not_yet_verified(self):
         self.set_off(memory.parse_ts("2026-11-14T13:00:00Z"))
         self.assertEqual(self.status()["live"]["state"], "not yet verified")
