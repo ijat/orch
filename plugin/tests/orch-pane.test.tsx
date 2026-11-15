@@ -1520,7 +1520,7 @@ test('Next moves on, a critical question has nothing preselected, the last one s
   await ui.press({ key: 'app/build:Q3:o1' })
   expect(await buttonText(ui, 'send:app/build')).toBe('Send 3 answers')
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Keep', 'Q2', 'Keep', 'Q3', 'Keep it']])
+  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Keep', 'Q2', 'Keep', 'Q3', 'Keep it']])
   expect(w.wakes).toEqual([WAKE_TEXT])
   expect(w.wakes[0]).not.toContain('Keep')
   expect(await allText(ui)).not.toContain('Needs you')
@@ -1537,7 +1537,7 @@ test('a pick counts only after Next; Send now sends the confirmed ones and the r
   expect(await buttonText(ui, 'send-now:app/build')).toBe('Send 1 now · 2 stay open')
   expect(await buttonText(ui, 'row:app/build:Q1')).toMatch(/^✓ Question 1: Item 1 {2}→ Change$/)
   await ui.press({ key: 'send-now:app/build' })
-  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Change']])
+  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Change']])
   expect(w.wakes).toHaveLength(1)
   await ui.unmount()
 })
@@ -1556,7 +1556,7 @@ test('a failing orch answers wakes nobody, keeps the picks and shows the error',
   // The drafts are still there: a second try with orch working sends both.
   w.answered = { exitCode: 0, stdout: 'ok', stderr: '' }
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[1]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Change', 'Q2', 'Keep'])
+  expect(w.answers[1]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Change', 'Q2', 'Keep'])
   expect(w.wakes).toEqual([WAKE_TEXT])
   expect(await allText(ui)).not.toContain('orch answers failed')
   await ui.unmount()
@@ -1572,7 +1572,7 @@ test('a draft for a question that was answered elsewhere is dropped on the refus
   expect(await allText(ui)).toContain('The draft for Q2 was dropped; send again.')
   w.answered = { exitCode: 0, stdout: 'ok', stderr: '' }
   await ui.press({ key: 'send-now:app/build' })
-  expect(w.answers[1]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Keep'])
+  expect(w.answers[1]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Keep'])
   await ui.unmount()
 })
 
@@ -1584,8 +1584,8 @@ test('an answer travels as one argv element after `--`, never through a shell', 
   await ui.press({ key: 'next:app/build' })
   await ui.press({ key: 'send:app/build' })
   const argv = w.answers[0] ?? []
-  expect(argv.slice(0, 5)).toEqual([ORCH, 'answers', '-t', 'app/build', '--'])
-  expect(argv.slice(5)).toEqual(['Q1', nasty, 'Q2', 'Keep'])
+  expect(argv.slice(0, 7)).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--'])
+  expect(argv.slice(7)).toEqual(['Q1', nasty, 'Q2', 'Keep'])
   expect(w.wakes).toHaveLength(1)
   await ui.unmount()
 })
@@ -1601,7 +1601,7 @@ test('Accept confirms the recommended answers and leaves a critical question ope
   expect(await allText(ui)).toContain('Delete item 3 for good?')
   expect(await buttonText(ui, 'send-now:app/build')).toBe('Send 2 now · 2 stay open')
   await ui.press({ key: 'send-now:app/build' })
-  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Keep', 'Q2', 'Keep'])
+  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Keep', 'Q2', 'Keep'])
   await ui.unmount()
 })
 
@@ -1640,9 +1640,9 @@ test('questions of another task are answered against that task', async ($, on) =
   expect(await buttonText(ui, 'send:app/build')).toBe('Send 1 answer')
   expect(await buttonText(ui, 'send:other/fix')).toBe('Send 1 answer')
   await ui.press({ key: 'send:other/fix' })
-  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'other/fix', '--', 'Q1', 'Keep']])
+  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'other/fix', '--via', 'pane', '--', 'Q1', 'Keep']])
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[1]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Keep'])
+  expect(w.answers[1]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Keep'])
   await ui.unmount()
 })
 
@@ -1656,7 +1656,7 @@ test('a Send for another folder\'s task records the answers, says so, and neithe
   expect(await allText(ui)).not.toContain('wakes the agent')
   expect(await allText(ui)).toContain("saved for that task's session")
   await ui.press({ key: 'send:other/fix' })
-  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'other/fix', '--', 'Q1', 'Keep']])
+  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'other/fix', '--via', 'pane', '--', 'Q1', 'Keep']])
   expect(w.wakes).toEqual([])
   expect(w.compacts).toEqual([])
   expect(w.toasts.join(' ')).toContain('next checkpoint')
@@ -1681,7 +1681,7 @@ test('a question whose options are not loaded yet says so, and can still be answ
   expect(await allText(ui)).toContain('Choose an option first')
   await ui.input({ key: 'app/build:Q1:own', text: 'my words' })
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'my words'])
+  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'my words'])
   await ui.unmount()
 })
 
@@ -1692,7 +1692,7 @@ test('drafts survive a restart: they are read back from the store and sent', asy
   expect(await allText(ui)).toContain('Should item 2 change?')
   expect(await buttonText(ui, 'send:app/build')).toBe('Send 2 answers')
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Change', 'Q2', 'Keep'])
+  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Change', 'Q2', 'Keep'])
   await ui.unmount()
 })
 
@@ -1826,8 +1826,8 @@ test('200 questions: groups, a long list drawn as a few rows, a critical one sur
   expect(await buttonText(ui, 'send-now:app/build')).toBe('Send 39 now · 161 stay open')
   await ui.press({ key: 'send-now:app/build' })
   const argv = w.answers[0] ?? []
-  expect(argv.slice(0, 5)).toEqual([ORCH, 'answers', '-t', 'app/build', '--'])
-  expect(argv.length).toBe(5 + 39 * 2)
+  expect(argv.slice(0, 7)).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--'])
+  expect(argv.length).toBe(7 + 39 * 2)
   expect(argv).not.toContain('Q33')
   expect(w.wakes).toHaveLength(1)
   await ui.unmount()
@@ -2001,9 +2001,9 @@ test('a multi-select question: toggled picks join with `|`; no preselect, no typ
 
 test('answersArgv puts every answer after `--`; staleQuestion and autoPairs read their input strictly', () => {
   expect(answersArgv(false, '/o', 'a/b', [['Q1', '--x'], ['Q2', 'y z']], false))
-    .toEqual(['/o', 'answers', '-t', 'a/b', '--', 'Q1', '--x', 'Q2', 'y z'])
+    .toEqual(['/o', 'answers', '-t', 'a/b', '--via', 'pane', '--', 'Q1', '--x', 'Q2', 'y z'])   // a user send carries --via pane
   expect(answersArgv(true, 'C:/o', 'a/b', [['Q1', 'k']], true))
-    .toEqual(['python', 'C:/o', 'answers', '-t', 'a/b', '--auto', '--as', 'orch-pane', '--', 'Q1', 'k'])
+    .toEqual(['python', 'C:/o', 'answers', '-t', 'a/b', '--auto', '--as', 'orch-pane', '--', 'Q1', 'k'])   // an auto-answer never does
   expect(staleQuestion('orch: Q12 is answered, not open; nothing written')).toBe('Q12')
   expect(staleQuestion('orch: no question Q4 in /x; nothing written')).toBe('Q4')
   expect(staleQuestion('orch: boom')).toBeNull()
@@ -2030,7 +2030,7 @@ test('on Windows the answers run through python, from USERPROFILE', async ($, on
   await start($, clock)
   const ui = await $.ui.mount(PANE60('terminal'))
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers).toEqual([['python', ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Keep']])
+  expect(w.answers).toEqual([['python', ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Keep']])
   await ui.unmount()
 })
 
@@ -2045,7 +2045,7 @@ test('mobile draws the questions and takes picks; typed answers need an Input it
   await ui.press({ key: 'app/build:Q1:o1' })
   await ui.press({ key: 'next:app/build' })
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Change', 'Q2', 'Keep'])
+  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Change', 'Q2', 'Keep'])
   await ui.unmount()
 })
 
@@ -2067,7 +2067,7 @@ test('Hold on closes every list of options, is never preselected, and sends the 
   expect(await allText(ui)).toContain('Choose an option first')
   await ui.press({ key: 'app/build:Q2:o0' })
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Hold on', 'Q2', 'Delete'])
+  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Hold on', 'Q2', 'Delete'])
   await ui.unmount()
 })
 
@@ -2075,7 +2075,7 @@ test('Accept and auto-answer never take Hold on', async ($, on) => {
   const { ui, w } = await pane($, on, [withQs(PROGRAM, [mkq(1), mkq(2)])])
   await ui.press({ key: 'accept:app/build' })
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Keep', 'Q2', 'Keep'])
+  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Keep', 'Q2', 'Keep'])
   await ui.press({ key: 'tab:more' })
   await ui.press({ key: 'opt-auto' })
   expect(JSON.stringify(w.answers)).not.toContain('Hold on')

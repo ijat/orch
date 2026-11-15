@@ -645,7 +645,7 @@ export function nextInQueue(order: readonly string[], drafts: Record<string, Dra
 // `orch answers` argv for one task: every answer an element of its own, after `--` so none reads as a flag.
 export function answersArgv(windows: boolean, orch: string, taskId: string, pairs: readonly [string, string][], auto: boolean): string[] {
   return [
-    ...(windows ? ['python'] : []), orch, 'answers', '-t', taskId, ...(auto ? ['--auto', '--as', 'orch-pane'] : []),
+    ...(windows ? ['python'] : []), orch, 'answers', '-t', taskId, ...(auto ? ['--auto', '--as', 'orch-pane'] : ['--via', 'pane']),
     '--', ...pairs.flatMap(([id, text]) => [id, text]),
   ]
 }

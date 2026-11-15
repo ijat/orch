@@ -782,6 +782,26 @@ class TestAnswers(FlowBase):
         self.assertIn("- answer: -t other (2026-03-01T10:00Z)\n", text.split("## Q3 ")[1].split("\n## ")[0])
         self.assertIn("- status: answered\n", text.split("## Q1 ")[1].split("\n## ")[0])
 
+    def test_via_pane_marks_each_answer_and_old_blocks_still_parse(self):
+        self.ok("answers", "--via", "pane", "Q1", "yes please", "3", "no")
+        text = self.read(self.qpath()).decode()
+        for q in ("Q1", "Q3"):
+            block = text.split("## %s " % q)[1].split("\n## ")[0]
+            self.assertIn("- status: answered\n", block)
+            self.assertIn("- via: pane\n", block)
+        self.assertNotIn("via:", text.split("## Q2 ")[1].split("\n## ")[0])
+        self.ok("answers", "Q4", "plain")
+        self.assertNotIn("via:", self.read(self.qpath()).decode().split("## Q4 ")[1])
+        self.assertEqual([q.n for q in qs.load_questions(self.d)], [1, 2, 3, 4])    # blocks with and without the field parse
+        self.assertEqual(qs.load_questions(self.d)[0].fields.get("via"), "pane")
+
+    def test_via_takes_only_pane_and_refuses_auto(self):
+        before = self.read(self.qpath())
+        self.refuse(1, "answers", "--via", "terminal", "Q1", "x")
+        self.refuse(1, "answers", "--auto", "--via", "pane", "Q1", "x")
+        self.assertEqual(self.read(self.qpath()), before)
+        self.refuse(1, "answer", "Q1", "x", "--via", "pane")      # the single `answer` has no such flag
+
     def test_same_file_as_single_answers(self):
         with open(self.qpath(), "rb") as fh:
             original = fh.read()
