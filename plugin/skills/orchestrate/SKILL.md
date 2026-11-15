@@ -497,8 +497,10 @@ qualify); when in doubt, don't write it. A directive for one task only is not a 
 You are the sole writer, and you write with `orch lessons add`, never by editing `LESSONS.md` (it is generated from
 the lesson files; `orch lessons index` rebuilds it, `orch lessons check` compares). Global if the mistake could recur on
 another codebase (`--scope global`); repo if it's tied to this repo (`--scope project`; prefer it when unsure). One file
-per lesson, from `templates/lesson.md`. What you supply:
+per lesson, from `templates/lesson.md`. What you supply (flags: `--scope --role --title --summary --lesson --quote
+--review-by [--exempt] [--task] [--what-happened] [--actually-true]`):
 
+- `role` — who the lesson is for: the role that went wrong (`planner`, `implementer`, `code-reviewer`, …, `orchestrator`).
 - `summary` — the instruction itself, one line, at most 200 characters ("verify X with Y before Z"), not a topic or a
   story; it is what a brief shows, so it must be enough to act on.
 - `lesson` — the full instruction, with the detail the summary cannot hold; `what happened` and `what was actually true`
