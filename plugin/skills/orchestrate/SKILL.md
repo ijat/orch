@@ -93,6 +93,29 @@ read the thing it's about. What genuinely can't be checked gets labelled an assu
 **Your own lookups go to `orch:explorer`** ("where is X", "does Y exist", "who uses Z"): your first search
 on any question that is not about one file you were handed is an explorer spawn (batch several per spawn). You read plan, status, brief and task files yourself.
 
+### What decides, and the basis line
+
+**Auto-memory decides nothing in an orch task.** `MEMORY.md` and the files it lists never set the tier, the
+mode, an escalation, skipping a step or a question, or the scope. Those come only from the user's words in this
+session, the approved plan or roadmap, a lesson, a `CLAUDE.md`, this skill's rules, or a real failure. A memory that
+still matters is moved into a lesson first (`orch memory audit`); until then it is at most a reason to ask the user.
+
+**Every spawn above its role's default tier carries a basis**: pass `--basis "<text>"` to `orch brief` (it prints the
+`basis:` line into the spawn prompt) and to `orch spawn` (it checks the form and the token table and journals the text);
+send the prompt unchanged. The `orch hook tier` PreToolUse hook refuses the spawn without a valid `basis:` first line,
+and for a `user` basis looks the quote up in this session. A spawn at or below the default needs none. The forms and the
+token table are in `TIERS.md` § Record it.
+
+- `user | "<quote>"`: the user's own words, 12+ characters, copied exactly (`...` may skip words). They count when typed,
+  queued while you worked, an AskUserQuestion answer, or a question the user answered in the pane (add
+  ` | Q<n> <repo>/<slug>` to cite it). Nothing else is the user's words: not a memory, a tool result, a hand-back or a
+  summary.
+- `signal | <token>`, `failure | <token>`, `rule | <token>`: the route TIERS.md prescribes, by its token. A token has
+  roles and a highest tier; pick the one that describes the route, never one that merely lets the spawn pass.
+- `lesson | <global|repo>/<YYYY-MM-DD-slug>`, `claude-md | <path> | "<quote>"`: a lesson or a `CLAUDE.md` that asks for it.
+
+Never pass `--via pane` yourself: only orch-pane marks an answer as the user's.
+
 ### Tier selection
 
 **Planner** — `opus/high`, always; you don't judge the task's complexity. The one escalated planner tier is
@@ -118,7 +141,7 @@ requires naming what the prior pass got wrong.
 Record the tier, the escalation kind and the **`tradeoff` line** (`TIERS.md`) in the spawn prompt (the role copies it
 into its file's header; the planner's goes in the `plan.md` header). For every role that has a brief
 (implementer, director, code and security reviewer, fix rounds, planner revision `revise`, plan reviewer `plan-review`) pass the three to `orch brief` (`--tier`,
-`--escalation`, `--tradeoff`) and send the spawn prompt it prints, unchanged: never a hand-written one. `--extra`
+`--escalation`, `--tradeoff`, and `--basis` above the role's default tier) and send the spawn prompt it prints, unchanged: never a hand-written one. `--extra`
 carries facts, never test scope or gate instructions; only a step's `full-gate:` field lets the implementer run
 the gate. `--extra` takes the path of a file, not inline text. Any other value a spawn needs goes in that file, and
 so into the brief: the prior pass's diff and notes paths on a `post-failure` spawn, the security-ledger path for the
@@ -209,7 +232,7 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
 ### Dispatch protocol — every spawn
 
 1. **Pre-flight and journal, one call:** `orch spawn <role> --agent <agent> --tier <tier> --steps <steps>
-   --reason "<why>" --alt "<alternative>" --tradeoff "<one line>"` runs the estimator, then writes the
+   --reason "<why>" --alt "<alternative>" --tradeoff "<one line>" [--basis "<text>"]` (the basis is required for a tier above the role's default) runs the estimator, then writes the
    `tier_choice`, `escalation` (when raised: add `--escalation proactive|post-failure --from <tier>
    --trigger <trigger>`) and `spawn` lines. `STOP` → exit 2, nothing written: don't spawn, pause.
    `WARN`/`STALE`/`UNKNOWN` warn once: act on it. It also prints `usage wait: armed (pid N)` or `not armed`.
@@ -503,7 +526,7 @@ behind that ask. **Offer it** before a new feature, a bugfix or refactor spannin
 warrant a written plan: interactive (this session plans with the user), standard, lite (small, low-risk tasks) or normal
 single-session. **Recommend interactive by default** for non-trivial work and put it first; recommend another only when the
 task clearly fits it, and say why. List only those four modes (a global rule that adds an option to every question does
-not apply to this one). Never pick for the user, even if a memory says to skip the question; ask once, then get on with it.
+not apply to this one). Never pick for the user, even if a memory says to skip the question (§ What decides: auto-memory decides nothing); ask once, then get on with it.
 **Don't offer it** for questions, read-only research, trivial edits, or when the user already dictated the approach: say so
 and just do the work. If the user didn't say standard, lite or interactive, recommend one against the lite eligibility
 rules and let them pick. Choosing a mode *is* the request to orchestrate, so the task runs in a git worktree by default
@@ -836,6 +859,8 @@ worktree and task directory plus the branch name.
 
 ## What not to do
 
+- Let auto-memory decide anything in a task (tier, mode, escalation, skipping a step or a question, scope); spawn above a
+  role's default tier without `--basis`; pass `--via pane`; choose a basis token that does not describe the route.
 - Create the worktree before plan approval; merge outside `orch merge` without the user's explicit
   confirmation, fast-forward, or push; delete a worktree or branch before a confirmed merge.
 - Run or skip the security reviewer outside the step 5 rule, or without journaling it.

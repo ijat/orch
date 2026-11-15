@@ -165,6 +165,42 @@ class Coverage(unittest.TestCase):
         self.assertFalse(self.reached("orch-init", ("fable", "high")))
 
 
+class BasisTable(unittest.TestCase):
+    """TIERS.md § Record it, Basis: one row per (token, roles, highest tier); the guard's TOKENS must equal it."""
+
+    def md_tokens(self):
+        rows = table_rows(read(TIERS_MD), "| Token | Kind | Roles | Highest tier")
+        out = {}
+        for cells in rows:
+            self.assertEqual(len(cells), 6, cells)
+            token, kind = cells[0].strip("`"), cells[1]
+            top = tier_cells(cells[3])
+            self.assertEqual(len(top), 1, cells)
+            for role in re.findall(r"`([a-z-]+)`", cells[2]):
+                key = (kind, token)
+                self.assertNotIn("orch-" + role, out.get(key, {}), "duplicate row %s %s" % (kind, role))
+                out.setdefault(key, {})["orch-" + role] = top[0]
+        return out
+
+    def test_the_table_equals_the_guard(self):
+        self.assertEqual(self.md_tokens(), tiers.TOKENS)
+
+    def test_every_row_names_a_rule_and_a_trigger(self):
+        for cells in table_rows(read(TIERS_MD), "| Token | Kind | Roles | Highest tier"):
+            self.assertTrue(cells[4], cells)
+            self.assertTrue(cells[5] == "\u2014" or re.match(r"^`[a-z_]+`$", cells[5]), cells)
+
+    def test_the_six_forms_are_shown(self):
+        text = read(TIERS_MD)
+        for form in tiers.FORMS:
+            self.assertIn(form.replace("<your own words, 12+ characters>", "<the user's own words, 12+ characters>"), text)
+
+    def test_skill_md_states_the_rule(self):
+        text = read(os.path.join(os.path.dirname(TIERS_MD), "SKILL.md"))
+        for phrase in ("Auto-memory decides nothing", "orch memory audit", "--basis", "Never pass `--via pane` yourself"):
+            self.assertIn(phrase, text)
+
+
 class BasisForms(unittest.TestCase):
     P = staticmethod(tiers.parse_basis)
 

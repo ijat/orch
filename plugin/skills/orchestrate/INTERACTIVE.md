@@ -11,6 +11,8 @@ the gate, not in fix rounds. Your writes are the task directory (the planner's f
 bookkeeping); every code change goes to an `orch:implementer` (steps 7 and 9). *Direct edits* still
 applies after the gate and nowhere else.
 
+**Memory and basis.** The same holds for you as the planner: auto-memory decides nothing (SKILL.md § What decides, and the basis line), and every spawn you make above a role's default tier carries `--basis`.
+
 **Tier.** You plan at the session's own model and effort (write `unknown` for an effort you can't
 see); never switch your own. Advisory only: the user's session model is the planner tier, whatever it is. If
 **Tier selection** (2) or (3) applies while you plan (a roadmap, or forks with an expensive-to-undo artifact),
