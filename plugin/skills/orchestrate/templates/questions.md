@@ -13,6 +13,8 @@
      - multi: yes   (optional: several options may be picked; the answer is the labels joined by `|`)
      - options: A (recommended) :: what it does | B :: what it does | C !! why it cannot be explained
      - answer: <text> (<UTC>)
+     - via: pane   (optional: written by `orch answers --via pane` when the user answered in orch-pane; the
+                    escalation guard accepts such an answer as the user's words. Never written for `assumed`.)
 
      Each option is `Label :: explanation` or `Label !! reason` (3+ words, never filler); a recommended option
      and every option of a `reversible: no` question are explained (`::`), never given a reason. Old files with

@@ -109,7 +109,7 @@ run at `sonnet/xhigh` or above; with Haiku banned, the explorer, executor and gr
 implementer follows § Caps and pressure. A cap that leaves a role no tier at all is for the user (a parked
 question), not for a quiet substitute.
 
-The three cheap rows (Explorer, Executor, Graph) are enforced twice: the `orch hook tier` PreToolUse hook denies a spawn at any tier but `haiku/low` or `sonnet/low` (or under `CLAUDE_CODE_SUBAGENT_MODEL*` forcing), and each role refuses to work when its system prompt names a model other than Haiku or Sonnet. `ORCH_TIER_GUARD=0` in the env turns both off. A `fork` is not covered: it runs on the parent's model and neither check can tell it from any other fork.
+The `orch hook tier` PreToolUse hook guards every row. The three cheap rows (Explorer, Executor, Graph) are enforced twice: the hook denies a spawn at any tier but `haiku/low` or `sonnet/low` (or under `CLAUDE_CODE_SUBAGENT_MODEL*` forcing), and each role refuses to work when its system prompt names a model other than Haiku or Sonnet. For every other role the hook denies a spawn above the Default column unless the prompt's first `basis:` line gives an allowed reason (§ Record it, Basis); a spawn at or below the default is never touched. The Mythos variant counts as above the Security reviewer's default and takes a `user` basis only. `ORCH_TIER_GUARD=0` in the env turns both checks off. A `fork` is not covered: it runs on the parent's model and neither check can tell it from any other fork.
 
 | Role | Default | Allowed, and when | Never | Basis |
 |---|---|---|---|---|
@@ -241,7 +241,7 @@ run, plus a fix pass). So Haiku gets only the steps its gate admits.
 | `words` | words in the step's `do` + `contract` + `done when` + its verification lines | the step |
 | `extras` | the step has `sketch:` or `visual:`, or adds flaky-prone tests (async, timer, concurrency, browser) | the step |
 | `urgent` | the user is waiting on this step or said it is urgent | conversation |
-| `caps` | user caps (no Haiku / no Opus / Sonnet only / no Fable / an effort ceiling), and repo-lesson caps such as "no cheaper tiers" | conversation, `LESSONS.md` |
+| `caps` | user caps (no Haiku / no Opus / Sonnet only / no Fable / an effort ceiling), and repo-lesson caps such as "no cheaper tiers" | conversation, the lessons (`LESSONS.md` index) |
 | `usage` | `orch usage` state and the 7d % | pre-flight |
 
 Not used: repo size (Haiku was clean on the 1,260-file R3 repo and skipped items on 187–284-file
@@ -425,3 +425,62 @@ Every `tier_choice` and `escalation` journal event, and the spawn brief, carries
 line: what this tier buys and what it gives up, naming the factors that decided it. For example:
 `"haiku/medium: gate holds (S, 3 files, 7/7 contract items test-checked, no prose); gives up depth on anything unlisted — any finding moves it to sonnet/high"`.
 A default-tier choice can use `"default: no factor pushes up or down"`.
+
+### Basis
+
+A spawn above the Default column of § Tier table carries one line, first in its prompt (`orch brief --basis`
+prints it; `orch spawn --basis` checks it and journals it):
+
+```
+basis: user | "<the user's own words, 12+ characters>" [| Q<n> <repo>/<slug>]
+basis: signal | <token> [| <step or finding id>]
+basis: rule | <token>
+basis: failure | <token>
+basis: lesson | <global|repo>/<YYYY-MM-DD-slug>
+basis: claude-md | <path to CLAUDE.md or CLAUDE.local.md> | "<quote>"
+```
+
+`user` takes any role and any tier; the hook checks it against this session's transcript (typed, queued, a `-p`
+prompt, an AskUserQuestion answer, or a pane answer cited by `Q<n> <repo>/<slug>` that the user gave after this
+session started). A resumed or compacted session keeps its transcript, so there is no form that names another session.
+`lesson` and `claude-md` are checked against the text they cite and stop at `fable/high` (the highest tier any token
+below reaches; above it only `user` counts): a lesson file must be `status: open` and its `role:` line must name the
+spawned role; a `CLAUDE.md` must be one this session loaded (an `instructions` attachment in the transcript lists it)
+and must hold the quote. The other three are checked for form and against this table only: a token must be in it, for the
+spawned role, at or below the highest tier. Under a cap the same token applies and the tier is lower (`signal | flag` at
+`sonnet/xhigh` with no Opus; `failure | class_repeat` or `stuck` at `sonnet/xhigh`; `failure | prior_tier_failed` at
+`sonnet/max`). `--trigger` is the `escalation` event's value for the same route; reviewer, director and init routes have
+no escalation event (`—`: `tier_choice` only). A route this file allows with no row here is refused until a row is added;
+`tests/python/test_tiers.py` reads this table and compares it with the guard.
+
+| Token | Kind | Roles | Highest tier | Stands for | `--trigger` |
+|---|---|---|---|---|---|
+| `flag` | signal | `implementer` | `opus/medium` | Procedure item 4, cell `opus/medium` | `plan_flag` |
+| `unknown_cause` | signal | `implementer` | `opus/medium` | Procedure item 4, cell `opus/medium` | `plan_flag` |
+| `refusal` | signal | `implementer` | `opus/medium` | Procedure item 4, cell `opus/medium` | `plan_flag` |
+| `lite` | signal | `implementer` | `opus/medium` | Procedure item 1 (lite plans and codes), cell `opus/medium` | `plan_flag` |
+| `boundary_declined` | signal | `implementer` | `opus/high` | Procedure item 4 (`boundary` with the security review declined), cell `opus/high` | `plan_flag` |
+| `lite_edge` | signal | `implementer` | `opus/high` | Procedure item 1 (edge of lite eligibility), cell `opus/high` | `plan_flag` |
+| `class_repeat` | failure | `implementer` | `opus/medium` | Ladder row `sonnet/high`, the same class again; § Fix rounds | `review_pattern` |
+| `stuck` | failure | `implementer` | `opus/medium` | Ladder row `sonnet/high`, `stuck` | `blocker` |
+| `diligence` | failure | `implementer` | `opus/high` | Ladder row `opus/medium`, diligence | `review_pattern` |
+| `ability` | failure | `implementer` | `opus/high` | Ladder row `opus/medium`, ability | `review_pattern` |
+| `fix_cycle` | failure | `implementer` | `opus/max` | § Fix rounds, fix-and-check cycle 3; ladder row `opus/high` | `review_pattern` |
+| `prior_tier_failed` | failure | `implementer` | `opus/max` | Ladder row `opus/high`, any failure | `prior_tier_failed` |
+| `prior_tier_failed` | failure | `planner` | `fable/high` | Tier table, Planner: a plan whose own design failed (`post-failure`) | `prior_tier_failed` |
+| `kept_rung` | failure | `implementer` | `fable/high` | § Fix rounds: a step that reached `fable/high` keeps it; cell `fable/high` | `prior_tier_failed` |
+| `opus_max_failed` | failure | `implementer`, `code-reviewer`, `security-reviewer`, `plan-reviewer`, `director` | `fable/high` | Ladder row `opus/max`; § Fable outside planning, reason 1 | `prior_tier_failed` |
+| `need_escalate` | failure | `planner` | `fable/high` | Tier table, Planner: `need: escalate` with forks and an undo artifact | `planner_escalate` |
+| `premise_broke` | failure | `planner` | `fable/high` | Tier table, Planner: a roadmap revision after a broken premise | `blocker` |
+| `shape_roadmap` | rule | `planner` | `fable/high` | Tier table, Planner: a roadmap (`need: shape_roadmap`) | `plan_shape` |
+| `large_diff` | rule | `code-reviewer`, `security-reviewer` | `opus/xhigh` | Tier table, reviewers: a large diff; cell `opus/xhigh` | — |
+| `sensitive_diff` | rule | `code-reviewer`, `security-reviewer` | `opus/xhigh` | Tier table, reviewers: a sensitive diff; cell `opus/xhigh` | — |
+| `sensitive_milestone` | rule | `plan-reviewer` | `opus/medium` | Tier table, Plan reviewer: a sensitive milestone | — |
+| `no_reference` | rule | `init` | `opus/medium` | Tier table, Init: an ecosystem with no reference file | — |
+| `verdict_reversed` | rule | `director` | `opus/max` | Tier table, Director: the user reversed an accepted verdict | — |
+| `capability` | rule | `implementer`, `code-reviewer`, `security-reviewer`, `plan-reviewer`, `director` | `fable/high` | § Fable outside planning, reason 2 | `capability` |
+| `measured` | rule | `implementer`, `code-reviewer`, `security-reviewer`, `plan-reviewer`, `director` | `fable/high` | § Fable outside planning, reason 3 | `measured` |
+| `urgency` | rule | `implementer`, `code-reviewer`, `security-reviewer`, `plan-reviewer`, `director` | `fable/high` | § Fable outside planning, reason 4 | `urgency` |
+
+The Mythos variant (`mythos/high`) has no token: only a `user` basis (the user accepts the offer or asks). Do not
+pick a token for a route it does not describe; a wrong label is recorded, not caught, and misleads the audit trail.

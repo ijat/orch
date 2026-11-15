@@ -359,10 +359,17 @@ def cmd_answer(ns, extra):
 def cmd_answers(ns, extra):
     """Several answers, all or nothing: every id and text is checked before the file is touched (D9). With `--auto`
     each one is an auto-answer (the pane's Auto-answer option): the question must be open, `--reversible yes`, and the
-    text must be its recommended option; it becomes `assumed` and is journaled as `orch ask --assume` journals."""
+    text must be its recommended option; it becomes `assumed` and is journaled as `orch ask --assume` journals.
+    `--via pane` marks each answer `- via: pane`: the user chose it in orch-pane (the escalation guard accepts such
+    an answer as the user's words), so it is never combined with `--auto`."""
     cli.require_write_allowed()
     task_dir = cli.get_task(ns)
     auto = bool(ns.auto)
+    via = ns.via
+    if via is not None and via != "pane":
+        raise OrchError("--via takes only `pane`; got %r" % via, 1)
+    if via and auto:
+        raise OrchError("--via pane cannot be used with --auto: an auto-answer is assumed, never the user's words", 1)
     role = cli.one_line(ns.as_role or "orchestrator")
     args = ns.pairs
     if len(args) % 2:
@@ -407,6 +414,9 @@ def cmd_answers(ns, extra):
             set_field(lines, q, "status", "assumed" if auto else "answered")
             q = [x for x in parse(lines) if x.n == n][0]
             set_field(lines, q, "answer", "%s (%s)" % (text, ts))
+            if via:
+                q = [x for x in parse(lines) if x.n == n][0]
+                set_field(lines, q, "via", via)
             if auto:
                 log += cli.log_line(ts, role, "question Q%d assumed %s: %s" % (n, text, cli.clip(q.text, 100)))
                 rec, _ = jr.build_record(
@@ -485,6 +495,8 @@ def register(add):
                     help="auto-answer: each question must be open and --reversible yes, the text its recommended option; "
                          "recorded as assumed")
     sp.add_argument("--as", dest="as_role", default=None, help="role named in the log line (default orchestrator)")
+    sp.add_argument("--via", default=None, help="`pane`: the user chose these answers in orch-pane (written as `- via: pane`); "
+                                                 "refused with --auto. Only the pane passes it")
 
     sp = add("checkpoint", cmd_checkpoint, "journal a checkpoint; --ask lists the first 10 open question ids and topics; the user answers in orch-pane")
     sp.add_argument("--ask", action="store_true")

@@ -559,6 +559,26 @@ export function shimmer(filled: number, frame: number, palette: Palette = GREEN)
 export const WAKE_TEXT =
   'orch-pane: the user answered parked questions. Read the answers with `orch status --json` (the questions block, history) or the task\'s questions.md, then carry on.'
 
+// The prompt the "Move memory to orch lessons" row sends: fixed, so the session loads the skill and nothing else rides in it.
+export const MEMORY_PROMPT =
+  'orch-pane: the user pressed "Move memory to orch lessons". Load the `orch:memory` skill and go through Claude\'s auto-memory for this project with the user, asking before every change.'
+
+// `orch memory status --json`: is auto-memory off for this project (its local settings file says false), and what else
+// the other sources say. A reading that is not the CLI's shape reads as "on, nothing to add".
+export type MemoryState = { off: boolean; note: string | null }
+export function memoryStateOf(stdout: string): MemoryState | null {
+  let rep: { settings?: { source?: unknown; value?: unknown }[]; live?: { state?: unknown } }
+  try { rep = JSON.parse(stdout) } catch { return null }
+  if (!rep || !Array.isArray(rep.settings)) return null
+  const value = (source: string) => rep.settings!.find(s => s.source === source)?.value
+  const off = value('project local') === 'false'
+  const elsewhere = ['project shared', 'global'].filter(src => value(src) === 'false')
+  const parts: string[] = []
+  if (elsewhere.length > 0) parts.push(`also off in: ${elsewhere.join(', ')}`)
+  if (typeof rep.live?.state === 'string') parts.push(`live check: ${rep.live.state}`)
+  return { off, note: parts.length > 0 ? parts.join('; ') : null }
+}
+
 export const NO_DRAFT: Draft = { pick: null, custom: null, confirmed: false, skipped: false, group: null, answer: null }
 
 // A question that cannot be undone: nothing is preselected for it, and Accept and auto-answer leave it alone.
@@ -645,7 +665,7 @@ export function nextInQueue(order: readonly string[], drafts: Record<string, Dra
 // `orch answers` argv for one task: every answer an element of its own, after `--` so none reads as a flag.
 export function answersArgv(windows: boolean, orch: string, taskId: string, pairs: readonly [string, string][], auto: boolean): string[] {
   return [
-    ...(windows ? ['python'] : []), orch, 'answers', '-t', taskId, ...(auto ? ['--auto', '--as', 'orch-pane'] : []),
+    ...(windows ? ['python'] : []), orch, 'answers', '-t', taskId, ...(auto ? ['--auto', '--as', 'orch-pane'] : ['--via', 'pane']),
     '--', ...pairs.flatMap(([id, text]) => [id, text]),
   ]
 }

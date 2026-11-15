@@ -1,6 +1,6 @@
 # Roadmap: <program-slug>
 
-- shape: roadmap — <which criteria from the planner's "Choose the shape" hit, one line>
+- shape: roadmap — user asked: "<quote>" | premise: <what only earlier work settles>
 - tier: <model>/<effort>
 - revision: 0
 

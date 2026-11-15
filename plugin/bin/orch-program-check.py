@@ -168,6 +168,13 @@ def main():
     elif ms and not any(r["review"] in ("code", "code+sec") or r["merge"] == "yes" or r["you"] != "-" for r in ms[:-1]):
         warns.append("no review, merge or user stop before the last milestone — this is a single plan with headings")
 
+    # W: a roadmap must say why it is one: the user asked, or a premise only earlier work settles
+    shape = re.search(r"(?m)^-\s*shape:\s*(.*?)\s*$", text)
+    if shape is None:
+        warns.append("no 'shape:' line — name the roadmap test that held (user asked: \"<quote>\" | premise: <what only earlier work settles>)")
+    elif "user asked" not in shape.group(1).lower() and "premise:" not in shape.group(1).lower():
+        warns.append("shape line names neither 'user asked' nor 'premise:' — a roadmap needs the user's request or a premise only earlier work settles")
+
     # W: low confidence needs a probe
     probes = "\n".join(sec.get("premises and probes", []))
     for r in ms:

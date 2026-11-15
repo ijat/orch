@@ -18,6 +18,7 @@ from . import merge
 from . import plan as pl
 from . import questions as qs
 from . import status as st
+from . import tiers
 from .paths import BIN_DIR, OrchError, TaskLock, orch_root, require_write_allowed, task_names, write_atomic
 
 SUPERSEDE_RE = re.compile(r"restat|replaces|replaced|supersed|\bnew block\b", re.I)
@@ -590,11 +591,30 @@ REUSE_ROLES = {"implement": "implementer", "fix": "implementer", "director": "di
                "plan-review": "plan-reviewer"}     # brief kinds whose prompt prints a SendMessage line
 
 
+BASIS_ROLES = {"implement": "implementer", "fix": "implementer", "director": "director", "review": "code-reviewer",
+               "security": "security-reviewer", "revise": "planner", "plan-review": "plan-reviewer"}   # brief kind -> role
+
+
+def above_default_tier(kind, tier):
+    """True when `tier` (<model>/<effort>) is above the default of the role this brief kind spawns."""
+    role = BASIS_ROLES.get(kind)
+    if not role or not tier or "/" not in tier:
+        return False
+    key = "orch-" + role
+    if not tiers.needs_basis(key):
+        return False
+    model, _, effort = tier.partition("/")
+    return tiers.above_default(key, model, effort)
+
+
 def spawn_prompt(path, ns, kind, reuse=None):
-    """The complete spawn prompt for this brief, so the orchestrator sends it unchanged: tier, escalation, tradeoff and
-    the brief path, nothing else (no test scope, no gate, no operating instruction). A value not given is a visible
-    placeholder."""
-    given = (("tier", ns.tier), ("escalation", ns.escalation), ("tradeoff", getattr(ns, "tradeoff", None)))
+    """The complete spawn prompt for this brief, so the orchestrator sends it unchanged: tier, escalation, tradeoff,
+    a basis line when the tier is above the role's default (or `--basis` was given) and the brief path, nothing else
+    (no test scope, no gate, no operating instruction). A value not given is a visible placeholder."""
+    given = [("tier", ns.tier), ("escalation", ns.escalation), ("tradeoff", getattr(ns, "tradeoff", None))]
+    basis = tiers.basis_text(getattr(ns, "basis", None))
+    if basis or above_default_tier(kind, ns.tier):
+        given.append(("basis", basis))
     missing = [k for k, v in given if not v]
     if missing:
         sys.stderr.write("orch brief: no --%s given; the spawn prompt shows %s as a placeholder\n"
@@ -1304,6 +1324,9 @@ def register(add):
     sp.add_argument("--tier", default=None)
     sp.add_argument("--escalation", default=None)
     sp.add_argument("--tradeoff", default=None)
+    sp.add_argument("--basis", default=None,
+                    help="the text of the spawn prompt's `basis:` line (the reason for a tier above the role's default); "
+                         "printed as the prompt's fourth line, a placeholder when the tier is above default and none is given")
     sp.add_argument("--range", default=None)
     sp.add_argument("--round", type=int, default=None)
     sp.add_argument("--check", action="store_true")

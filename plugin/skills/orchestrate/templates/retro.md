@@ -33,4 +33,4 @@ Then 1–3 lines: which planned choices the outcome contradicts. -->
 
 ## What I'd do differently
 
-<!-- Process-level only. Anything critical enough to recur also goes to LESSONS.md. -->
+<!-- Process-level only. Anything critical enough to recur also becomes a lesson (`orch lessons add`). -->

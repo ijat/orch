@@ -12,7 +12,8 @@ from . import cli
 from . import journal as jr
 from . import questions as qs
 from . import status as st
-from .paths import (OrchError, TEMPLATES_DIR, TaskLock, append_bytes, ends_with_newline, now, refresh_index, task_names,
+from . import tiers
+from .paths import (OrchError, TEMPLATES_DIR, TaskLock, agent_key, append_bytes, ends_with_newline, now, refresh_index, task_names,
                     warn_stderr, write_atomic)
 
 ROLE_RE = re.compile(r"^[a-z][a-z0-9:_.-]*$")
@@ -144,6 +145,12 @@ def cmd_spawn(ns, extra):
                 raise OrchError("--escalation %s needs --from, --trigger and --tradeoff (%s missing)" % (esc, flag), 1)
         if not TIER_RE.match(ns.from_tier):
             raise OrchError("--from must look like sonnet/high, got %r" % ns.from_tier, 1)
+    basis = tiers.basis_text(ns.basis) if ns.basis else ""
+    key = agent_key(ns.agent)
+    if tiers.needs_basis(key):
+        verdict = tiers.check_form(ns.agent, ns.tier, ns.basis)
+        if not verdict.allow:
+            raise OrchError(verdict.reason, 1)
     alts = [a.strip() for a in (ns.alt or "").split(",") if a.strip()]
     steps = None
     if ns.steps is not None and ns.steps.strip():
@@ -193,7 +200,8 @@ def cmd_spawn(ns, extra):
         out.append(rec("spawn", [("role", "=", role), ("agent", "=", ns.agent), ("tier", "=", ns.tier),
                                  ("steps", ":=", json.dumps(steps)), ("usage_5h", ":=", json.dumps(u5)),
                                  ("usage_7d", ":=", json.dumps(u7))] + ([("head", "=", head)] if head else [])
-                                 + ([("reused", ":=", "true")] if ns.reused else [])))
+                                 + ([("reused", ":=", "true")] if ns.reused else [])
+                                 + ([("basis", "=", basis[:tiers.BASIS_CLIP])] if basis else [])))
         text = "spawned %s (%s, %s)%s%s" % (role, ns.agent, ns.tier, " steps %s" % ",".join(str(s) for s in steps) if steps else "",
                                           ": " + note if note else "")
         log = cli.log_line(ts, "orchestrator", text)
@@ -557,6 +565,10 @@ def register(add):
     sp.add_argument("--from", dest="from_tier", default=None)
     sp.add_argument("--trigger", default=None)
     sp.add_argument("--note", default=None)
+    sp.add_argument("--basis", default=None,
+                    help='why the tier is above the role\'s default, the text of the prompt\'s `basis:` line: user | "<quote>", '
+                         'signal | <token>, rule | <token>, failure | <token>, lesson | <scope>/<name>, claude-md | <path> | "<quote>"; '
+                         'required above the default (form and token table are checked here, a user quote by the hook)')
     sp.add_argument("--reused", action="store_true",
                     help="next work goes to the last implementer, code-reviewer or security-reviewer by SendMessage; refused unless its cache is still warm")
 

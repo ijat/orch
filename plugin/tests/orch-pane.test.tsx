@@ -6,7 +6,7 @@ import {
   agentPalette, agentPct, agentPctTail, askContext, barCells, barLayout, countTail, fold, goalLine, hhmm, idleMinutes, isStale, lastActivity, lineText, mdLite,
   bytesText, indexDetails, indexHeadline, indexLook, overallTail, parseIndex, placeText, plainInput, scopeLabel, shimmer,
   sortByAttention, splitScope, isMine, spawnOf, sparkline, stepsTail, textKey,
-  WAKE_TEXT, acceptable, answerOf, answersArgv, autoPairs, historyRows, isCritical, mergeOrder, metaText, nextInQueue, optionNote,
+  MEMORY_PROMPT, WAKE_TEXT, memoryStateOf, acceptable, answerOf, answersArgv, autoPairs, historyRows, isCritical, mergeOrder, metaText, nextInQueue, optionNote,
   pageCount, pickCurrent, pickedLabel, staleQuestion, togglePick, isChosen, isMulti, needsHoldRow, openListOf, skipFor,
   COMPACT_TOOL_FULL, COMPACT_WAKE_TEXT, busyReason,
 } from '../hooks/pane/lib'
@@ -85,6 +85,9 @@ type World = {
   tools: string[]; compacts: (string | undefined)[]; compactFails: number; order: string[]
   // `orch setting` runs, the stored value of `mythos_review` (the CLI's file, default off) and whether a `set` fails.
   settingRuns: string[][]; mythos: 'on' | 'off'; settingRefuses?: boolean
+  // `orch memory` runs, the value `autoMemoryEnabled` has in the project's local settings file ('false' | 'unset'), the
+  // global file's value, and whether a switch fails.
+  memoryRuns: string[][]; memoryLocal: 'false' | 'unset'; memoryGlobal: 'false' | 'unset'; memoryRefuses?: boolean
 }
 
 const INDEX: IndexStatus = {
@@ -116,7 +119,7 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
                env: Record<string, string> = { HOME: '/home/u' }): World {
   const w: World = {
     runs: [], indexRuns: [], opens: 0, paneOpen: true, placed: true, result, index: INDEX_RAN,
-    answers: [], answered: { exitCode: 0, stdout: 'Q1 answered', stderr: '' }, onAnswers: () => {}, groups: {}, groupRuns: [], toasts: [], wakes: [], notes: [], tools: [], compacts: [], compactFails: 0, order: [], settingRuns: [], mythos: 'off',
+    answers: [], answered: { exitCode: 0, stdout: 'Q1 answered', stderr: '' }, onAnswers: () => {}, groups: {}, groupRuns: [], toasts: [], wakes: [], notes: [], tools: [], compacts: [], compactFails: 0, order: [], settingRuns: [], mythos: 'off', memoryRuns: [], memoryLocal: 'unset', memoryGlobal: 'unset',
   }
   mock.env(on, env)
   on('session.cwd', () => ({ value: '/proj' }))
@@ -138,6 +141,26 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
         ? `${w.installedAt ?? PLUGIN_ROOT} abc1234def56789`
         : e.argv[0]?.includes('orch-index') ? 'orch-index 0.2.0' : 'orch 0.1.0'
       return { value: { exitCode: 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+    if (e.argv.includes('memory')) {
+      // `orch memory status --json | auto-off | auto-on --project <cwd>`: the project's local settings file is a field of the world.
+      const verb = e.argv[e.argv.indexOf('memory') + 1]
+      w.memoryRuns.push([...e.argv])
+      if (verb === 'auto-off' && !w.memoryRefuses) w.memoryLocal = 'false'
+      if (verb === 'auto-on' && !w.memoryRefuses) w.memoryLocal = 'unset'
+      const out = verb === 'status'
+        ? JSON.stringify({
+          project: '/proj', folder: null,
+          settings: [
+            { source: 'project local', file: '/proj/.claude/settings.local.json', value: w.memoryLocal },
+            { source: 'project shared', file: '/proj/.claude/settings.json', value: 'no file' },
+            { source: 'global', file: '/home/u/.claude/settings.json', value: w.memoryGlobal },
+          ],
+          env: { name: 'CLAUDE_CODE_DISABLE_AUTO_MEMORY', value: 'unset' },
+          live: { state: 'not yet verified', why: 'no session started after the settings change', since: null },
+        })
+        : `${verb} done\n`
+      return { value: { exitCode: verb !== 'status' && w.memoryRefuses ? 1 : 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
     if (e.argv.includes('setting')) {
       // `orch setting get|set mythos_review`: the CLI's own file, here a field of the world.
@@ -1520,7 +1543,7 @@ test('Next moves on, a critical question has nothing preselected, the last one s
   await ui.press({ key: 'app/build:Q3:o1' })
   expect(await buttonText(ui, 'send:app/build')).toBe('Send 3 answers')
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Keep', 'Q2', 'Keep', 'Q3', 'Keep it']])
+  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Keep', 'Q2', 'Keep', 'Q3', 'Keep it']])
   expect(w.wakes).toEqual([WAKE_TEXT])
   expect(w.wakes[0]).not.toContain('Keep')
   expect(await allText(ui)).not.toContain('Needs you')
@@ -1537,7 +1560,7 @@ test('a pick counts only after Next; Send now sends the confirmed ones and the r
   expect(await buttonText(ui, 'send-now:app/build')).toBe('Send 1 now · 2 stay open')
   expect(await buttonText(ui, 'row:app/build:Q1')).toMatch(/^✓ Question 1: Item 1 {2}→ Change$/)
   await ui.press({ key: 'send-now:app/build' })
-  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Change']])
+  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Change']])
   expect(w.wakes).toHaveLength(1)
   await ui.unmount()
 })
@@ -1556,7 +1579,7 @@ test('a failing orch answers wakes nobody, keeps the picks and shows the error',
   // The drafts are still there: a second try with orch working sends both.
   w.answered = { exitCode: 0, stdout: 'ok', stderr: '' }
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[1]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Change', 'Q2', 'Keep'])
+  expect(w.answers[1]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Change', 'Q2', 'Keep'])
   expect(w.wakes).toEqual([WAKE_TEXT])
   expect(await allText(ui)).not.toContain('orch answers failed')
   await ui.unmount()
@@ -1572,7 +1595,7 @@ test('a draft for a question that was answered elsewhere is dropped on the refus
   expect(await allText(ui)).toContain('The draft for Q2 was dropped; send again.')
   w.answered = { exitCode: 0, stdout: 'ok', stderr: '' }
   await ui.press({ key: 'send-now:app/build' })
-  expect(w.answers[1]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Keep'])
+  expect(w.answers[1]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Keep'])
   await ui.unmount()
 })
 
@@ -1584,8 +1607,8 @@ test('an answer travels as one argv element after `--`, never through a shell', 
   await ui.press({ key: 'next:app/build' })
   await ui.press({ key: 'send:app/build' })
   const argv = w.answers[0] ?? []
-  expect(argv.slice(0, 5)).toEqual([ORCH, 'answers', '-t', 'app/build', '--'])
-  expect(argv.slice(5)).toEqual(['Q1', nasty, 'Q2', 'Keep'])
+  expect(argv.slice(0, 7)).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--'])
+  expect(argv.slice(7)).toEqual(['Q1', nasty, 'Q2', 'Keep'])
   expect(w.wakes).toHaveLength(1)
   await ui.unmount()
 })
@@ -1601,7 +1624,7 @@ test('Accept confirms the recommended answers and leaves a critical question ope
   expect(await allText(ui)).toContain('Delete item 3 for good?')
   expect(await buttonText(ui, 'send-now:app/build')).toBe('Send 2 now · 2 stay open')
   await ui.press({ key: 'send-now:app/build' })
-  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Keep', 'Q2', 'Keep'])
+  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Keep', 'Q2', 'Keep'])
   await ui.unmount()
 })
 
@@ -1640,9 +1663,9 @@ test('questions of another task are answered against that task', async ($, on) =
   expect(await buttonText(ui, 'send:app/build')).toBe('Send 1 answer')
   expect(await buttonText(ui, 'send:other/fix')).toBe('Send 1 answer')
   await ui.press({ key: 'send:other/fix' })
-  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'other/fix', '--', 'Q1', 'Keep']])
+  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'other/fix', '--via', 'pane', '--', 'Q1', 'Keep']])
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[1]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Keep'])
+  expect(w.answers[1]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Keep'])
   await ui.unmount()
 })
 
@@ -1656,7 +1679,7 @@ test('a Send for another folder\'s task records the answers, says so, and neithe
   expect(await allText(ui)).not.toContain('wakes the agent')
   expect(await allText(ui)).toContain("saved for that task's session")
   await ui.press({ key: 'send:other/fix' })
-  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'other/fix', '--', 'Q1', 'Keep']])
+  expect(w.answers).toEqual([[ORCH, 'answers', '-t', 'other/fix', '--via', 'pane', '--', 'Q1', 'Keep']])
   expect(w.wakes).toEqual([])
   expect(w.compacts).toEqual([])
   expect(w.toasts.join(' ')).toContain('next checkpoint')
@@ -1681,7 +1704,7 @@ test('a question whose options are not loaded yet says so, and can still be answ
   expect(await allText(ui)).toContain('Choose an option first')
   await ui.input({ key: 'app/build:Q1:own', text: 'my words' })
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'my words'])
+  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'my words'])
   await ui.unmount()
 })
 
@@ -1692,7 +1715,7 @@ test('drafts survive a restart: they are read back from the store and sent', asy
   expect(await allText(ui)).toContain('Should item 2 change?')
   expect(await buttonText(ui, 'send:app/build')).toBe('Send 2 answers')
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Change', 'Q2', 'Keep'])
+  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Change', 'Q2', 'Keep'])
   await ui.unmount()
 })
 
@@ -1826,8 +1849,8 @@ test('200 questions: groups, a long list drawn as a few rows, a critical one sur
   expect(await buttonText(ui, 'send-now:app/build')).toBe('Send 39 now · 161 stay open')
   await ui.press({ key: 'send-now:app/build' })
   const argv = w.answers[0] ?? []
-  expect(argv.slice(0, 5)).toEqual([ORCH, 'answers', '-t', 'app/build', '--'])
-  expect(argv.length).toBe(5 + 39 * 2)
+  expect(argv.slice(0, 7)).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--'])
+  expect(argv.length).toBe(7 + 39 * 2)
   expect(argv).not.toContain('Q33')
   expect(w.wakes).toHaveLength(1)
   await ui.unmount()
@@ -2001,9 +2024,9 @@ test('a multi-select question: toggled picks join with `|`; no preselect, no typ
 
 test('answersArgv puts every answer after `--`; staleQuestion and autoPairs read their input strictly', () => {
   expect(answersArgv(false, '/o', 'a/b', [['Q1', '--x'], ['Q2', 'y z']], false))
-    .toEqual(['/o', 'answers', '-t', 'a/b', '--', 'Q1', '--x', 'Q2', 'y z'])
+    .toEqual(['/o', 'answers', '-t', 'a/b', '--via', 'pane', '--', 'Q1', '--x', 'Q2', 'y z'])   // a user send carries --via pane
   expect(answersArgv(true, 'C:/o', 'a/b', [['Q1', 'k']], true))
-    .toEqual(['python', 'C:/o', 'answers', '-t', 'a/b', '--auto', '--as', 'orch-pane', '--', 'Q1', 'k'])
+    .toEqual(['python', 'C:/o', 'answers', '-t', 'a/b', '--auto', '--as', 'orch-pane', '--', 'Q1', 'k'])   // an auto-answer never does
   expect(staleQuestion('orch: Q12 is answered, not open; nothing written')).toBe('Q12')
   expect(staleQuestion('orch: no question Q4 in /x; nothing written')).toBe('Q4')
   expect(staleQuestion('orch: boom')).toBeNull()
@@ -2030,7 +2053,7 @@ test('on Windows the answers run through python, from USERPROFILE', async ($, on
   await start($, clock)
   const ui = await $.ui.mount(PANE60('terminal'))
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers).toEqual([['python', ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Keep']])
+  expect(w.answers).toEqual([['python', ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Keep']])
   await ui.unmount()
 })
 
@@ -2045,7 +2068,7 @@ test('mobile draws the questions and takes picks; typed answers need an Input it
   await ui.press({ key: 'app/build:Q1:o1' })
   await ui.press({ key: 'next:app/build' })
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Change', 'Q2', 'Keep'])
+  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Change', 'Q2', 'Keep'])
   await ui.unmount()
 })
 
@@ -2067,7 +2090,7 @@ test('Hold on closes every list of options, is never preselected, and sends the 
   expect(await allText(ui)).toContain('Choose an option first')
   await ui.press({ key: 'app/build:Q2:o0' })
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Hold on', 'Q2', 'Delete'])
+  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Hold on', 'Q2', 'Delete'])
   await ui.unmount()
 })
 
@@ -2075,7 +2098,7 @@ test('Accept and auto-answer never take Hold on', async ($, on) => {
   const { ui, w } = await pane($, on, [withQs(PROGRAM, [mkq(1), mkq(2)])])
   await ui.press({ key: 'accept:app/build' })
   await ui.press({ key: 'send:app/build' })
-  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--', 'Q1', 'Keep', 'Q2', 'Keep'])
+  expect(w.answers[0]).toEqual([ORCH, 'answers', '-t', 'app/build', '--via', 'pane', '--', 'Q1', 'Keep', 'Q2', 'Keep'])
   await ui.press({ key: 'tab:more' })
   await ui.press({ key: 'opt-auto' })
   expect(JSON.stringify(w.answers)).not.toContain('Hold on')
@@ -2318,6 +2341,59 @@ test('Offer Mythos security reviews: the box shows the CLI value (a change made 
   await ui.press({ key: 'opt-mythos' })
   expect(w.mythos).toBe('on')
   expect(await buttonText(ui, 'opt-mythos')).toMatch(/^\[x\] /)
+  await ui.unmount()
+})
+
+test('memoryStateOf reads the CLI status: the local file decides, other sources and the live check go to the note, anything else is null', () => {
+  const rep = (local: string, glob: string, live: string) => JSON.stringify({
+    settings: [{ source: 'project local', value: local }, { source: 'project shared', value: 'no file' }, { source: 'global', value: glob }],
+    live: { state: live },
+  })
+  expect(memoryStateOf(rep('false', 'unset', 'verified off'))).toEqual({ off: true, note: 'live check: verified off' })
+  expect(memoryStateOf(rep('unset', 'false', 'not yet verified'))).toEqual({ off: false, note: 'also off in: global; live check: not yet verified' })
+  expect(memoryStateOf('not json')).toBeNull()
+  expect(memoryStateOf('{}')).toBeNull()
+})
+
+test('Auto-memory off for this project: read from `orch memory status --json`, a press runs auto-off / auto-on for the cwd', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  await ui.press({ key: 'tab:more' })
+  expect(w.memoryRuns[0]).toEqual([ORCH, 'memory', 'status', '--json', '--project', '/proj'])
+  expect(await buttonText(ui, 'opt-memory-off')).toMatch(/^\[ \] Auto-memory off for this project/)
+  await ui.press({ key: 'opt-memory-off' })
+  expect(w.memoryRuns.some(r => r.join(' ') === `${ORCH} memory auto-off --project /proj`)).toBe(true)
+  expect(w.memoryLocal).toBe('false')
+  expect(await buttonText(ui, 'opt-memory-off')).toMatch(/^\[x\] Auto-memory off for this project/)
+  await ui.press({ key: 'opt-memory-off' })
+  expect(w.memoryRuns.some(r => r.join(' ') === `${ORCH} memory auto-on --project /proj`)).toBe(true)
+  expect(w.memoryLocal).toBe('unset')
+  expect(await buttonText(ui, 'opt-memory-off')).toMatch(/^\[ \] /)
+  // The global switch is never run from the pane.
+  expect(w.memoryRuns.some(r => r.includes('--global'))).toBe(false)
+  await ui.unmount()
+})
+
+test('Auto-memory off for this project: the box shows the CLI value (a refused write, the global file), and nothing changes without a press', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  w.memoryGlobal = 'false'
+  w.memoryRefuses = true
+  await ui.press({ key: 'tab:more' })
+  expect(await buttonText(ui, 'opt-memory-off')).toMatch(/^\[ \] /)       // the global file alone does not tick the project row
+  expect(w.memoryRuns.every(r => r[2] === 'status')).toBe(true)         // opening More only reads
+  await ui.press({ key: 'opt-memory-off' })
+  expect(w.memoryLocal).toBe('unset')
+  expect(await buttonText(ui, 'opt-memory-off')).toMatch(/^\[ \] /)       // the write failed: the box keeps what the CLI says
+  await ui.unmount()
+})
+
+test('Move memory to orch lessons: a press submits the one fixed prompt that names the orch:memory skill', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  await ui.press({ key: 'tab:more' })
+  expect(w.wakes).toEqual([])
+  await ui.press({ key: 'act-memory-move' })
+  expect(w.wakes).toEqual([MEMORY_PROMPT])
+  expect(MEMORY_PROMPT).toContain('orch:memory')
+  expect(w.memoryRuns.every(r => r[2] === 'status')).toBe(true)         // the pane itself changes nothing
   await ui.unmount()
 })
 

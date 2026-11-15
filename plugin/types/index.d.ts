@@ -291,6 +291,8 @@ declare module 'claude-code' {
       auto: boolean
       // "Offer Mythos security reviews": the value `orch setting get mythos_review` printed (the CLI's file is the source)
       mythos: boolean
+      // "Auto-memory off for this project": what `orch memory status --json` said (off = the project's local settings file says false)
+      memory: { off: boolean; note: string | null }
       drafts: Shaped<{ loaded: boolean; byTask: Drafts }>
       qstate: QState
       hist: { query: string; page: number }

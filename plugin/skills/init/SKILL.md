@@ -79,7 +79,9 @@ instead. Never overwrite an existing `CLAUDE.md`.
    "nothing is pushed" CLAUDE.md rule for it. Only if the user explicitly asks for a permanent ban, write
    that rule and mark it `Override:` (the global file allows push after asking).
 4. **Phase 1 — proposal.** Spawn the `orch:init` agent (model `sonnet`, effort `high`; `opus`/`medium`
-   when no reference file) per the Dispatch protocol, with the brief: repo path, mode `new`, the base
+   when no reference file) per the Dispatch protocol. At `opus`/`medium` the prompt's first line is
+   `basis: rule | no_reference` (and `--basis "rule | no_reference"` on `orch spawn` in orchestration): the tier
+   guard refuses an above-default spawn without it. The brief: repo path, mode `new`, the base
    branch (the one `orch init --base` recorded; outside orchestration, the repo's current or intended
    default branch, asked if unknown), the answers, the skill dir, the global `CLAUDE.md` path, and "phase 1: write the proposal only, no repo
    writes". It researches current tooling (web, dated), reads `references/architecture.md` and

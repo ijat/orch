@@ -128,11 +128,14 @@ class Layout(unittest.TestCase):
                 with open(os.path.join(d, r + ".md"), encoding="utf-8") as fh:
                     head = fh.read().split("\n---", 1)[0]
                 self.assertRegex(head, r"(?m)^name: %s$" % re.escape(r), "%s/%s.md" % (d, r))
+        # `orch:<x>` names an agent or a skill (`/orch:memory`); a skill is a folder of skills/ with a SKILL.md
+        skills = {os.path.basename(os.path.dirname(p)) for p in glob.glob(os.path.join(PLUGIN, "skills", "*", "SKILL.md"))}
+        self.assertIn("memory", skills)     # instrument check: the folders were found
         unknown = []
         for rel, text in self.files:
             for m in AGENT_WORD.finditer(text):
                 w = m.group(1)
-                if w not in ROLES and w not in VARIANTS and w != "*" and w not in MARKERS:
+                if w not in ROLES and w not in VARIANTS and w not in skills and w != "*" and w not in MARKERS:
                     unknown.append("%s: %s" % (rel, m.group(0)))
         self.assertEqual(unknown, [], "orch:<x> where x is no role")
         self.assertEqual(hits(self.files, re.compile(r"mcp__orch-(pane|ui)__")), [])

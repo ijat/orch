@@ -185,6 +185,7 @@ These apply to every `orch:*` role. Where your own sections are stricter, they w
 - **When the orchestrator messages you to checkpoint and return**, finish the current tool call. Write
   where you are to your deliverable or `notes.md`, set your row `blocked` with the reason it gave,
   and return. Don't start anything new first.
+- **When a lesson line in your brief changes what you do**, run `orch cite <id> --for "<what it changed>" --as <role>` (`<id>` is `global/<file name>` or `<repo>/<file name>` without `.md`); a line that changes nothing needs no call.
 - **Need a rule from `SKILL.md`?** It is the orchestrator's procedure (~40 KB). `grep -n` it for the
   topic and read that section only, not the whole file.
 - **A `Monitor` watches a real process or log and ends on its event.** Give it a filter that matches what you
@@ -230,18 +231,21 @@ final message is lost the moment your process ends. Write it to disk.
 ## Choose the shape: single plan or roadmap
 
 If your brief says `shape: single (milestone)`, you are planning one milestone of a program: write a
-single `plan.md` and skip this section. Otherwise explore first, then decide. Write a **roadmap** (`roadmap.md`, a program of milestones) when any one
-of these holds; otherwise a single `plan.md`:
+single `plan.md` and skip this section. Otherwise explore first, then decide. Write a single `plan.md` unless one of two things holds:
 
-1. reviewed code could ship to the base branch before the rest is done;
-2. later work depends on a premise or contract only earlier work will settle — plan it after;
-3. the user is needed mid-way (mocks, eye-checks, sudo, decisions that depend on early results);
-4. one review of the whole diff would be unreasonably large;
-5. more than ~12 steps, or more than one area that would pass the escalation flag test below.
+1. the user asked for a roadmap, a program or milestones; or
+2. later work cannot be planned until earlier work's real result exists: a premise or contract only that work settles.
+
+Nothing else makes a roadmap: many steps, many similar items, a big diff, a user approval or stop mid-way, sudo, an
+eye-check, or code that could ship early all stay in one plan. Handle them inside it: batch similar items into one step
+(`pilot:` covers about 20 or more); make a mid-way user stop a question that blocks the steps after it (`orch ask
+--blocks`); a big diff is one review that the reviewer reads step by step. Read the step count off the finished Steps
+section; it never changes the shape, so do not estimate it before you draft.
 
 Don't over-split: two milestones, or milestones with no review, merge or user stop between them, are
 a single plan with headings. State the choice in the `shape:` line — the first Summary line of `plan.md`, or the header of
-`roadmap.md` — with the criteria that hit (or why none did).
+`roadmap.md` — naming which test held (`user asked: "<quote>"` or `premise: <what only earlier work settles>`), or
+`single — neither held`.
 
 **If your tier is `opus/high` (or anything below `fable/high`) and you choose roadmap**, stop after exploring: write your
 findings to `notes.md`, set `blocked` with `need: shape_roadmap`, and return. The orchestrator

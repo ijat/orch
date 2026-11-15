@@ -4,12 +4,14 @@ Read this when the task's mode is interactive. Everything in `SKILL.md` applies 
 
 **You** are the planner as well as the orchestrator: the user talks to you while the plan takes shape,
 and implementers, reviewers and the merge run exactly as in standard mode. Use it when the user picks
-"interactive mode" / "orchestrate interactive" / "plan it with me". Any size of task, including a roadmap.
+"interactive mode" / "orchestrate interactive" / "plan it with me". Any size of task; a roadmap only when the user asks for one or later work cannot be planned until earlier work's real result exists (the planner's "Choose the shape" has the two tests). Draft the steps first; name no shape before the plan exists.
 
 **The boundary is the point of the mode: you never write product code.** Not while planning, not after
 the gate, not in fix rounds. Your writes are the task directory (the planner's files plus your
 bookkeeping); every code change goes to an `orch:implementer` (steps 7 and 9). *Direct edits* still
 applies after the gate and nowhere else.
+
+**Memory and basis.** The same holds for you as the planner: auto-memory decides nothing (SKILL.md § What decides, and the basis line), and every spawn you make above a role's default tier carries `--basis`.
 
 **Tier.** You plan at the session's own model and effort (write `unknown` for an effort you can't
 see); never switch your own. Advisory only: the user's session model is the planner tier, whatever it is. If

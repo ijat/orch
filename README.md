@@ -86,7 +86,7 @@ Say **"orchestrate this"** and describe the work. Claude asks which mode to run:
 | **Interactive** (recommended) | most work: you shape the plan together | your session, with you | implementer agents |
 | **Standard** | larger or riskier changes | a planner agent | implementer agents |
 | **Lite** | small, low-risk tasks | one agent | the same agent |
-| **Program** | big features in milestones | a roadmap, then a plan per milestone | implementer agents |
+| **Program** | work you ask to plan in milestones, or whose later steps wait on earlier results | a roadmap, then a plan per milestone | implementer agents |
 
 In every mode you approve the plan, and review runs before the merge.
 
@@ -190,6 +190,12 @@ The plugin's own CLI does the bookkeeping, one call per change:
 - **Pacing:** `orch usage`.
 - **Questions:** `orch ask` and `orch answer`.
 - **Merging:** `orch merge`.
+
+- **Lessons and Claude's memory:** `orch lessons` keeps the short, checked lessons orch briefs carry (`add`, `check`,
+  `usage`, `audit`); `orch memory` lists (`audit`), backs up and empties (`clear`, `restore`) and switches off
+  (`auto-off`, `auto-on`, `status`) Claude's auto-memory. Auto-memory decides nothing in a task. The `/orch:memory`
+  skill walks a project's memory with you and asks before every change; the pane's More tab has two rows for it
+  ("Move memory to orch lessons", "Auto-memory off for this project").
 
 Agents use path-free commands that work out which task they are in by themselves: `orch plan --step 3`,
 `orch diff`, `orch append notes`, `orch write review`, `orch findings`. `orch --help` lists everything.

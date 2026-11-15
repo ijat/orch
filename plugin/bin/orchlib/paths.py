@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import datetime
 
 if os.name == "nt":
@@ -71,6 +72,11 @@ def backups_dir():
 
 def denylist_path():
     return os.path.join(private_dir(), "orch-export-denylist.txt")
+
+
+def claude_home():
+    """Claude Code's own config root (projects/, settings.json): ORCH_CLAUDE_HOME, else ~/.claude."""
+    return os.environ.get("ORCH_CLAUDE_HOME") or os.path.join(os.path.expanduser("~"), ".claude")
 
 
 def plugins_cache():
@@ -212,6 +218,16 @@ def write_repo_json(folder, root):
     write_atomic(os.path.join(folder, REPO_JSON), (json.dumps({"root_commit": root}) + "\n").encode("utf-8"), 0o644)
 
 
+RESERVED_FOLDERS = ("lessons",)     # `<root>/lessons/` holds the global lesson files: no repo's tasks go there
+
+
+def _reserved(folder_name):
+    """True when folder_name names a RESERVED_FOLDERS entry on a case-insensitive, normalising filesystem (macOS APFS
+    by default): `Lessons`, `LESSONS` and a decomposed-Unicode spelling are all `lessons` there (F11)."""
+    key = unicodedata.normalize("NFC", folder_name).casefold()
+    return any(key == unicodedata.normalize("NFC", r).casefold() for r in RESERVED_FOLDERS)
+
+
 def repo_folder(repo_root, tasks_dir=None, name=None):
     """The tasks folder name for a repo (D19): its folder name, or `<name>-<first 4 hex of its root commit>` when
     tasks/<name>/repo.json records a different root. A missing repo.json is written once the repo has a root commit;
@@ -219,11 +235,15 @@ def repo_folder(repo_root, tasks_dir=None, name=None):
     never renamed. A recorded root matches when it is any of the repo's roots (a merged-in older history adds a root
     and must not move the repo to a new folder), and every existing folder that could be the repo's is checked before
     anything is created; a new repo.json records the oldest. `name` replaces the repo
-    folder's name (`orch init` passes the name it was given)."""
+    folder's name (`orch init` passes the name it was given). A name in RESERVED_FOLDERS, in any case, is taken (the
+    global lessons live in `<root>/lessons/`): the repo gets `<name>-<4 hex of its root commit>`, which needs a commit."""
     tasks_dir = tasks_dir or orch_root()
     name = name or os.path.basename(os.path.normpath(repo_root))
     roots = root_commits(repo_root)
     if not roots:
+        if _reserved(name):
+            raise OrchError("the folder name %r is reserved (the global lessons live there); the repo needs a first "
+                            "commit to get %s-<hex>, or give `orch init` another name" % (name, name), 2)
         return name
     # Find before creating: `name`, then `name-<r[:4]>` for every root r, then any other `name-<4 hex>` folder. A
     # repo that lives in a suffixed folder keeps it when a merge changes its oldest root (F5).
@@ -245,6 +265,8 @@ def repo_folder(repo_root, tasks_dir=None, name=None):
     states = {}
     matches = []
     for i, candidate in enumerate(candidates):
+        if _reserved(candidate):
+            continue
         folder = os.path.join(tasks_dir, candidate)
         state, recorded = read_repo_json(folder)
         if state == "bad":
@@ -261,10 +283,10 @@ def repo_folder(repo_root, tasks_dir=None, name=None):
     # None matches: create `name`, or `name-<oldest[:4]>` when `name` belongs to another repo.
     root = roots[0]
     for candidate in (name, "%s-%s" % (name, root[:4])):
-        if states.get(candidate) == "absent":
+        if not _reserved(candidate) and states.get(candidate) == "absent":
             write_repo_json(os.path.join(tasks_dir, candidate), root)
             return candidate
-    raise OrchError("tasks folders %s and %s-%s belong to other repos" % (name, name, root[:4]), 2)
+    raise OrchError("tasks folders %s and %s-%s are taken (reserved or another repo's)" % (name, name, root[:4]), 2)
 
 
 def _folder_with_task_for(tasks_dir, matches, repo_root):

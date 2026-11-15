@@ -15,7 +15,7 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 |---|---|---|
 | `task_start` | task dir created | `mode` (standard/lite/interactive), `request` (≤ 1 line) |
 | `tier_choice` **choice** | before each planner/implementer/director spawn, and any non-default reviewer | `role`, `tier` (`<model>/<effort>`), `tradeoff` (≤ 1 line, see `TIERS.md`) |
-| `spawn` | each subagent spawn, or next work sent to a reused implementer (those lines add reused: true; `orch spawn` adds head=<sha> when status.md `worktree` is a git worktree) | `role`, `agent`, `tier`, `steps` (array or null), `usage_5h`, `usage_7d` |
+| `spawn` | each subagent spawn, or next work sent to a reused implementer (those lines add reused: true; `orch spawn` adds head=<sha> when status.md `worktree` is a git worktree; it adds basis=<text> when `--basis` was given: the reason a tier above the role's default was allowed, as in the prompt's `basis:` line, clipped to 300 characters) | `role`, `agent`, `tier`, `steps` (array or null), `usage_5h`, `usage_7d` |
 | `return` | each subagent returns | `role`, `agent`, `outcome` (done/blocked/failed/stopped), `tokens`, `tool_uses`, `duration_ms` (from the completion notice if it reports them, else null) |
 | `escalation` **choice** | a tier is raised | `role`, `from`, `to`, `trigger` (plan_flag/plan_shape/planner_escalate/review_pattern/prior_tier_failed/blocker/user), `tradeoff` |
 | `blocker` | a role returns blocked | `role`, `need` (≤ 1 line), `rung` (1/2/3 — where it got resolved), `resolved_by` |
@@ -31,11 +31,12 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 | `pilot` | a pilot batch returns | `step`, `items`, `tokens`, `rounds`, `est_rest_tokens`, `answer` (continue/retier/hold) |
 | `override` | the user overrides a default | `what` |
 | `direct_edit` | direct-edit allowance used | `what` |
-| `lesson` | LESSONS entry written or promoted | `file`, `title`, `promoted_to` (or null) |
+| `lesson` | lesson file written (`orch lessons add`) or promoted (`orch lessons promote`) | `file` (the lesson file's path), `title`, `promoted_to` (or null) |
+| `cite` | a lesson line in a brief changed what a role did, recorded by `orch cite <id> --for "<what it changed>"` (any role; the guard's allowed `basis: lesson` spawns count as citations too but are not journaled) | `ref` (the lesson id), `for` (what it changed), `role` |
 | `mode_switch` | lite or interactive task moved to standard | `from`, `to`, `reason` (scope_exceeded/ineligible/review_rounds/user), `phase` (plan/implement/review) |
 | `judgement` **choice** | any other non-obvious decision you made | `decision`, `confidence` (low/medium/high) |
 | `task_end` | task ends, any outcome | `outcome` (merged/declined/failed_merge/abandoned/handed_to_user), `rounds` |
-| `plan_shape` **choice** | every planner return | `shape` (single/roadmap), `criteria` (array of the planner's criterion numbers hit), `tier`, `overridden` (bool) |
+| `plan_shape` **choice** | every planner return | `shape` (single/roadmap), `criteria` (array of the planner's test numbers hit: 1 the user asked for a roadmap, 2 a premise only earlier work settles; empty for a single plan), `tier`, `overridden` (bool) |
 | `checker` | each `orch-program-check.py` run | `fails`, `warns`, `verdict` (OK/FAIL) |
 | `plan_review` | each plan-reviewer return | `round`, `blockers`, `should`, `notes`, `verdict` |
 | `milestone_plan` | roadmap approved, and after each approved revision | `revision`, `rows` (array of objects, one per table row, keys as the table header) |

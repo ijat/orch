@@ -9,6 +9,7 @@ Checks (independent ones run in parallel; one line each, with its verdict and wa
   python    every test class in tests/python/test_*.py in its own process (own ORCH_DIR temp dir), up to the CPU
             count at a time; the totals are the sum over the classes
   mods      `claude plugin test plugin`: the orch-pane and orch-ui mod suites (plugin/tests/)
+  lessons   `plugin/bin/orch lessons check` on the live lessons root (no lesson files there: pass, "skip")
   public    scripts/check-public.py --tree . and --range HEAD (commits on no remote-tracking ref; none is a pass)
   parity    scripts/text-parity.py --base dce7cf7 (only with --parity: this task's gate)
 Exit 0 only if every selected check passed. A check that cannot run (no `claude`, no denylist) fails and is never
@@ -181,6 +182,15 @@ def check_public():
     return True, "; ".join(notes), ""
 
 
+def check_lessons():
+    rc, out = run([sys.executable, os.path.join(ROOT, "plugin", "bin", "orch"), "lessons", "check"])
+    lines = [l for l in out.strip().splitlines() if l.strip()]
+    last = lines[-1] if lines else "(no output)"
+    if rc != 0:
+        return False, "lesson files: %s" % last, tail(out, 20)
+    return True, "skip: no lesson files" if last.endswith("(skip)") else last, ""
+
+
 def check_parity():
     script = os.path.join(SCRIPTS, "text-parity.py")
     if not os.path.isfile(script):
@@ -190,7 +200,7 @@ def check_parity():
 
 
 CHECKS = [("agents", check_agents), ("validate", check_validate), ("python", check_python),
-          ("mods", check_mods), ("public", check_public)]
+          ("mods", check_mods), ("lessons", check_lessons), ("public", check_public)]
 OPTIONAL = {"parity": check_parity}
 
 
