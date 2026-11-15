@@ -73,6 +73,11 @@ def denylist_path():
     return os.path.join(private_dir(), "orch-export-denylist.txt")
 
 
+def claude_home():
+    """Claude Code's own config root (projects/, settings.json): ORCH_CLAUDE_HOME, else ~/.claude."""
+    return os.environ.get("ORCH_CLAUDE_HOME") or os.path.join(os.path.expanduser("~"), ".claude")
+
+
 def plugins_cache():
     """The tree Claude Code installs plugins into."""
     return os.path.join(os.path.expanduser("~"), ".claude", "plugins", "cache")
