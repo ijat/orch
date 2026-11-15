@@ -137,6 +137,14 @@ def default_of(key):
     return DEFAULTS.get(MYTHOS_BASE if key == MYTHOS else key)
 
 
+CHEAP = ("orch-explorer", "orch-executor", "orch-graph")     # the hook's older check covers these; they take no basis
+
+
+def needs_basis(key):
+    """True for a role whose spawn above its default tier carries a `basis:` line (not the three cheap roles)."""
+    return checked(key) and key not in CHEAP
+
+
 def checked(key):
     """True for an orch role the basis rule covers (every role with a default tier, the mythos variant included)."""
     return key == MYTHOS or key in DEFAULTS
@@ -484,8 +492,27 @@ def _refuse(code, why, role, tier, default):
     return Verdict(False, code, reason, None)
 
 
-def check_spawn(tool_input, transcript_path=None, root=None):
-    """Verdict for a spawn of a checked role. Allowed silently (code 'default') at or below the role's default."""
+def basis_text(text):
+    """The text of a `--basis` option as a prompt line: one line, `basis: ` in front (typed or not)."""
+    text = " ".join((text or "").split())
+    if text.lower().startswith("basis:"):
+        text = text[len("basis:"):].strip()
+    return text
+
+
+def check_form(agent, tier, text):
+    """Verdict for `orch spawn`: the form of the basis and the token table, never a transcript, file or lesson.
+    `agent` is the subagent type (`orch:planner`), `tier` is `<model>/<effort>`, `text` the `--basis` value or None."""
+    model, _, effort = tier.partition("/")
+    tool_input = {"subagent_type": agent, "model": model, "effort": effort}
+    if basis_text(text):
+        tool_input["prompt"] = "basis: " + basis_text(text)
+    return check_spawn(tool_input, verify=False)
+
+
+def check_spawn(tool_input, transcript_path=None, root=None, verify=True):
+    """Verdict for a spawn of a checked role. Allowed silently (code 'default') at or below the role's default.
+    `verify=False` checks the form and the token table only (user quote, CLAUDE.md and lesson are not looked up)."""
     sub = tool_input.get("subagent_type")
     key = agent_key(sub)
     model, effort = tool_input.get("model"), tool_input.get("effort")
@@ -518,6 +545,8 @@ def check_spawn(tool_input, transcript_path=None, root=None):
             return _refuse("token-ceiling", "`%s | %s` allows %s at most %s/%s, not %s/%s"
                            % (basis.kind, basis.token, role, m, e, tier[0] or "?", tier[1] or "?"),
                            role, tier, default)
+        return Verdict(True, "ok", None, None)
+    if not verify:
         return Verdict(True, "ok", None, None)
     if basis.kind == "lesson":
         if lesson_exists(basis.name, root):

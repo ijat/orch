@@ -129,6 +129,32 @@ class TestSpawnPrompt(BriefBase):
         self.assertIn("tier: sonnet/high\nescalation: <escalation>", self.prompt(self.last_out))
         self.assertNotIn("--tier", self.last_err)
 
+    def test_a_basis_line_follows_the_tradeoff_when_the_tier_is_above_default(self):
+        flags = ("--escalation", "proactive", "--tradeoff", "t")
+        path, _ = self.brief("implement", "1", "--tier", "opus/medium", "--basis", "signal | flag", *flags)
+        self.assertEqual(self.prompt(self.last_out),
+                         "tier: opus/medium\nescalation: proactive\ntradeoff: t\nbasis: signal | flag\n\n"
+                         "Your whole context is this brief: %s" % path)
+        self.assertEqual(self.last_err, "")
+        self.brief("implement", "1", "--tier", "opus/medium", "--basis", "basis: signal |  flag", *flags)
+        self.assertIn("\nbasis: signal | flag\n", self.prompt(self.last_out))        # one line, prefix not doubled
+
+    def test_above_default_without_a_basis_shows_a_placeholder_and_warns(self):
+        for kind, args, tier in (("implement", ("1",), "opus/medium"), ("review", (), "opus/xhigh"),
+                                 ("security", (), "opus/xhigh"), ("director", ("1",), "opus/max")):
+            self.brief(kind, *args, "--tier", tier, "--escalation", "none", "--tradeoff", "t")
+            self.assertIn("tradeoff: t\nbasis: <basis>\n", self.prompt(self.last_out), kind)
+            self.assertEqual(self.last_err.strip(), "orch brief: no --basis given; the spawn prompt shows <basis> as a placeholder", kind)
+
+    def test_no_basis_line_at_or_below_default_unless_given(self):
+        for kind, args, tier in (("implement", ("1",), "sonnet/high"), ("implement", ("1",), "haiku/medium"),
+                                 ("review", (), "opus/high"), ("review", (), "sonnet/high"), ("director", ("1",), "opus/high")):
+            self.brief(kind, *args, "--tier", tier, "--escalation", "none", "--tradeoff", "t")
+            self.assertNotIn("basis", self.prompt(self.last_out), (kind, tier))
+            self.assertEqual(self.last_err, "", (kind, tier))
+        self.brief("implement", "1", "--tier", "sonnet/high", "--escalation", "none", "--tradeoff", "t", "--basis", "signal | flag")
+        self.assertIn("basis: signal | flag", self.prompt(self.last_out))        # given: printed whatever the tier
+
     def test_reused_form_for_implement(self):
         path, _ = self.brief("implement", "1", "--tier", "sonnet/high", "--escalation", "none", "--tradeoff", "t")
         self.assertIn("\norch: next work \u2014 brief %s\n" % path, self.last_out)

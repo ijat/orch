@@ -128,7 +128,8 @@ class TestSpawn(FlowBase):
         out, _ = self.spawn("implementer", "--agent", "orch:implementer", "--tier", "opus/high", "--steps", "3,4",
                             "--reason", "concurrency in step 3", "--alt", "sonnet/high, opus/medium",
                             "--tradeoff", "slower, fewer reviews", "--escalation", "post-failure",
-                            "--from", "sonnet/high", "--trigger", "prior_tier_failed", "--note", "round 2")
+                            "--from", "sonnet/high", "--trigger", "prior_tier_failed", "--note", "round 2",
+                            "--basis", "failure | prior_tier_failed")
         self.assertEqual(self.kinds()[-3:], ["tier_choice", "escalation", "spawn"])
         tc, esc, sp = self.journal()[-3:]
         self.assertEqual((tc["role"], tc["tier"], tc["tradeoff"], tc["reason"], tc["alternatives"]),
@@ -139,6 +140,7 @@ class TestSpawn(FlowBase):
         self.assertEqual(esc["alternatives"], ["sonnet/high", "opus/medium"])
         self.assertTrue(esc["reason"])
         self.assertEqual((sp["agent"], sp["steps"], sp["usage_5h"], sp["usage_7d"]), ("orch:implementer", [3, 4], 31, 60))
+        self.assertEqual(sp["basis"], "failure | prior_tier_failed")
         self.assertIn("journal tier_choice, escalation, spawn", out)
         self.assertLessEqual(len(out.splitlines()), 3)
         self.assertIn("round 2", self.log_lines()[-1])
@@ -1083,7 +1085,8 @@ class TestReuse(FlowBase):
         self.ok("return", "implementer", "--outcome", outcome, env=self.at("2026-03-01T10:10Z"))
 
     def reuse(self, ts, tier="sonnet/high"):
-        return ("spawn",) + self.BASE + ("--tier", tier, "--reused"), self.at(ts)
+        basis = ("--basis", "signal | flag") if tier == "opus/medium" else ()
+        return ("spawn",) + self.BASE + ("--tier", tier, "--reused") + basis, self.at(ts)
 
     def test_a_warm_implementer_is_reused_and_journaled(self):
         self.first()
@@ -1169,7 +1172,7 @@ class TestReuse(FlowBase):
         self.ok("return", "planner", "--outcome", "done", env=self.at("2026-03-01T10:10Z"))
         before = self.snapshot()
         err = self.refuse(1, "spawn", "planner", "--agent", "orch:planner", "--tier", "fable/high", "--reused",
-                          env=self.at("2026-03-01T10:20Z"))
+                          "--basis", "failure | need_escalate", env=self.at("2026-03-01T10:20Z"))
         self.assertIn("last planner ran at opus/high", err)
         self.assertEqual(self.snapshot(), before)
 
@@ -1179,6 +1182,77 @@ class TestReuse(FlowBase):
                    {"kind": "return", "role": "implementer", "outcome": "done", "ts": "2026-03-01T10:10Z", "milestone": 1}]
         self.assertIn("another milestone", flow.reuse_refusal(journal, "implementer", "sonnet/high", "2026-03-01T10:20Z", 2))
         self.assertIsNone(flow.reuse_refusal(journal, "implementer", "sonnet/high", "2026-03-01T10:20Z", 1))
+
+
+class TestSpawnBasis(FlowBase):
+    """`orch spawn` refuses a tier above the role's default without a basis that fits (form and token table only)."""
+
+    def sp(self, role, tier, *extra, **kw):
+        return ("spawn", role, "--agent", "orch:" + role, "--tier", tier) + extra
+
+    def test_at_or_below_default_the_basis_is_optional(self):
+        self.ok(*self.sp("implementer", "sonnet/high"))
+        self.assertNotIn("basis", self.journal()[-1])
+        self.ok(*self.sp("planner", "sonnet/high"))
+        self.ok(*self.sp("implementer", "haiku/medium"))
+        self.ok(*self.sp("implementer", "sonnet/high", "--basis", "signal | flag"))      # given: journaled
+        self.assertEqual(self.journal()[-1]["basis"], "signal | flag")
+
+    def test_above_default_needs_a_fitting_basis(self):
+        before = self.read(self.d, "journal.jsonl")
+        err = self.refuse(1, *self.sp("implementer", "opus/medium"))
+        self.assertIn("no `basis:` line", err)
+        self.assertIn("Or spawn at the default tier (sonnet/high).", err)
+        for basis, want in (("plan | step 1 | flag", "malformed"), ("signal | because", "not a token"),
+                            ("failure | need_escalate", "does not apply to orch:implementer"),
+                            ("signal | boundary_declined", "at most opus/high"), ("user | unquoted", "malformed"),
+                            ("lesson | ../x", "malformed")):
+            tier = "fable/high" if basis.startswith("signal | boundary") else "opus/medium"
+            self.assertIn(want, self.refuse(1, *self.sp("implementer", tier, "--basis", basis)), basis)
+        self.assertEqual(self.read(self.d, "journal.jsonl"), before)
+
+    def test_each_allowed_form_is_journaled_on_the_spawn_line(self):
+        for role, tier, basis in (("implementer", "opus/medium", "signal | flag | s3"),
+                                  ("planner", "fable/high", "failure | need_escalate"),
+                                  ("code-reviewer", "opus/xhigh", "rule | large_diff"),
+                                  ("implementer", "fable/xhigh", 'user | "use fable xhigh for the implementer"'),
+                                  ("planner", "fable/high", "lesson | global/2026-11-01-some-lesson"),
+                                  ("planner", "fable/high", 'claude-md | /w/CLAUDE.md | "fable for roadmaps only"')):
+            self.ok(*self.sp(role, tier, "--basis", basis))
+            self.assertEqual(self.journal()[-1]["basis"], basis)
+            self.assertEqual(self.journal()[-1]["tier"], tier)
+
+    def test_a_basis_text_may_carry_the_prefix(self):
+        self.ok(*self.sp("implementer", "opus/medium", "--basis", "basis: signal | flag"))
+        self.assertEqual(self.journal()[-1]["basis"], "signal | flag")
+
+    def test_no_transcript_is_read_here(self):
+        self.ok(*self.sp("planner", "fable/high", "--basis", 'user | "words that appear in no transcript"'))
+
+    def test_mythos_takes_a_user_basis_only(self):
+        err = self.refuse(1, "spawn", "security-reviewer", "--agent", "orch:security-reviewer-mythos",
+                          "--tier", "mythos/high", "--basis", "rule | large_diff")
+        self.assertIn("`user` basis only", err)
+        self.ok("spawn", "security-reviewer", "--agent", "orch:security-reviewer-mythos", "--tier", "mythos/high",
+                "--basis", 'user | "yes, run the mythos security review"')
+
+    def test_other_agents_and_cheap_roles_are_untouched(self):
+        self.ok("spawn", "helper", "--agent", "general-purpose", "--tier", "opus/max")
+        self.ok("spawn", "lookup", "--agent", "orch:explorer", "--tier", "haiku/low")
+
+    def test_the_hook_and_the_command_agree(self):
+        """Same verdict for the same spawn: the command is the hook's form check."""
+        from orchlib import tierguard
+        for role, tier, basis in (("implementer", "opus/medium", None), ("implementer", "opus/medium", "signal | flag"),
+                                  ("planner", "fable/high", "failure | need_escalate"), ("planner", "fable/high", "rule | large_diff"),
+                                  ("code-reviewer", "opus/xhigh", "rule | large_diff"), ("planner", "opus/xhigh", "signal | flag")):
+            model, effort = tier.split("/")
+            payload = {"tool_name": "Agent", "tool_input": {"subagent_type": "orch:" + role, "model": model, "effort": effort,
+                                                             "prompt": ("basis: %s\n" % basis if basis else "") + "x"}}
+            hook = tierguard.decide(payload, {})
+            argv = self.sp(role, tier) + (("--basis", basis) if basis else ())
+            rc, out, err = self.run_orch(*argv)
+            self.assertEqual(rc == 0, hook is None, (role, tier, basis))
 
 
 class TestSpawnHead(FlowBase):
