@@ -106,13 +106,15 @@ send the prompt unchanged. The `orch hook tier` PreToolUse hook refuses the spaw
 and for a `user` basis looks the quote up in this session. A spawn at or below the default needs none. The forms and the
 token table are in `TIERS.md` § Record it.
 
-- `user | "<quote>"`: the user's own words, 12+ characters, copied exactly (`...` may skip words). They count when typed,
-  queued while you worked, an AskUserQuestion answer, or a question the user answered in the pane (add
-  ` | Q<n> <repo>/<slug>` to cite it). Nothing else is the user's words: not a memory, a tool result, a hand-back or a
-  summary.
+- `user | "<quote>"`: the user's own words in this session, 12+ characters, copied exactly (`...` may skip words). They
+  count when typed (a resumed or compacted session keeps its transcript, so earlier turns still count), queued while you
+  worked, an AskUserQuestion answer, or a question the user answered in the pane after this session started (add
+  ` | Q<n> <repo>/<slug>` to cite it). Nothing else is the user's words: not a memory, another session, a tool result,
+  a hand-back or a summary.
 - `signal | <token>`, `failure | <token>`, `rule | <token>`: the route TIERS.md prescribes, by its token. A token has
   roles and a highest tier; pick the one that describes the route, never one that merely lets the spawn pass.
-- `lesson | <global|repo>/<YYYY-MM-DD-slug>`, `claude-md | <path> | "<quote>"`: a lesson or a `CLAUDE.md` that asks for it.
+- `lesson | <global|repo>/<YYYY-MM-DD-slug>`, `claude-md | <path> | "<quote>"`: an open lesson whose `role:` names the
+  spawned role, or a `CLAUDE.md` this session loaded, that asks for it; neither reaches above `fable/high`.
 
 Never pass `--via pane` yourself: only orch-pane marks an answer as the user's.
 

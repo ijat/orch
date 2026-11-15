@@ -223,12 +223,12 @@ class BasisForms(unittest.TestCase):
 
     def test_user_forms(self):
         b = self.P('basis: user | "use fable for the planner"')
-        self.assertEqual((b.kind, b.quote, b.qref, b.session), ("user", "use fable for the planner", None, None))
-        b = self.P('basis: user | "use fable | for the planner" | Q4 orch-skill/memory-lessons'
-                   ' | session 11111111-2222-3333-4444-555555555555')
+        self.assertEqual((b.kind, b.quote, b.qref), ("user", "use fable for the planner", None))
+        b = self.P('basis: user | "use fable | for the planner" | Q4 orch-skill/memory-lessons')
         self.assertEqual(b.quote, "use fable | for the planner")
         self.assertEqual(b.qref, (4, "orch-skill", "memory-lessons"))
-        self.assertEqual(b.session, "11111111-2222-3333-4444-555555555555")
+        b = self.P('basis: user | "a quote that says | session in the middle"')
+        self.assertEqual(b.quote, "a quote that says | session in the middle")
         b = self.P('basis: user | "a quote with "inner" marks"')
         self.assertEqual(b.quote, 'a quote with "inner" marks')
 
@@ -244,6 +244,8 @@ class BasisForms(unittest.TestCase):
     def test_malformed(self):
         for line in ("basis: plan | step 1 | flag", "basis: user", "basis: user |", "basis: user | no quotes",
                      'basis: user | ""', 'basis: user | "q" | session not-a-uuid',
+                     'basis: user | "use fable for the planner" | session 11111111-2222-3333-4444-555555555555',
+                     'basis: user | "use fable for the planner" | Q4 a/b | session 11111111-2222-3333-4444-555555555555',
                      "basis: signal | Flag", "basis: signal | a | b | c", "basis: signal | flag | step 3", "basis: rule | two words",
                      "basis: lesson | ../2026-11-01-x", "basis: lesson | global/x", "basis: lesson | global/2026-11-01-../x",
                      'basis: claude-md | "only a quote"', 'basis: claude-md | | "q"', "basis: | flag"):

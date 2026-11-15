@@ -432,7 +432,7 @@ A spawn above the Default column of § Tier table carries one line, first in its
 prints it; `orch spawn --basis` checks it and journals it):
 
 ```
-basis: user | "<the user's own words, 12+ characters>" [| Q<n> <repo>/<slug>] [| session <uuid>]
+basis: user | "<the user's own words, 12+ characters>" [| Q<n> <repo>/<slug>]
 basis: signal | <token> [| <step or finding id>]
 basis: rule | <token>
 basis: failure | <token>
@@ -440,9 +440,13 @@ basis: lesson | <global|repo>/<YYYY-MM-DD-slug>
 basis: claude-md | <path to CLAUDE.md or CLAUDE.local.md> | "<quote>"
 ```
 
-`user`, `lesson` and `claude-md` take any role and any tier; the hook checks them against the session transcript
-(typed, queued, a `-p` prompt, an AskUserQuestion answer, or a pane answer cited by `Q<n> <repo>/<slug>`), the lesson
-file or the CLAUDE.md. The other three are checked for form and against this table only: a token must be in it, for the
+`user` takes any role and any tier; the hook checks it against this session's transcript (typed, queued, a `-p`
+prompt, an AskUserQuestion answer, or a pane answer cited by `Q<n> <repo>/<slug>` that the user gave after this
+session started). A resumed or compacted session keeps its transcript, so there is no form that names another session.
+`lesson` and `claude-md` are checked against the text they cite and stop at `fable/high` (the highest tier any token
+below reaches; above it only `user` counts): a lesson file must be `status: open` and its `role:` line must name the
+spawned role; a `CLAUDE.md` must be one this session loaded (an `instructions` attachment in the transcript lists it)
+and must hold the quote. The other three are checked for form and against this table only: a token must be in it, for the
 spawned role, at or below the highest tier. Under a cap the same token applies and the tier is lower (`signal | flag` at
 `sonnet/xhigh` with no Opus; `failure | class_repeat` or `stuck` at `sonnet/xhigh`; `failure | prior_tier_failed` at
 `sonnet/max`). `--trigger` is the `escalation` event's value for the same route; reviewer, director and init routes have

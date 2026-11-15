@@ -49,8 +49,8 @@ _FABLE_ROLES = (IMPL, CODE, SEC, PREV, DIR)
 _O_MED, _O_HIGH, _O_XHIGH, _O_MAX = ("opus", "medium"), ("opus", "high"), ("opus", "xhigh"), ("opus", "max")
 _F_HIGH = ("fable", "high")
 
-# (kind, token) -> {role: highest tier the token allows}. One row per route TIERS.md allows. `user`, `lesson` and
-# `claude-md` take any role and any tier and are not here.
+# (kind, token) -> {role: highest tier the token allows}. One row per route TIERS.md allows. `user` takes any role and
+# any tier and is not here; `lesson` and `claude-md` are checked against the cited text and share FILE_CEILING.
 TOKENS = {
     ("signal", "flag"): {IMPL: _O_MED},
     ("signal", "unknown_cause"): {IMPL: _O_MED},
@@ -79,7 +79,8 @@ TOKENS = {
     ("rule", "urgency"): {r: _F_HIGH for r in _FABLE_ROLES},
 }
 KINDS = ("user", "signal", "rule", "failure", "lesson", "claude-md")
-FREE_KINDS = ("user", "lesson", "claude-md")     # any role, any tier
+FILE_KINDS = ("lesson", "claude-md")             # backed by a file: the file is read, and FILE_CEILING caps the tier
+FILE_CEILING = _F_HIGH                           # the highest tier any token reaches; above it only `user`
 
 QUOTE_MIN = 12
 ASK_MIN = 12
@@ -87,11 +88,10 @@ RETRIES = 3
 RETRY_WAIT = 0.5
 SLEEP = time.sleep                               # tests replace it
 BASIS_CLIP = 300
-FILE_MAX = 4 * 1024 * 1024                       # a CLAUDE.md read stops here
+FILE_MAX = 4 * 1024 * 1024                       # a CLAUDE.md or lesson read stops here
 
-UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 BASIS_LINE_RE = re.compile(r"(?m)^basis:[ \t]*(.*?)[ \t]*$")
-SESSION_TAIL_RE = re.compile(r"\|[ \t]*session ([0-9a-fA-F-]{36})[ \t]*$")
+SESSION_TAIL_RE = re.compile(r"\|[ \t]*session\b")
 QREF_TAIL_RE = re.compile(r"\|[ \t]*Q(\d+) ([^/|]+)/([^/|]+?)[ \t]*$")
 TOKEN_RE = re.compile(r"^[a-z][a-z_]*$")
 IDENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
@@ -100,7 +100,7 @@ SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?(?:</system-reminder>|\Z)"
 QUOTE_MAP = {ord(c): '"' for c in "“”„‟«»"}
 QUOTE_MAP.update({ord(c): "'" for c in "‘’‚‛"})
 
-Basis = namedtuple("Basis", "kind token ident quote qref session path name line")
+Basis = namedtuple("Basis", "kind token ident quote qref path name line")
 Verdict = namedtuple("Verdict", "allow code reason found")
 
 
@@ -138,6 +138,33 @@ def default_of(key):
 
 
 CHEAP = ("orch-explorer", "orch-executor", "orch-graph")     # the hook's older check covers these; they take no basis
+
+
+def norm_name(name):
+    """A `subagent_type` as Claude Code resolves it when no agent matches exactly: NFKC, lowercase, with white space,
+    dashes (Unicode Pd) and `_` dropped. `orch:Planner`, `orch: planner`, `orch:plan_ner` and `orch:planner ` all run
+    the real orch role, so the guard reads them the same way."""
+    s = unicodedata.normalize("NFKC", name).lower()
+    return "".join(c for c in s if not (c.isspace() or c == "_" or unicodedata.category(c) == "Pd"))
+
+
+ROLE_NAMES = {norm_name("orch:" + k[len("orch-"):]): k for k in list(DEFAULTS) + [MYTHOS]}
+
+
+def resolve_role(sub):
+    """The agent key (`orch-planner`) of the orch role `sub` names, exactly (either spelling) or as Claude Code's
+    fallback match would; None for anything else."""
+    if not isinstance(sub, str):
+        return None
+    key = agent_key(sub)
+    if key == MYTHOS or key in DEFAULTS:
+        return key
+    return ROLE_NAMES.get(norm_name(sub))
+
+
+def is_orch_name(sub):
+    """True when `sub`, normalized, starts with `orch:` (a role name or a misspelling of one)."""
+    return isinstance(sub, str) and norm_name(sub).startswith("orch:")
 
 
 def needs_basis(key):
@@ -219,22 +246,15 @@ def parse_basis(prompt):
         raise BasisError("unknown kind %r (kinds: %s)" % (kind[:30], ", ".join(KINDS)))
     if not bar or not rest:
         raise BasisError("kind %r needs a value after `|`" % kind)
-    token = ident = quote = qref = session = path = name = None
+    token = ident = quote = qref = path = name = None
     if kind == "user":
-        for _ in range(2):          # `| Q<n> <repo>/<slug>` and `| session <uuid>`, peeled from the end, either order
-            sm = SESSION_TAIL_RE.search(rest)
-            if sm and session is None:
-                if not UUID_RE.match(sm.group(1)):
-                    raise BasisError("session is not a UUID")
-                session = sm.group(1).lower()
-                rest = rest[:sm.start()].rstrip()
-                continue
-            qm = QREF_TAIL_RE.search(rest)
-            if qm and qref is None:
-                qref = (int(qm.group(1)), qm.group(2).strip(), qm.group(3).strip())
-                rest = rest[:qm.start()].rstrip()
-                continue
-            break
+        if SESSION_TAIL_RE.search(rest[rest.rfind('"') + 1:]):
+            raise BasisError("there is no `| session <uuid>` form: a resumed or compacted session keeps the same "
+                             "transcript, and only this session's own messages back a `user` basis")
+        qm = QREF_TAIL_RE.search(rest)      # `| Q<n> <repo>/<slug>`, peeled from the end
+        if qm:
+            qref = (int(qm.group(1)), qm.group(2).strip(), qm.group(3).strip())
+            rest = rest[:qm.start()].rstrip()
         quote = _unquote(rest)
     elif kind == "claude-md":
         path, bar2, tail = rest.partition("|")
@@ -260,7 +280,7 @@ def parse_basis(prompt):
         if not TOKEN_RE.match(rest):
             raise BasisError("%s needs a single `<token>`" % kind)
         token = rest
-    return Basis(kind, token, ident, quote, qref, session, path, name, line)
+    return Basis(kind, token, ident, quote, qref, path, name, line)
 
 
 # ---- finding the quote ----------------------------------------------------------------------------------------
@@ -349,11 +369,6 @@ def user_texts(path):
                 yield "typed", strip_reminders(text)
 
 
-def _sibling(transcript_path, session):
-    """The transcript of another session in the same folder; the id has matched UUID_RE."""
-    return os.path.join(os.path.dirname(transcript_path), session + ".jsonl")
-
-
 def _scan(paths, quote):
     """The source name ('typed', 'queued', 'ask') of the first entry that holds the quote, or None."""
     frags = fragments(quote)
@@ -376,17 +391,43 @@ def _scan(paths, quote):
 
 FIELD_RE = re.compile(r"^- ([a-z][a-z ]*?):[ \t]*(.*?)\s*$")
 HEAD_RE = re.compile(r"^## Q(\d+)\b")
-ANSWER_TS_RE = re.compile(r"\s*\(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z\)\s*$")
+ANSWER_TS_RE = re.compile(r"\s*\((\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z)\)\s*$")
+TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
 
 
 def _safe_name(name):
     return bool(name) and name not in (".", "..") and "/" not in name and "\\" not in name and "\x00" not in name
 
 
-def pane_answer(root, qref, quote):
+def session_start(transcript_path):
+    """`YYYY-MM-DDTHH:MMZ` of the transcript's first entry that has a `timestamp`, or None (no file, none found)."""
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    try:
+        with open(transcript_path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if '"timestamp"' not in line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                ts = e.get("timestamp") if isinstance(e, dict) else None
+                if isinstance(ts, str) and TS_RE.match(ts):
+                    return ts[:16] + "Z"
+    except OSError:
+        pass
+    return None
+
+
+def pane_answer(root, qref, quote, since):
     """True when `<root>/<repo>/<slug>/questions.md` holds block Q<n> with `status: answered` and `via: pane`
-    whose answer equals the quote (or, for a multi question, one `|` part of it)."""
+    whose answer equals the quote (or, for a multi question, one `|` part of it), and was given at or after
+    `since` (the session's start, `YYYY-MM-DDTHH:MMZ`): an answer older than this session is not this session's
+    user's word. No `since` or no answer time: refused."""
     n, repo, slug = qref
+    if not since:
+        return False
     if not (_safe_name(repo) and _safe_name(slug)):
         return False
     base = os.path.realpath(root)
@@ -413,7 +454,11 @@ def pane_answer(root, qref, quote):
         return False
     if fields.get("status") != "answered" or fields.get("via", "").strip().lower() != "pane":
         return False
-    answer = ANSWER_TS_RE.sub("", fields.get("answer", ""))
+    raw = fields.get("answer", "")
+    tm = ANSWER_TS_RE.search(raw)
+    if tm is None or tm.group(1) < since:
+        return False
+    answer = ANSWER_TS_RE.sub("", raw)
     want = norm(quote)
     if norm(answer) == want:
         return True
@@ -427,13 +472,11 @@ def find_user_quote(basis, transcript_path, root=None):
     re-read up to RETRIES times, RETRY_WAIT apart (it is written asynchronously); a pane answer needs no wait."""
     root = orch_root() if root is None else root
     paths = [transcript_path if isinstance(transcript_path, str) and transcript_path else None]
-    if basis.session and paths[0]:
-        paths.append(_sibling(paths[0], basis.session))
     readable = any(p and os.path.isfile(p) for p in paths)
     found = _scan(paths, basis.quote)
     if found:
         return found
-    if basis.qref and pane_answer(root, basis.qref, basis.quote):
+    if basis.qref and pane_answer(root, basis.qref, basis.quote, session_start(paths[0])):
         return "pane"
     if readable:
         for _ in range(RETRIES):
@@ -444,12 +487,40 @@ def find_user_quote(basis, transcript_path, root=None):
     return None
 
 
-def claude_md_has(path, quote):
-    """True when path is a CLAUDE.md or CLAUDE.local.md that exists and holds the quote (12+ characters)."""
+def listed_instruction_paths(transcript_path):
+    """Real paths of every file an `instructions` attachment of the transcript lists (User, Project, Local and
+    nested CLAUDE.md files, as Claude Code loaded them in this session)."""
+    out = set()
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return out
+    try:
+        with open(transcript_path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if '"instructions"' not in line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                a = e.get("attachment") if isinstance(e, dict) and e.get("type") == "attachment" else None
+                if not isinstance(a, dict) or a.get("type") != "instructions":
+                    continue
+                for f in a.get("files") or []:
+                    if isinstance(f, dict) and isinstance(f.get("path"), str) and f["path"]:
+                        out.add(os.path.realpath(f["path"]))
+    except OSError:
+        pass
+    return out
+
+
+def claude_md_has(path, quote, transcript_path):
+    """True when path is a CLAUDE.md or CLAUDE.local.md that this session's transcript lists in an `instructions`
+    attachment (so Claude Code loaded it here, not a file found anywhere on disk), exists, and holds the quote
+    (12+ characters)."""
     if os.path.basename(path) not in ("CLAUDE.md", "CLAUDE.local.md"):
         return False
-    p = os.path.expanduser(path)
-    if not os.path.isfile(p):
+    p = os.path.realpath(os.path.expanduser(path))
+    if not os.path.isfile(p) or p not in listed_instruction_paths(transcript_path):
         return False
     frags = fragments(quote)
     if not frags or sum(len(f) for f in frags) < QUOTE_MIN:
@@ -459,22 +530,39 @@ def claude_md_has(path, quote):
     return in_order(frags, norm(text))
 
 
-def lesson_exists(name, root=None):
-    """`<root>/lessons/<slug>.md` for `global`, `<root>/<repo>/lessons/<slug>.md` otherwise; the names matched
-    LESSON_RE, which allows no path separator."""
+LESSON_FIELD_RE = re.compile(r"^- (status|role):[ \t]*(.*?)\s*$", re.M)
+ROLE_WORD_RE = re.compile(r"[a-z][a-z-]*")
+
+
+def lesson_applies(name, key, root=None):
+    """`<root>/lessons/<slug>.md` for `global`, `<root>/<repo>/lessons/<slug>.md` otherwise (the names matched
+    LESSON_RE, which allows no path separator): ok | missing | not-open | other-role. The file must have
+    `status: open` and a `role` line that names the spawned role as a word."""
     root = orch_root() if root is None else root
     scope, slug = name
     if not _safe_name(scope) or not _safe_name(slug):
-        return False
+        return "missing"
     path = os.path.join(root, "lessons", slug + ".md") if scope == "global" \
         else os.path.join(root, scope, "lessons", slug + ".md")
-    return os.path.isfile(path)
+    if not os.path.isfile(path):
+        return "missing"
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        head = fh.read(FILE_MAX)
+    fields = {}
+    for m in LESSON_FIELD_RE.finditer(head):
+        fields.setdefault(m.group(1), m.group(2))
+    if fields.get("status") != "open":
+        return "not-open"
+    role = key[len("orch-"):] if key != MYTHOS else "security-reviewer"
+    if role not in ROLE_WORD_RE.findall(fields.get("role", "").lower()):
+        return "other-role"
+    return "ok"
 
 
 # ---- the verdict ----------------------------------------------------------------------------------------------
 
 FORMS = (
-    'basis: user | "<your own words, 12+ characters>" [| Q<n> <repo>/<slug>] [| session <uuid>]',
+    'basis: user | "<your own words, 12+ characters>" [| Q<n> <repo>/<slug>]',
     "basis: signal | <token> [| <step or finding id>]",
     "basis: rule | <token>",
     "basis: failure | <token>",
@@ -514,7 +602,7 @@ def check_spawn(tool_input, transcript_path=None, root=None, verify=True):
     """Verdict for a spawn of a checked role. Allowed silently (code 'default') at or below the role's default.
     `verify=False` checks the form and the token table only (user quote, CLAUDE.md and lesson are not looked up)."""
     sub = tool_input.get("subagent_type")
-    key = agent_key(sub)
+    key = resolve_role(sub) or agent_key(sub)
     model, effort = tool_input.get("model"), tool_input.get("effort")
     if (model is not None and not isinstance(model, str)) or (effort is not None and not isinstance(effort, str)):
         return Verdict(True, "default", None, None)
@@ -546,17 +634,26 @@ def check_spawn(tool_input, transcript_path=None, root=None, verify=True):
                            % (basis.kind, basis.token, role, m, e, tier[0] or "?", tier[1] or "?"),
                            role, tier, default)
         return Verdict(True, "ok", None, None)
+    if basis.kind in FILE_KINDS:
+        m, e = tier
+        if m is None or e is None or rank((m, e)) > rank(FILE_CEILING):
+            return _refuse("file-ceiling", "a `%s` basis allows at most %s/%s; above that only a `user` basis does"
+                           % ((basis.kind,) + FILE_CEILING), role, tier, default)
     if not verify:
         return Verdict(True, "ok", None, None)
     if basis.kind == "lesson":
-        if lesson_exists(basis.name, root):
+        res = lesson_applies(basis.name, key, root)
+        if res == "ok":
             return Verdict(True, "ok", None, None)
-        return _refuse("lesson-missing", "no lesson file %s/%s exists" % basis.name, role, tier, default)
+        why = {"missing": "no lesson file %s/%s exists" % basis.name,
+               "not-open": "lesson %s/%s is not `status: open`" % basis.name,
+               "other-role": "lesson %s/%s has no `role:` line naming %s" % (basis.name + (role,))}[res]
+        return _refuse("lesson-" + res, why, role, tier, default)
     if basis.kind == "claude-md":
-        if claude_md_has(basis.path, basis.quote):
+        if claude_md_has(basis.path, basis.quote, transcript_path):
             return Verdict(True, "ok", None, None)
-        return _refuse("claude-md", "that CLAUDE.md or CLAUDE.local.md does not exist or does not hold the quote",
-                       role, tier, default)
+        return _refuse("claude-md", "that CLAUDE.md or CLAUDE.local.md is not one this session loaded (an `instructions` "
+                       "attachment in the transcript), or does not hold the quote", role, tier, default)
     found = find_user_quote(basis, transcript_path, root)
     if found:
         return Verdict(True, "ok", None, found)

@@ -11,6 +11,10 @@ parse error or any other surprise allows the call.
    and tier, and for a `user` basis finds the user's quote in the session transcript). A spawn at or below the
    default is never refused or delayed. A guard bug (an exception) allows the spawn and logs `decision: error`.
 
+A `subagent_type` is read the way Claude Code resolves it when no agent matches exactly (NFKC, lowercase, white space,
+dashes and `_` dropped): `orch:Planner` or `orch:plan_ner` run the real role, so they get that role's check, and an
+`orch:` name no role has is refused.
+
 ORCH_TIER_GUARD=0 in the env turns both off. Denials, and every decision on an above-default spawn, are appended
 to `<orch data>/logs/tier-guard.jsonl`, never with the prompt text (the basis line, clipped, is the only part of it)."""
 import json
@@ -18,7 +22,7 @@ import os
 import sys
 
 from . import tiers
-from .paths import agent_key, logs_dir
+from .paths import logs_dir
 
 GUARDED = ("orch-explorer", "orch-executor", "orch-graph")
 AGENT_TOOLS = ("Agent", "Task")
@@ -101,18 +105,26 @@ def decide(payload, env=None):
     if not isinstance(tool_input, dict):
         return None
     sub = tool_input.get("subagent_type")
-    key = agent_key(sub)
+    key = tiers.resolve_role(sub)
+    if key is None:
+        if tiers.is_orch_name(sub):     # `orch:` plus a name no role has: refused, not skipped
+            _log("orch-name", payload, str(sub)[:60], tool_input, "deny", {"subagent_type": str(sub)[:60]})
+            return _deny("orch tier guard: %r is not an orch role. Use the exact name orch:<role> "
+                         "(planner, implementer, code-reviewer, security-reviewer, security-reviewer-mythos, "
+                         "plan-reviewer, director, init, explorer, executor, graph)." % str(sub)[:60])
+        return None
+    # Claude Code runs the role a loosely spelled name resolves to (case, white space, `-`, `_` ignored), so the
+    # check runs for that role; the raw name is logged when it was not the exact one.
+    seen = {"subagent_type": sub[:60]} if sub != "orch:" + key[len("orch-"):] else None
     if key in GUARDED:
         role = "orch:" + key[len("orch-"):]
         res = _verdict(role, tool_input, env)
         if res is None:
             return None
         code, reason = res
-        _log(code, payload, role, tool_input)
+        _log(code, payload, role, tool_input, extra=seen)
         return _deny(reason)
-    if isinstance(key, str) and tiers.checked(key):
-        return _escalation(payload, tool_input, key)
-    return None
+    return _escalation(payload, tool_input, key, seen)
 
 
 def _deny(reason):
@@ -120,15 +132,17 @@ def _deny(reason):
                                    "permissionDecisionReason": reason}}
 
 
-def _escalation(payload, tool_input, key):
+def _escalation(payload, tool_input, key, seen=None):
     """The basis check for a spawn of a role with a default tier. Any exception allows the spawn and is logged."""
     role = "orch:" + key[len("orch-"):]
     try:
-        verdict = tiers.check_spawn(tool_input, payload.get("transcript_path"))
+        verdict = tiers.check_spawn(dict(tool_input, subagent_type=role), payload.get("transcript_path"))
         if verdict.code == "default":
             return None
         line = tiers.basis_line(tool_input.get("prompt"))
         extra = {"basis": line[:tiers.BASIS_CLIP] if line else None, "found": verdict.found}
+        if seen:
+            extra.update(seen)
         try:
             parsed = tiers.parse_basis(tool_input.get("prompt"))
             extra["basis_kind"] = parsed.kind if parsed else None
