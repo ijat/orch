@@ -1,6 +1,8 @@
-"""orch lessons add | promote | index | check: the lesson files, their validator and the generated LESSONS.md.
+"""orch lessons add | promote | index | check | migrate: the lesson files, their validator, the generated LESSONS.md
+and the move from the legacy LESSONS.md files.
 
 The brief's lessons section is covered in test_brief.py (TestLessonFiles)."""
+import json
 import os
 import sys
 import unittest
@@ -327,6 +329,236 @@ class TestIndexCommand(LessonBase):
 
     def test_a_positional_where_none_is_taken(self):
         self.refuse(1, "lessons", "check", "oops")
+
+
+GLOBAL_LEGACY = """# Lessons — global
+
+Critical-only. Lessons that change a role's standing behaviour get **promoted**.
+
+## Promoted (now standing rules — listed for history)
+
+| date | lesson | now lives in |
+|---|---|---|
+| 2026-09-08 | one green e2e run proves nothing | `orch-implementer.md` |
+
+## Open
+
+## 2026-10-31 — Test failure message dumped the whole process environment
+- role: implementer
+- task: real-build (Luneterm), M3 step 1
+- what happened: a test formatted the child's full environment into its assert message.
+- lesson: never print an environment wholesale in a test; name only the differing key.
+
+## 2026-11-01 — A long lesson over two lines
+- role: planner + implementer
+- task: usage-per-account (orch-skill)
+- lesson: build replay fixtures by running the real writer over the raw event sequence,
+  never by hand-labelling the field under test.
+"""
+
+# The 2026-11-02 orch-skill entry as it stands in the live file (its lesson is 201 characters), and an entry with
+# fields the format does not name.
+REPO_LEGACY = """# Lessons — orch-skill
+
+Critical-only. Repo-specific.
+
+## Open
+
+## 2026-11-02 — Reviewer reported "denylist 0 hits"; the export round trip found one
+- role: code-reviewer
+- task: orch-init (orch-skill)
+- what happened: rounds 2 and 4 reported 0 denylist hits from a hand-written grep; `scripts/sync-live.py --dry-run` refused on a denylisted word (case variant) and on role-relative template paths the audit check flags.
+- what was actually true: only the export round trip applies the denylist the way it is enforced.
+- lesson: in this repo, verify public-safety and integrity with `scripts/sync-live.py --dry-run` (from the task worktree) before each review round and quote its refusal count; never a self-written denylist grep.
+
+## 2026-11-06 — An invariant proved for one panel only
+- role: planner
+- context: atomic-repo-switch
+- what was assumed: the display is one thing that moves at once.
+- lesson: list every panel that can start a write.
+"""
+
+RULES_ONLY = """# Lessons — myapp
+
+Rules only.
+
+- **Evidence.** A matching formula is not a mechanism.
+"""
+
+OS_ID = "orch-skill/2026-11-02-reviewer-reported-denylist-0-hits-the-export-round-trip-foun"     # slug cut at 60
+LONG_ID = "global/2026-11-01-a-long-lesson-over-two-lines"
+SUMMARIES = {OS_ID: {"summary": "Verify public safety with `scripts/sync-live.py --dry-run` before each review round."},
+             LONG_ID: {"summary": "Build replay fixtures with the real writer, never by hand-labelling.",
+                       "exempt": "yes — it guards every replay test"}}
+
+
+class TestMigrate(LessonBase):
+    def setUp(self):
+        LessonBase.setUp(self)
+        self.legacy(self.root)
+        self.summ = self.summaries(SUMMARIES)
+
+    def legacy(self, root):
+        os.makedirs(os.path.join(root, "orch-skill"), exist_ok=True)
+        os.makedirs(os.path.join(root, "myapp"), exist_ok=True)
+        os.makedirs(os.path.join(root, "nolessons"), exist_ok=True)
+        for rel, text in (("LESSONS.md", GLOBAL_LEGACY), ("orch-skill/LESSONS.md", REPO_LEGACY),
+                          ("myapp/LESSONS.md", RULES_ONLY)):
+            self.write(os.path.join(root, rel), text)
+
+    def summaries(self, data, name="summaries.json"):
+        path = os.path.join(self.tmp, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        return path
+
+    def dry(self, **kw):
+        out, _ = self.ok("lessons", "migrate", "--dry-run", "--json", **kw)
+        return json.loads(out)
+
+    def backups(self):
+        return os.path.join(self.home, ".claude", "orch-data", "backups")
+
+    def test_dry_run_counts_and_writes_nothing(self):
+        before = core.tree_hash(self.tmp)
+        rep = self.dry()
+        self.assertEqual(rep["entries"], 4)
+        self.assertEqual(rep["need_summary"], 2)
+        self.assertEqual([s["label"] for s in rep["scopes"]], ["global", "myapp", "orch-skill"])
+        by = {r["id"]: r for s in rep["scopes"] for r in s["entries"]}
+        self.assertEqual(sorted(by), sorted([OS_ID, LONG_ID, "global/2026-10-31-test-failure-message-dumped-the-whole-process-environment",
+                                             "orch-skill/2026-11-06-an-invariant-proved-for-one-panel-only"]))
+        os_entry = by[OS_ID]
+        self.assertEqual(os_entry["title"], 'Reviewer reported "denylist 0 hits"; the export round trip found one')
+        self.assertEqual((os_entry["roles"], os_entry["length"], os_entry["needs_summary"], os_entry["summary"]),
+                         ("code-reviewer", 201, True, None))
+        long_entry = by[LONG_ID]
+        self.assertTrue(long_entry["needs_summary"])         # under 200 characters, but two lines
+        self.assertLess(long_entry["length"], SUMMARY_MAX_FOR_TEST)
+        short = by["global/2026-10-31-test-failure-message-dumped-the-whole-process-environment"]
+        self.assertEqual(short["summary"], "never print an environment wholesale in a test; name only the differing key.")
+        self.assertFalse(short["needs_summary"])
+        myapp = [s for s in rep["scopes"] if s["label"] == "myapp"][0]
+        self.assertEqual(myapp["entries"], [])
+        self.assertIn("no open entry", myapp["note"])
+        out, _ = self.ok("lessons", "migrate", "--dry-run")
+        self.assertIn("4 open entries in 3 legacy scopes; 2 need a summary; nothing written", out)
+        self.assertIn("    summary: (needs one)", out)
+        self.assertEqual(core.tree_hash(self.tmp), before)
+
+    def test_dry_run_from_a_development_copy(self):
+        live = os.path.join(self.home, ".claude", "orch-data", "tasks")
+        self.legacy(live)
+        before = core.tree_hash(self.tmp)
+        out, _ = self.ok("lessons", "migrate", "--dry-run", env={"ORCH_DIR": ""})
+        self.assertIn("4 open entries in 3 legacy scopes", out)
+        self.assertEqual(core.tree_hash(self.tmp), before)
+        err = self.refuse(1, "lessons", "migrate", "--apply", "--summaries", self.summ, env={"ORCH_DIR": ""})
+        self.assertIn("development copy", err)
+        self.assertEqual(core.tree_hash(self.tmp), before)
+
+    def test_apply_refusals_write_nothing(self):
+        before = core.tree_hash(self.tmp)
+        over = dict(SUMMARIES)
+        over[OS_ID] = {"summary": "x" * 201}
+        cases = [((), "--apply needs --summaries"),
+                 (("--summaries", self.summaries({}, "empty.json")), "%s: needs a summary" % OS_ID),
+                 (("--summaries", self.summaries(over, "over.json")), "at most 200 characters (got 201)"),
+                 (("--summaries", self.summaries(dict(SUMMARIES, **{"global/2026-01-01-none": {"summary": "s"}}), "x.json")),
+                  "global/2026-01-01-none: no such entry"),
+                 (("--summaries", self.summaries({OS_ID: {"summary": "s", "role": "x"}}, "k.json")), "the value must be"),
+                 (("--summaries", os.path.join(self.tmp, "missing.json")), "cannot read --summaries")]
+        for extra, want in cases:
+            before = core.tree_hash(self.tmp)
+            rc, out, err = self.run_orch("lessons", "migrate", "--apply", *extra)
+            self.assertEqual(rc, 1, (extra, out, err))
+            self.assertIn(want, err, extra)
+            self.assertEqual(core.tree_hash(self.tmp), before, extra)
+        self.refuse(1, "lessons", "migrate")
+        out, _ = self.ok("lessons", "migrate", "--apply", "--dry-run", "--summaries", self.summ)
+        self.assertIn("apply would write 4 lesson files in 3 scopes; nothing written", out)
+        self.assertEqual(core.tree_hash(self.tmp), before)
+
+    def test_an_entry_without_a_role_is_refused(self):
+        self.write(os.path.join(self.root, "orch-skill", "LESSONS.md"), REPO_LEGACY.replace("- role: planner\n", ""))
+        err = self.refuse(1, "lessons", "migrate", "--apply", "--summaries", self.summ)
+        self.assertIn("orch-skill/2026-11-06-an-invariant-proved-for-one-panel-only: missing field 'role'", err)
+        self.assertFalse(os.path.exists(self.backups()))
+
+    def test_apply_restore_round_trip(self):
+        before = core.tree_hash(self.root)
+        originals = {rel: self.read(self.root, rel) for rel in ("LESSONS.md", "orch-skill/LESSONS.md", "myapp/LESSONS.md")}
+        out, _ = self.ok("lessons", "migrate", "--apply", "--summaries", self.summ)
+        self.assertIn("migrated 4 entries in 3 scopes", out)
+        self.assertIn("lessons check: 4 files in 3 scopes, clean", out)
+        undo = [l for l in out.splitlines() if l.startswith("undo: orch lessons migrate --restore ")]
+        self.assertEqual(len(undo), 1)
+        bdir = undo[0].split(" --restore ", 1)[1]
+        self.assertEqual(os.path.dirname(bdir), self.backups())
+        self.assertTrue(os.path.basename(bdir).startswith("lessons-20260301T1000Z"))
+        # backup: the legacy bytes, per scope
+        for rel, data in originals.items():
+            label = "global" if rel == "LESSONS.md" else rel.split("/")[0]
+            self.assertEqual(self.read(bdir, label, "LESSONS.md"), data)
+        # the files: added fields, then the entry's own lines verbatim
+        text = self.text(self.root, "orch-skill", "lessons", OS_ID.split("/", 1)[1] + ".md")
+        lines = text.splitlines()
+        self.assertEqual(lines[0], '# Reviewer reported "denylist 0 hits"; the export round trip found one')
+        self.assertEqual(lines[1:7], ["- status: open", "- scope: project", "- summary: " + SUMMARIES[OS_ID]["summary"],
+                                      "- quote: none (observed: migrated %s)" % TODAY, "- review-by: 2026-05-30",
+                                      "- exempt: no"])
+        self.assertEqual("\n".join(lines[7:]), REPO_LEGACY.split("\n\n")[3].split("\n", 1)[1])
+        extra = self.text(self.root, "orch-skill", "lessons", "2026-11-06-an-invariant-proved-for-one-panel-only.md")
+        self.assertIn("- context: atomic-repo-switch\n- what was assumed: the display is one thing that moves at once.\n", extra)
+        self.assertIn("- summary: list every panel that can start a write.\n", extra)
+        long_text = self.text(self.gdir(), LONG_ID.split("/", 1)[1] + ".md")
+        self.assertIn("- exempt: yes — it guards every replay test\n", long_text)
+        self.assertTrue(long_text.endswith("raw event sequence,\n  never by hand-labelling the field under test.\n"))
+        # everything that is not an open entry, unchanged
+        self.assertEqual(self.text(self.gdir(), "PROMOTED.md"), GLOBAL_LEGACY.split("## 2026-10-31")[0].rstrip("\n") + "\n")
+        self.assertEqual(self.text(self.root, "myapp", "lessons", "PROMOTED.md"), RULES_ONLY)
+        self.assertEqual(self.text(self.root, "orch-skill", "lessons", "PROMOTED.md"),
+                         "# Lessons — orch-skill\n\nCritical-only. Repo-specific.\n\n## Open\n")
+        # generated indexes and the stamp
+        index = self.text(self.root, "orch-skill", "LESSONS.md").splitlines()
+        self.assertEqual(index[1], "- 2026-11-02 · code-reviewer · %s → lessons/%s.md" % (SUMMARIES[OS_ID]["summary"], OS_ID.split("/", 1)[1]))
+        self.assertEqual(index[-1], "Promoted and archived lessons: lessons/PROMOTED.md")
+        self.assertEqual(len(self.text(self.root, "myapp", "LESSONS.md").splitlines()), 2)
+        self.assertEqual(json.loads(self.text(self.gdir(), ".tracking")), {"since": TODAY})
+        self.assertFalse(os.path.exists(os.path.join(self.root, "nolessons", "lessons")))
+        self.assertIn("clean", self.check())
+        # a second apply is a no-op
+        after = core.tree_hash(self.tmp)
+        out, _ = self.ok("lessons", "migrate", "--apply", "--summaries", self.summ)
+        self.assertIn("nothing to migrate", out)
+        self.assertEqual(core.tree_hash(self.tmp), after)
+        # restore: the legacy bytes back, the new folders kept in the backup
+        out, _ = self.ok("lessons", "migrate", "--restore", bdir)
+        self.assertIn("restored 3 scopes", out)
+        self.assertEqual(core.tree_hash(self.root), before)
+        self.assertTrue(os.path.isfile(os.path.join(bdir, "orch-skill", "lessons", OS_ID.split("/", 1)[1] + ".md")))
+        self.assertTrue(os.path.isfile(os.path.join(bdir, "global", "lessons", ".tracking")))
+
+    def test_a_migrated_scope_is_skipped_and_the_stamp_kept(self):
+        self.add(scope="project", repo="orch-skill")      # orch-skill now has lessons/
+        self.write(os.path.join(self.gdir(), ".tracking"), '{"since": "2026-01-01"}\n')
+        os.unlink(os.path.join(self.root, "LESSONS.md"))
+        self.ok("lessons", "index")
+        rep = self.dry()
+        self.assertEqual([s["label"] for s in rep["scopes"]], ["myapp"])
+        self.assertEqual(sorted(rep["already_migrated"]), ["global", "orch-skill"])
+        summ = self.summaries({OS_ID: {"summary": "s"}}, "stale.json")     # an id of a migrated scope that has no such file
+        self.assertIn("no such entry", self.refuse(1, "lessons", "migrate", "--apply", "--summaries", summ))
+        self.ok("lessons", "migrate", "--apply", "--summaries", self.summaries({}, "none.json"))
+        self.assertEqual(self.text(self.gdir(), ".tracking"), '{"since": "2026-01-01"}\n')
+        self.assertIn("clean", self.check())
+
+    def test_restore_refuses_what_is_not_a_backup(self):
+        self.assertIn("not a lessons migration backup", self.refuse(1, "lessons", "migrate", "--restore", self.tmp))
+        self.refuse(1, "lessons", "migrate", "--restore", self.tmp, "--apply")
+
+
+SUMMARY_MAX_FOR_TEST = ls.SUMMARY_MAX
 
 
 if __name__ == "__main__":
