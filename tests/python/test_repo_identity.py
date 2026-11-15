@@ -73,6 +73,28 @@ class RepoIdentity(Fixture):
         self.assertEqual(paths.repo_folder(second, self.tasks), folder)  # stable on a second call
         self.assertEqual(paths.repo_folder(first, self.tasks), "proj")  # the existing folder is never renamed
 
+    def test_a_repo_named_lessons_does_not_take_the_global_lessons_folder(self):
+        """`<root>/lessons/` holds the global lesson files and has no repo.json: a repo of that name gets a suffix."""
+        os.makedirs(os.path.join(self.tasks, "lessons"))
+        repo = self.make_repo("a", "lessons")
+        root = git(repo, "rev-list", "--max-parents=0", "HEAD")
+        folder = paths.repo_folder(repo, self.tasks)
+        self.assertEqual(folder, "lessons-" + root[:4])
+        self.assertEqual(self.recorded(folder), root)
+        self.assertEqual(os.listdir(os.path.join(self.tasks, "lessons")), [])          # nothing written there
+        self.assertEqual(paths.repo_folder(repo, self.tasks), folder)                    # stable
+        # no global folder yet: the name is still reserved
+        shutil.rmtree(os.path.join(self.tasks, "lessons"))
+        self.assertEqual(paths.repo_folder(repo, self.tasks), folder)
+        self.assertFalse(os.path.exists(os.path.join(self.tasks, "lessons")))
+        # a repo given the name by `orch init`
+        other = self.make_repo("b", "proj", message="other")
+        self.assertEqual(paths.repo_folder(other, self.tasks, name="lessons"), "lessons-" + git(other, "rev-list", "--max-parents=0", "HEAD")[:4])
+        # no commit yet: refused, nothing written
+        fresh = self.make_repo("c", "lessons", commit=False)
+        with self.assertRaises(paths.OrchError):
+            paths.repo_folder(fresh, self.tasks)
+
     def test_no_commits_then_first_commit(self):
         repo = self.make_repo("a", "proj", commit=False)
         self.assertEqual(paths.repo_folder(repo, self.tasks), "proj")
