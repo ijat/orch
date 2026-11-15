@@ -50,8 +50,8 @@ moved into a lesson, which has a quote, a scope and a review date, is shown to e
 
 6. **Offer auto-memory off for this project**, every time this skill runs and the project's memory still loads
    (step 7 shows it): `orch memory auto-off --project <path>`, after their yes. **Global**: offer it once, after
-   their memories are moved, as a command for the user to run (`orch memory auto-off --global`) or the pane's
-   "Auto-memory off for this project" row; never run it yourself. Record that it was offered:
+   their memories are moved, as a command for the user to run (`orch memory auto-off --global`); the pane's
+   "Auto-memory off for this project" row is not that switch (it changes this project only); never run it yourself. Record that it was offered:
    `orch setting set memory_global_offered yes` (read it first with `orch setting get memory_global_offered`;
    when it is `yes`, do not offer again unless the user asks).
 
