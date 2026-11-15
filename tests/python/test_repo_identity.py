@@ -95,6 +95,25 @@ class RepoIdentity(Fixture):
         with self.assertRaises(paths.OrchError):
             paths.repo_folder(fresh, self.tasks)
 
+    def test_a_repo_named_lessons_in_another_case_does_not_take_the_global_lessons_folder(self):
+        """On a case-insensitive filesystem (macOS APFS) `<root>/Lessons` is `<root>/lessons` (F11)."""
+        os.makedirs(os.path.join(self.tasks, "lessons"))
+        for i, name in enumerate(("Lessons", "LESSONS", "lEsSoNs")):
+            repo = self.make_repo("case%d" % i, name, message="m%d" % i)
+            root = git(repo, "rev-list", "--max-parents=0", "HEAD")
+            folder = paths.repo_folder(repo, self.tasks)
+            self.assertEqual(folder, name + "-" + root[:4])
+            self.assertEqual(self.recorded(folder), root)
+            self.assertEqual(os.listdir(os.path.join(self.tasks, "lessons")), [])      # nothing written there
+            self.assertEqual(paths.repo_folder(repo, self.tasks), folder)                # stable
+        other = self.make_repo("named", "proj", message="other")
+        root = git(other, "rev-list", "--max-parents=0", "HEAD")
+        self.assertEqual(paths.repo_folder(other, self.tasks, name="LESSONS"), "LESSONS-" + root[:4])
+        fresh = self.make_repo("fresh", "Lessons", commit=False)
+        with self.assertRaises(paths.OrchError):
+            paths.repo_folder(fresh, self.tasks)
+        self.assertEqual(os.listdir(os.path.join(self.tasks, "lessons")), [])
+
     def test_no_commits_then_first_commit(self):
         repo = self.make_repo("a", "proj", commit=False)
         self.assertEqual(paths.repo_folder(repo, self.tasks), "proj")
