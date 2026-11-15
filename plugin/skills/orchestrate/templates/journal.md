@@ -32,6 +32,7 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 | `override` | the user overrides a default | `what` |
 | `direct_edit` | direct-edit allowance used | `what` |
 | `lesson` | lesson file written (`orch lessons add`) or promoted (`orch lessons promote`) | `file` (the lesson file's path), `title`, `promoted_to` (or null) |
+| `cite` | a lesson line in a brief changed what a role did, recorded by `orch cite <id> --for "<what it changed>"` (any role; the guard's allowed `basis: lesson` spawns count as citations too but are not journaled) | `ref` (the lesson id), `for` (what it changed), `role` |
 | `mode_switch` | lite or interactive task moved to standard | `from`, `to`, `reason` (scope_exceeded/ineligible/review_rounds/user), `phase` (plan/implement/review) |
 | `judgement` **choice** | any other non-obvious decision you made | `decision`, `confidence` (low/medium/high) |
 | `task_end` | task ends, any outcome | `outcome` (merged/declined/failed_merge/abandoned/handed_to_user), `rounds` |

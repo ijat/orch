@@ -509,8 +509,9 @@ per lesson, from `templates/lesson.md`. What you supply:
 - `exempt` — `no`, or a reason: only for a rare-event rule that must outlive disuse (a lesson that is rarely cited but
   must not expire).
 
-A brief carries one index line per lesson (summary and the file's path); open the lesson file when a line applies, and
-`orch cite <lesson> --for "<decision>"` when it changed what you or a role did.
+A brief carries one index line per lesson (summary and the file's path); open the lesson file when a line applies. When a
+lesson line changes what you do, run `orch cite <id> --for "<what it changed>"` (`orch lessons usage` counts these; a
+brief that carries the line, or a read of the file, is not use).
 
 **Promote, don't just log.** If the lesson changes a role's standing behaviour, edit it into that
 role's source, `plugin/skills/orchestrate/roles/<role>.md` in this plugin's source repository (or this skill, for orchestrator behaviour), and run

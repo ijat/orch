@@ -561,5 +561,142 @@ class TestMigrate(LessonBase):
 SUMMARY_MAX_FOR_TEST = ls.SUMMARY_MAX
 
 
+class TestCiteAndUsage(LessonBase):
+    """`orch cite` writes a `cite` journal line; `orch lessons usage` counts citations and reports loads and reads
+    beside them, never as use."""
+
+    def setUp(self):
+        LessonBase.setUp(self)
+        self.task = self.init()
+        self.lid = "global/" + TODAY + "-check-the-export-round-trip"
+        self.add()
+        self.lpath = os.path.join(self.gdir(), TODAY + "-check-the-export-round-trip.md")
+
+    def cite(self, lid=None, why="used the dry run", *extra, **kw):
+        return self.ok("cite", lid or self.lid, "--for", why, "-t", "myapp/add-login", *extra, **kw)
+
+    def usage(self, *flags):
+        out, _ = self.ok("lessons", "usage", "--json", *flags)
+        return json.loads(out)
+
+    def row(self, report, lid=None):
+        return [r for r in report["lessons"] if r["id"] == (lid or self.lid)][0]
+
+    def guard_log(self, *recs):
+        d = os.path.join(self.home, ".claude", "orch-data", "logs")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "tier-guard.jsonl"), "w") as fh:
+            for r in recs:
+                fh.write(json.dumps(r) + "\n")
+
+    def test_cite_writes_a_journal_line(self):
+        out, _ = self.cite(self.lid, "ran the dry run first", "--as", "implementer")
+        self.assertIn("cited " + self.lid, out)
+        rec = self.journal_lines(self.task)[-1]
+        self.assertEqual((rec["kind"], rec["ref"], rec["for"], rec["role"], rec["repo"], rec["task"]),
+                         ("cite", self.lid, "ran the dry run first", "implementer", "myapp", "add-login"))
+        self.assertEqual(rec["ts"][:10], TODAY)
+
+    def test_cite_without_a_role_records_null(self):
+        self.cite()
+        self.assertIsNone(self.journal_lines(self.task)[-1]["role"])
+
+    def test_cite_refusals_write_nothing(self):
+        before = core.tree_hash(self.root)
+        cases = [
+            (("cite", "global/2020-01-01-nothing", "--for", "x", "-t", "myapp/add-login"), 1, "no open lesson"),
+            (("cite", "nonsense", "--for", "x", "-t", "myapp/add-login"), 1, "lesson id is"),
+            (("cite", self.lid, "--for", "  ", "-t", "myapp/add-login"), 1, "--for is required"),
+            (("cite", self.lid, "--for", "x", "--as", "Not A Role", "-t", "myapp/add-login"), 1, "bad role"),
+            (("cite", self.lid, "--for", "x", "-t", "myapp/nope"), None, ""),
+        ]
+        for argv, code, want in cases:
+            rc, out, err = self.run_orch(*argv)
+            self.assertNotEqual(rc, 0, argv)
+            if code is not None:
+                self.assertEqual(rc, code, (argv, err))
+                self.assertIn(want, err)
+            self.assertEqual(core.tree_hash(self.root), before, argv)
+
+    def test_a_promoted_lesson_cannot_be_cited(self):
+        self.ok("lessons", "promote", self.lid, "--to", "SKILL.md step 4")
+        rc, _, err = self.run_orch("cite", self.lid, "--for", "x", "-t", "myapp/add-login")
+        self.assertEqual(rc, 1)
+        self.assertIn("no open lesson", err)
+
+    def test_the_schema_knows_the_kind(self):
+        self.ok("journal", "cite", "ref=%s" % self.lid, "for=by hand", "role=planner", "-t", "myapp/add-login")
+        self.assertEqual(self.journal_lines(self.task)[-1]["kind"], "cite")
+
+    def test_citations_are_counted_with_last_date_and_tasks(self):
+        self.init("myapp", "second-task")
+        self.cite(now="2026-03-01T10:00Z")
+        self.cite(now="2026-03-09T10:00Z")
+        self.ok("cite", self.lid, "--for", "again", "-t", "myapp/second-task", now="2026-03-05T10:00Z")
+        c = self.row(self.usage())["citations"]
+        self.assertEqual((c["count"], c["last"], c["tasks"]), (3, "2026-03-09", ["myapp/add-login", "myapp/second-task"]))
+
+    def test_a_brief_that_only_loads_a_lesson_adds_no_citation(self):
+        self.write(os.path.join(self.task, "briefs", "implement-s1.md"), "## Lessons\n\n- x → %s\n" % self.lpath)
+        self.write(os.path.join(self.task, "briefs", "implement-s2.md"), "carries %s too\n" % self.lpath)
+        self.write(os.path.join(self.task, "briefs", "other.md"), "no lesson here\n")
+        r = self.row(self.usage())
+        self.assertEqual((r["citations"]["count"], r["loaded"]), (0, 2))
+        self.assertNotIn("reads", r)
+
+    def test_a_lesson_guard_record_counts_and_others_do_not(self):
+        def rec(decision="allow", kind="lesson", basis=None):
+            return {"ts": "2026-04-02T08:00:00Z", "decision": decision, "basis_kind": kind,
+                    "basis": basis or "basis: lesson | %s" % self.lid}
+        self.guard_log(rec(), rec("deny"), rec(kind="user", basis='basis: user | "a quote here"'),
+                       rec(basis="basis: lesson | global/2020-01-01-other"))
+        c = self.row(self.usage())["citations"]
+        self.assertEqual((c["count"], c["last"], c["tasks"]), (1, "2026-04-02", ["guard"]))
+
+    def test_reads_count_only_with_the_flag_and_only_after_the_tracking_date(self):
+        self.write(os.path.join(self.root, "lessons", ".tracking"), json.dumps({"since": "2026-03-01"}))
+        uhome = os.path.join(self.tmp, "uhome")
+
+        def line(path):
+            return json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Read", "input": {"file_path": path}}]}}) + "\n"
+
+        recent = os.path.join(uhome, "projects", "p", "new.jsonl")
+        old = os.path.join(uhome, "projects", "p", "old.jsonl")
+        self.write(recent, line(self.lpath) + line(self.lpath) + line("/elsewhere") +
+                   json.dumps({"type": "assistant", "message": {"content": [
+                       {"type": "tool_use", "name": "Grep", "input": {"pattern": self.lpath}}]}}) + "\n")
+        self.write(old, line(self.lpath))
+        os.utime(old, (1.0, 1.0))
+        self.env["ORCH_USAGE_HOME"] = uhome
+        self.assertNotIn("reads", self.row(self.usage()))
+        r = self.row(self.usage("--reads"))
+        self.assertEqual((r["reads"], r["citations"]["count"]), (2, 0))
+
+    def test_the_text_report_names_the_tracking_date_and_that_loads_and_reads_are_not_use(self):
+        out, _ = self.ok("lessons", "usage")
+        self.assertIn("tracking since: not started", out)
+        self.assertIn("not use", out)
+        self.write(os.path.join(self.root, "lessons", ".tracking"), json.dumps({"since": "2026-03-01"}))
+        self.cite()
+        out, _ = self.ok("lessons", "usage", "--reads")
+        self.assertIn("tracking since: 2026-03-01", out)
+        self.assertIn("not use", out)
+        self.assertIn("%s  citations: 1" % self.lid, out)
+        self.assertIn("loaded: 0  reads: 0", out)
+
+    def test_only_open_lessons_are_listed_and_usage_is_read_only(self):
+        self.add("--title", "another one")
+        self.ok("lessons", "promote", self.lid, "--to", "SKILL.md")
+        before = core.tree_hash(self.root)
+        ids = [r["id"] for r in self.usage()["lessons"]]
+        self.assertEqual(ids, ["global/" + TODAY + "-another-one"])
+        self.assertEqual(core.tree_hash(self.root), before)
+
+    def test_a_dev_copy_without_orch_dir_refuses(self):
+        import inspect
+        self.assertIn("require_write_allowed", inspect.getsource(ls.cmd_cite))
+
+
 if __name__ == "__main__":
     unittest.main()

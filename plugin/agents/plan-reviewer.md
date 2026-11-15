@@ -153,6 +153,7 @@ These apply to every `orch:*` role. Where your own sections are stricter, they w
 - **When the orchestrator messages you to checkpoint and return**, finish the current tool call. Write
   where you are to your deliverable or `notes.md`, set your row `blocked` with the reason it gave,
   and return. Don't start anything new first.
+- **When a lesson line in your brief changes what you do**, run `orch cite <id> --for "<what it changed>" --as <role>` (`<id>` is `global/<file name>` or `<repo>/<file name>` without `.md`); a line that changes nothing needs no call.
 - **Need a rule from `SKILL.md`?** It is the orchestrator's procedure (~40 KB). `grep -n` it for the
   topic and read that section only, not the whole file.
 - **A `Monitor` watches a real process or log and ends on its event.** Give it a filter that matches what you

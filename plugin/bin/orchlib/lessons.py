@@ -889,18 +889,209 @@ def cmd_migrate(ns):
     return migrate_dry_run(orch_root(), ns.json)
 
 
+# -- orch cite | orch lessons usage ------------------------------------------------------------------
+#
+# Use is a citation: a role that let a lesson line change what it did runs `orch cite`, which writes a `cite` journal line
+# in the task. A guard record that allowed a `basis: lesson | <id>` spawn counts too. A brief that only loads the lesson,
+# and a Read of its file, are reported beside the count and are never use.
+
+TRACKING = ".tracking"
+GUARD_LESSON_RE = re.compile(r"\blesson[ \t]*\|[ \t]*(\S+)")
+USAGE_NOTE = '"loaded" (briefs that carry the lesson\'s path) and "reads" (Read calls on its file) are not use; only citations are.'
+
+
+def cmd_cite(ns, extra):
+    from . import flow
+    from . import journal as jr
+    from .paths import TaskLock, task_names
+    require_write_allowed()
+    why = one(ns.for_text, "--for")
+    role = None
+    if ns.as_role is not None:
+        role = one(ns.as_role, "--as")
+        if not flow.ROLE_RE.match(role):
+            raise OrchError("bad role %r" % role, 1)
+    find_lesson(ns.lesson)
+    task_dir = cli.get_task(ns, infer=True)
+    ts = now()
+    repo, slug = task_names(task_dir)
+    schema = jr.load_schema()
+    with TaskLock(task_dir):
+        program, auto_ms = flow.program_of(flow.status_or_none(task_dir))
+        pairs = [("ref", "=", ns.lesson), ("for", "=", why), ("role", ":=", json.dumps(role))]
+        rec, _ = jr.build_record(schema, "cite", pairs, ts, repo, slug, program, auto_ms)
+        jr.append(os.path.join(task_dir, "journal.jsonl"), jr.encode(rec))
+    print("cited %s%s" % (ns.lesson, cli.tag(ns)))
+    return 0
+
+
+def read_json_lines(path):
+    out = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict):
+                    out.append(rec)
+    except OSError:
+        pass
+    return out
+
+
+def tracking_since(root):
+    text = read_text(os.path.join(lesson_dir(root), TRACKING))
+    if text is None:
+        return None
+    try:
+        since = json.loads(text).get("since")
+    except (ValueError, AttributeError):
+        return None
+    return since if isinstance(since, str) and valid_date(since) else None
+
+
+def task_dirs(root):
+    """[(repo, slug, dir)] for every <root>/<repo>/<slug> folder."""
+    out = []
+    try:
+        repos = sorted(os.listdir(root))
+    except OSError:
+        return out
+    for r in repos:
+        rd = os.path.join(root, r)
+        if r == "lessons" or not os.path.isdir(rd):
+            continue
+        try:
+            slugs = sorted(os.listdir(rd))
+        except OSError:
+            continue
+        out += [(r, s, os.path.join(rd, s)) for s in slugs if os.path.isdir(os.path.join(rd, s)) and s != "lessons"]
+    return out
+
+
+def citations(root, logs):
+    """{lesson id: [(date, task label)]} from the `cite` journal lines of every task and the allowed guard records that
+    carry a `lesson` basis (task label `guard`)."""
+    found = {}
+    for repo, slug, d in task_dirs(root):
+        for rec in read_json_lines(os.path.join(d, "journal.jsonl")):
+            if rec.get("kind") == "cite" and isinstance(rec.get("ref"), str):
+                found.setdefault(rec["ref"], []).append((str(rec.get("ts") or "")[:10], "%s/%s" % (repo, slug)))
+    for rec in read_json_lines(os.path.join(logs, "tier-guard.jsonl")):
+        if rec.get("decision") != "allow" or rec.get("basis_kind") != "lesson":
+            continue
+        m = GUARD_LESSON_RE.search(str(rec.get("basis") or ""))
+        if m:
+            found.setdefault(m.group(1), []).append((str(rec.get("ts") or "")[:10], "guard"))
+    return found
+
+
+def briefs_text(root):
+    """[text] of every task's briefs/*.md."""
+    out = []
+    for _, _, d in task_dirs(root):
+        bd = os.path.join(d, "briefs")
+        try:
+            names = sorted(n for n in os.listdir(bd) if n.endswith(".md"))
+        except OSError:
+            continue
+        for n in names:
+            t = read_text(os.path.join(bd, n))
+            if t:
+                out.append(t)
+    return out
+
+
+def count_reads(paths, since):
+    """{path: number of Read tool calls on it} over the transcripts changed on or after `since` (YYYY-MM-DD)."""
+    from . import usage
+    try:
+        floor = datetime.datetime.strptime(since, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        floor = 0
+    counts = dict((p, 0) for p in paths)
+    for tp in usage.transcripts(usage.home_dir()):
+        try:
+            if os.path.getmtime(tp) < floor:
+                continue
+            fh = open(tp, encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        with fh:
+            for line in fh:
+                if '"Read"' not in line or not any(p in line for p in counts):
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                msg = rec.get("message") if isinstance(rec, dict) else None
+                content = msg.get("content") if isinstance(msg, dict) else None
+                if not isinstance(content, list):
+                    continue
+                for b in content:
+                    if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Read":
+                        fp = (b.get("input") or {}).get("file_path") if isinstance(b.get("input"), dict) else None
+                        if fp in counts:
+                            counts[fp] += 1
+    return counts
+
+
+def usage_report(root, logs, with_reads):
+    since = tracking_since(root)
+    lessons = []
+    for label, scope, d in scope_roots(root):
+        for l in open_lessons(d, scope):
+            lessons.append(("%s/%s" % (label, l.name), l))
+    cites = citations(root, logs)
+    texts = briefs_text(root)
+    reads = count_reads([l.path for _, l in lessons], since) if with_reads and lessons else {}
+    rows = []
+    for lid, l in lessons:
+        c = sorted(cites.get(lid, []))
+        row = {"id": lid, "citations": {"count": len(c), "last": c[-1][0] if c else None,
+                                         "tasks": sorted(set(t for _, t in c))},
+               "loaded": sum(1 for t in texts if l.path in t)}
+        if with_reads:
+            row["reads"] = reads.get(l.path, 0)
+        rows.append(row)
+    return {"tracking_since": since, "note": USAGE_NOTE, "lessons": rows}
+
+
+def cmd_usage(ns):
+    from .paths import logs_dir
+    report = usage_report(orch_root(), logs_dir(), ns.reads)
+    if ns.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0
+    print("tracking since: %s" % (report["tracking_since"] or "not started (orch lessons migrate writes lessons/.tracking)"))
+    print("note: %s" % report["note"])
+    for r in report["lessons"]:
+        c = r["citations"]
+        line = "%s  citations: %d%s  loaded: %d" % (
+            r["id"], c["count"], " (last %s; tasks: %s)" % (c["last"], ", ".join(c["tasks"])) if c["count"] else "", r["loaded"])
+        if "reads" in r:
+            line += "  reads: %d" % r["reads"]
+        print(line)
+    if not report["lessons"]:
+        print("no open lesson files")
+    return 0
+
+
 def cmd_lessons(ns, extra):
     handler = {"add": cmd_add, "promote": cmd_promote, "index": cmd_index, "check": cmd_check,
-               "migrate": cmd_migrate}[ns.action]
+               "migrate": cmd_migrate, "usage": cmd_usage}[ns.action]
     if ns.action != "promote" and ns.arg:
         raise OrchError("%s takes no positional argument" % ns.action, 1)
     return handler(ns)
 
 
 def register(add):
-    sp = add("lessons", cmd_lessons, "lesson files: add | promote ID --to WHERE | index | check | migrate")
+    sp = add("lessons", cmd_lessons, "lesson files: add | promote ID --to WHERE | index | check | migrate | usage")
     sp._optionals.conflict_handler = "resolve"      # --task here is the lesson's `task:` field; -t stays the task selector
-    sp.add_argument("action", choices=["add", "promote", "index", "check", "migrate"])
+    sp.add_argument("action", choices=["add", "promote", "index", "check", "migrate", "usage"])
     sp.add_argument("arg", nargs="?", default=None, metavar="ID")
     sp.add_argument("--scope", default=None, help="add: project | global; index: restrict to one")
     sp.add_argument("--repo", default=None, help="the repo folder (add with --scope project; index)")
@@ -921,3 +1112,9 @@ def register(add):
     sp.add_argument("--apply", action="store_true", help="migrate: convert the legacy LESSONS.md files")
     sp.add_argument("--summaries", default=None, help="migrate --apply: JSON file, id -> {summary, exempt}")
     sp.add_argument("--restore", default=None, metavar="BACKUP_DIR", help="migrate: undo an apply from its backup")
+    sp.add_argument("--reads", action="store_true", help="usage: also count Read calls on each file in the transcripts since the tracking date")
+
+    sp = add("cite", cmd_cite, "record that a lesson line changed what you did (a `cite` journal line)")
+    sp.add_argument("lesson", metavar="LESSON_ID", help="global/<name> or <repo>/<name>")
+    sp.add_argument("--for", dest="for_text", required=True, help="what the lesson changed, one line")
+    sp.add_argument("--as", dest="as_role", default=None, help="your role (recorded in the line)")
