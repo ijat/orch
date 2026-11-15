@@ -170,8 +170,9 @@ returns `blocked` with `need: tier — <reason>` and you grant it, pick an Opus 
 ```
 
 `<repo-name>` is the repo directory name; `<task-slug>` is short, lowercase, hyphenated. Beside the
-task dirs: `~/.claude/orch-data/tasks/LESSONS.md` (global),
-`~/.claude/orch-data/tasks/<repo-name>/LESSONS.md` (repo),
+task dirs: `~/.claude/orch-data/tasks/lessons/` (global lesson files) and
+`~/.claude/orch-data/tasks/<repo-name>/lessons/` (repo lesson files), each with a generated `LESSONS.md` index beside it
+(`~/.claude/orch-data/tasks/LESSONS.md`, `~/.claude/orch-data/tasks/<repo-name>/LESSONS.md`; a scope not yet migrated has only the old hand-kept file),
 `~/.claude/orch-data/tasks/<repo-name>/security-ledger.md`, and optionally `<repo-name>/policy.md`
 (`- merge: auto | ask`, `- security: rule | always | ask`; absent = `auto`, `rule`). Never use
 `~/.claude/tasks/` or `~/.claude/plans/` — Claude Code owns those.
@@ -491,27 +492,31 @@ in doubt, route it through the pipeline.
 When a role is confidently wrong in a way a future agent repeating would be **a real problem** — a
 confirmed bug with a pattern behind it, a false plan assumption, a user correction, a guess that
 should have been verified — record it. The bar is critical-only (most fix-round findings don't
-qualify); when in doubt, don't write it.
+qualify); when in doubt, don't write it. A directive for one task only is not a lesson: it goes in that task's plan.
 
-You are the sole writer. Global file if the mistake could recur on another codebase; repo file if
-it's tied to this repo (prefer repo when unsure).
+You are the sole writer, and you write with `orch lessons add`, never by editing `LESSONS.md` (it is generated from
+the lesson files; `orch lessons index` rebuilds it, `orch lessons check` compares). Global if the mistake could recur on
+another codebase (`--scope global`); repo if it's tied to this repo (`--scope project`; prefer it when unsure). One file
+per lesson, from `templates/lesson.md`. What you supply:
 
-```markdown
-## 2026-08-27 — <short title>
-- role: planner | implementer | code-reviewer | security-reviewer | plan-reviewer | director | orchestrator
-- task: <task-slug> (<repo-name>)
-- what happened: concretely
-- what was actually true: the correction
-- lesson: one instruction to apply next time
-```
+- `summary` — the instruction itself, one line, at most 200 characters ("verify X with Y before Z"), not a topic or a
+  story; it is what a brief shows, so it must be enough to act on.
+- `lesson` — the full instruction, with the detail the summary cannot hold; `what happened` and `what was actually true`
+  (optional) keep the evidence.
+- `quote` — the user's own words when the lesson comes from a user correction, in double quotes; otherwise
+  `none (observed: <where you saw it>)`.
+- `review-by` — a date (YYYY-MM-DD) by which the lesson is looked at again (`orch lessons audit`).
+- `exempt` — `no`, or a reason: only for a rare-event rule that must outlive disuse (a lesson that is rarely cited but
+  must not expire).
+
+A brief carries one index line per lesson (summary and the file's path); open the lesson file when a line applies, and
+`orch cite <lesson> --for "<decision>"` when it changed what you or a role did.
 
 **Promote, don't just log.** If the lesson changes a role's standing behaviour, edit it into that
 role's source, `plugin/skills/orchestrate/roles/<role>.md` in this plugin's source repository (or this skill, for orchestrator behaviour), and run
 `scripts/build-agents.py plugin/skills/orchestrate/roles plugin/agents` in the same change — never `plugin/agents/*.md`, which are generated and
-overwritten by the next build; and in
-`LESSONS.md` replace the entry with a one-line row in the *Promoted* table pointing at where it now
-lives. `LESSONS.md` should only hold lessons not yet promoted anywhere; if it grows past about a
-screen, consolidate.
+overwritten by the next build; then `orch lessons promote <id> --to "<where it now lives>"`, which adds the row to
+`lessons/PROMOTED.md` and moves the file to `lessons/archive/`. Open lessons are only those not yet promoted anywhere.
 
 ## Procedure
 
@@ -571,8 +576,8 @@ plan is made against; after a skip those files do not exist and the brief omits 
 
 ### 4. Plan
 
-Read both lessons files (`~/.claude/orch-data/tasks/LESSONS.md`, `~/.claude/orch-data/tasks/<repo-name>/LESSONS.md`)
-— each independently, so a missing one can't skip the other. Also read `~/.claude/orch-data/tasks/<repo-name>/follow-ups.md`
+Read both lessons indexes (`~/.claude/orch-data/tasks/LESSONS.md`, `~/.claude/orch-data/tasks/<repo-name>/LESSONS.md`)
+— each independently, so a missing one can't skip the other. An index line is a summary; open the lesson file it points to when the line applies. A scope not yet migrated is still the old single file, read in full. Also read `~/.claude/orch-data/tasks/<repo-name>/follow-ups.md`
 if it exists: should-fix and nit findings earlier tasks parked (`orch follow-up`, § Review loops). They are planning
 input, not work: offer one to the user only when it touches the request, and give the planner the rows that do.
 
@@ -580,7 +585,7 @@ Then the pre-plan `orch:graph` call (Index rebuild pause), before any planner sp
 
 Spawn the chosen planner tier with: the user's request verbatim; absolute repo path and branch;
 absolute task dir and `plan.md` path; the tier and one-line reason for the header; anything relevant
-from the lessons files; and that it's read-only on the codebase (writes only `plan.md` or `roadmap.md`, `sketches/`,
+from the lessons; and that it's read-only on the codebase (writes only `plan.md` or `roadmap.md`, `sketches/`,
 `guides/`, `notes.md`, `status.md`, `log.md`).
 
 **Shape.** Name no shape before the plan exists: not to the user, not in a question, not in the planner's brief.
@@ -673,7 +678,7 @@ steps, sizes `S` or `M` with at most one `M`, each depending only on steps befor
 
 **Sequential by default:** `orch brief implement <steps>` (director: `orch brief director <step>`) writes
 `briefs/…md`, that role's whole context: worktree, steps, the Decisions and revisions touching them,
-findings, sketch path, checkpoint commands, matching repo lessons. `orch spawn`, then spawn one
+findings, sketch path, checkpoint commands, matching lessons (index lines). `orch spawn`, then spawn one
 implementer at the chosen tier with the **tier, escalation and tradeoff lines** (`TIERS.md` § Record
 it) and the brief's absolute path — not plan sections; there is no second lessons read. Send the spawn prompt
 `orch brief` printed, unchanged (§ Tier selection says how); `--extra` carries facts only. When a sketched
@@ -876,8 +881,8 @@ worktree and task directory plus the branch name.
   its subagent, or run one as a keep-alive (`sleep N; echo tick`) instead of a filter on a real process or log; claim a crash will auto-resume.
 - Let a role spawn anything but `orch:explorer`/`orch:executor` (the planner and you also `orch:graph`), or guess inside a sensitive area.
 - Assert what could have been verified; go to the user before trying rungs 1 and 2.
-- Let a subagent write to `LESSONS.md`; log non-critical findings as lessons; leave a
-  behaviour-changing lesson unpromoted.
+- Let a subagent write a lesson; edit `LESSONS.md` by hand (it is generated: `orch lessons add`); log non-critical findings
+  as lessons or a one-task directive as one; leave a behaviour-changing lesson unpromoted.
 - Start a non-planner role at Fable without one of the four reasons in `TIERS.md` § Fable outside planning; escalate a
   planner past `fable/high`, or to it for size, "complex" or momentum, without the user's request; run a tier `TIERS.md` § Tier table doesn't list for the role without the user's request;
   give Haiku a step that fails its gate.

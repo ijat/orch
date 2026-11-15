@@ -241,7 +241,7 @@ run, plus a fix pass). So Haiku gets only the steps its gate admits.
 | `words` | words in the step's `do` + `contract` + `done when` + its verification lines | the step |
 | `extras` | the step has `sketch:` or `visual:`, or adds flaky-prone tests (async, timer, concurrency, browser) | the step |
 | `urgent` | the user is waiting on this step or said it is urgent | conversation |
-| `caps` | user caps (no Haiku / no Opus / Sonnet only / no Fable / an effort ceiling), and repo-lesson caps such as "no cheaper tiers" | conversation, `LESSONS.md` |
+| `caps` | user caps (no Haiku / no Opus / Sonnet only / no Fable / an effort ceiling), and repo-lesson caps such as "no cheaper tiers" | conversation, the lessons (`LESSONS.md` index) |
 | `usage` | `orch usage` state and the 7d % | pre-flight |
 
 Not used: repo size (Haiku was clean on the 1,260-file R3 repo and skipped items on 187–284-file

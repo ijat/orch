@@ -291,6 +291,22 @@ class TestPromote(LessonBase):
         self.refuse(1, "lessons", "promote", "global/" + name, "--to", "x")     # no longer open (it is archived)
 
 
+class TestTemplate(unittest.TestCase):
+    def test_the_template_is_a_lesson_with_every_required_field(self):
+        path = os.path.join(HERE, "..", "..", "plugin", "skills", "orchestrate", "templates", "lesson.md")
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        l = ls.parse_lesson(path, text)
+        self.assertEqual(l.title, "<short title>")
+        for field in ls.REQUIRED:
+            self.assertIsNotNone(l.get(field), field)
+        self.assertEqual([k for k, _ in l.fields if k in ("task", "what happened", "what was actually true")],
+                         ["task", "what happened", "what was actually true"])
+        skill = open(os.path.join(HERE, "..", "..", "plugin", "skills", "orchestrate", "SKILL.md"), encoding="utf-8").read()
+        for phrase in ("orch lessons add", "orch lessons promote", "at most 200 characters", "templates/lesson.md"):
+            self.assertIn(phrase, skill)
+
+
 class TestIndexCommand(LessonBase):
     def test_all_scopes_or_one(self):
         self.add()
