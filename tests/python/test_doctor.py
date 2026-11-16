@@ -232,7 +232,7 @@ class TestIndex(DoctorBase):
             onpath = make_exec(os.path.join(self.tmp, "pathbin", "orch-index"))
             real = make_exec(os.path.join(self.tmp, "real", "x"))
             env = {"PATH": os.path.dirname(onpath), "ORCH_INDEX_REAL": real}
-            with mock.patch.dict(os.environ, env):
+            with mock.patch.dict(os.environ, dict(self.env, **env)):
                 self.assertEqual(doctor.find_index(), (real, "ORCH_INDEX_REAL"))
                 os.environ["ORCH_INDEX_REAL"] = os.path.join(self.tmp, "absent")
                 self.assertEqual(doctor.find_index(), (bundled, "bundled"))
@@ -244,7 +244,7 @@ class TestIndex(DoctorBase):
 
     def test_the_launcher_own_folder_on_path_is_skipped(self):
         make_exec(os.path.join(self.bin, "orch-index"))
-        with mock.patch.dict(os.environ, {"PATH": self.bin, "ORCH_INDEX_REAL": ""}), \
+        with mock.patch.dict(os.environ, dict(self.env, PATH=self.bin, ORCH_INDEX_REAL="")), \
                 mock.patch.object(doctor, "index_target", return_value=""):
             self.assertIsNone(doctor.find_index())
 
@@ -252,7 +252,7 @@ class TestIndex(DoctorBase):
         path = os.path.join(self.tmp, "real", "orch-index")
         make_exec(path)
         os.chmod(path, 0o644)
-        with mock.patch.dict(os.environ, {"ORCH_INDEX_REAL": path, "PATH": self.gitbin}), \
+        with mock.patch.dict(os.environ, dict(self.env, ORCH_INDEX_REAL=path, PATH=self.gitbin)), \
                 mock.patch.object(doctor, "index_target", return_value=""):
             self.assertIsNone(doctor.find_index())
 
@@ -260,7 +260,7 @@ class TestIndex(DoctorBase):
         target = "x86_64-pc-windows-msvc"
         bundled = make_exec(os.path.join(self.bin, "vendor", "orch-index-%s.exe" % target))
         make_exec(os.path.join(self.bin, "vendor", "orch-index-%s" % target))     # the wrong name is never picked
-        with mock.patch.dict(os.environ, {"ORCH_INDEX_REAL": "", "PATH": self.gitbin}), \
+        with mock.patch.dict(os.environ, dict(self.env, ORCH_INDEX_REAL="", PATH=self.gitbin)), \
                 mock.patch.object(os, "name", "nt"):
             self.assertEqual(doctor.index_target(), target)
             self.assertEqual(doctor.find_index(), (bundled, "bundled"))
@@ -770,20 +770,24 @@ class TestFix(DoctorBase):
         self.assertTrue(os.path.exists(path))
 
     def test_the_fixers_refuse_a_path_outside_the_scope_even_when_called_directly(self):
-        with mock.patch.dict(os.environ, {"ORCH_DATA": "", "ORCH_DIR": self.scratch_tasks()}):
+        with mock.patch.dict(os.environ, dict(self.env, ORCH_DATA="", ORCH_DIR=self.scratch_tasks())):
+            self.assertEqual(os.path.expanduser("~"), self.home)   # the temp home: never the real ~/.claude
             result, detail = doctor.fix_data_folders(None)
             self.assertEqual(result, "done")                       # only ORCH_DIR's tasks folder
+            for name in ("orch-data", "logs", "cache"):            # the temp home's data folders are named as left alone
+                self.assertIn(name, detail.split("left alone")[1])
             self.assertEqual(doctor.fix_index_binary(None)[0], "skipped")
+        self.assertTrue(os.path.isdir(self.scratch_tasks()))
         self.assertFalse(os.path.exists(self.data))
 
     def test_the_installed_copy_may_write_anywhere_orch_owns(self):
         self.live_copy()
-        with mock.patch.dict(os.environ, {"ORCH_DATA": "", "ORCH_DIR": ""}):
+        with mock.patch.dict(os.environ, dict(self.env, ORCH_DATA="", ORCH_DIR="")):
             self.assertTrue(doctor.fix_scope_allows(os.path.join(self.tmp, "anywhere")))
 
     def test_scope_is_exact_not_a_prefix_match(self):
         sibling = self.scratch_tasks() + "-other"
-        with mock.patch.dict(os.environ, {"ORCH_DATA": "", "ORCH_DIR": self.scratch_tasks()}):
+        with mock.patch.dict(os.environ, dict(self.env, ORCH_DATA="", ORCH_DIR=self.scratch_tasks())):
             self.assertTrue(doctor.fix_scope_allows(self.scratch_tasks()))
             self.assertTrue(doctor.fix_scope_allows(os.path.join(self.scratch_tasks(), "sub")))
             self.assertFalse(doctor.fix_scope_allows(sibling))

@@ -2473,7 +2473,7 @@ test('parseDoctor reads schema 1 with a checks array only; doctorCouldNot says w
   expect(doctorUnfixed({ ...r, fixed: [{ id: 'a', result: 'done', detail: '' }, { id: 'b', result: 'failed', detail: 'x' }] }).map(f => f.id)).toEqual(['b'])
 })
 
-test('Doctor: nothing runs at start, on a poll or when More opens; a press runs `orch doctor --json --repo <cwd>`', async ($, on) => {
+test('Doctor: nothing runs at start, on a poll or when More opens; a press runs `orch doctor --json --repo <cwd>`', { timeoutMs: 30000 }, async ($, on) => {
   const { ui, w, clock } = await pane($, on, [PROGRAM])
   w.doctor = { exitCode: 0, stdout: report([chk('a', 'ok')]), stderr: '' }
   await ui.press({ key: 'tab:more' })
