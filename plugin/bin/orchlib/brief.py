@@ -1143,12 +1143,12 @@ def cmd_brief_review(ns, c, reviewer):
 # -- fix -----------------------------------------------------------------------------------------
 
 def finding_blocks(path, wanted, security=False):
-    """{id: verbatim finding block}, {id: [round-note texts]} and {id: Finding} from a review file (the parser
-    `orch findings` uses)."""
+    """{id: verbatim finding block}, {id: [round-note texts]}, {id: Finding} and the parsed file, from a review file (the
+    parser `orch findings` uses)."""
     parsed = fd.parse(path, security, lenient_heads=True)     # the old reader's headings: `### F1: x` still names a finding here
     objs = dict((f.id, f) for f in parsed.findings if f.id in wanted)
     found = dict((i, f.block) for i, f in objs.items())
-    return found, dict((w, list(parsed.notes.get(w, []))) for w in wanted), objs
+    return found, dict((w, list(parsed.notes.get(w, []))) for w in wanted), objs, parsed
 
 
 def is_optional(f):
@@ -1195,7 +1195,7 @@ def cmd_brief_fix(ns, c):
         if not FIX_ID_RE.match(w):
             raise OrchError("bad finding id %r (F<n> for review.md, S<n> for security-review.md)" % w, 1)
     wanted = list(dict.fromkeys(wanted))
-    blocks, notes, objs = {}, {}, {}
+    blocks, notes, objs, code_parsed = {}, {}, {}, None
     for prefix, fname in (("F", "review.md"), ("S", "security-review.md")):
         ids = [w for w in wanted if w.startswith(prefix)]
         if not ids:
@@ -1203,7 +1203,9 @@ def cmd_brief_fix(ns, c):
         path = os.path.join(c.review_dir, fname)
         if not os.path.isfile(path):
             raise OrchError("%s not found (needed for %s)" % (path, ", ".join(ids)), 1)
-        b, n, o = finding_blocks(path, ids, prefix == "S")
+        b, n, o, parsed = finding_blocks(path, ids, prefix == "S")
+        if prefix == "F":
+            code_parsed = parsed
         blocks.update(b)
         notes.update(n)
         objs.update(o)
@@ -1217,6 +1219,8 @@ def cmd_brief_fix(ns, c):
         text_blocks.append(blocks[w] + ("\n\n" + "\n\n".join(notes[w]) if notes[w] else ""))
     findings_text = "\n\n".join(text_blocks)
     repeats = class_repeat_lines(c, wanted)
+    route = fd.cycle_route(code_parsed, wanted) if code_parsed is not None else None
+    route_line = "cycle route: %s" % fd.cycle_route_text(route) if route else None
     plan = c.plan
     steps = []
     repo = c.repo_path if c.repo_path != "unknown" else None
@@ -1240,6 +1244,8 @@ def cmd_brief_fix(ns, c):
     out.append(section("Checkpoint commands", checkpoint_text(c, role, "fix round %d" % rnd, "fix round %d" % rnd)))
     if repeats:
         out.append(section("Class repeat (a recommendation; TIERS.md § Fix rounds)", "\n".join(repeats)))
+    if route_line:
+        out.append(section("Cycle route (TIERS.md \u00a7 Fix rounds)", route_line[len("cycle route: "):]))
     out.append(section("Findings to fix (verbatim; record each resolution with %s finding resolve <id>)" % orch_head(c), findings_text))
     out.append(section("Steps whose files the findings cite", rel_fields(c, "\n\n".join(s.text() for s in steps)) if steps else
                        ("(legacy plan: read the Steps section of %s)" % c.plan_path if plan.legacy else "")))
@@ -1253,6 +1259,8 @@ def cmd_brief_fix(ns, c):
         emit(path, text, c.plan_size, ns, "fix")
     for line in repeats:
         print(line)
+    if route_line:
+        print(route_line)
     return 0
 
 

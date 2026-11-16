@@ -1739,6 +1739,70 @@ class TestFixBrief(BriefBase):
     def put_optional_security(self):
         wr(os.path.join(self.d, "security-review.md"), self.SECURITY_OPT.replace("@R@", self.repo))
 
+    CHECKED = ("# Code review: add-login\n\n## Findings\n\n"
+               "### F1 — hashing is unsalted\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/auth.py:12\n\n"
+               "### F3 — redirect loop\n- severity: blocker\n- origin: introduced\n- file: @R@/src/views.py:40\n\n"
+               "## Check of round 1\n\n- F1: not fixed — the salt is a constant.\n- F3: resolved\n\n"
+               "### F4 — log line misspelt\n- severity: should-fix\n- origin: introduced\n- cause: other\n- file: @R@/src/auth.py:30\n\n"
+               "### F5 — fix broke the import\n- severity: should-fix\n- origin: introduced\n- cause: from-fix\n- file: @R@/src/auth.py:31\n\n"
+               "### F6 — second old problem\n- severity: should-fix\n- origin: introduced\n- cause: other\n- file: @R@/src/views.py:50\n\n"
+               "### F7 — no label\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/views.py:51\n")
+
+    def put_checked(self):
+        wr(os.path.join(self.d, "review.md"), self.CHECKED.replace("@R@", self.repo))
+
+    def route(self, *ids):
+        _, text = self.brief("fix", "2", "--findings", ",".join(ids))
+        return text, self.last_out
+
+    def test_every_open_item_cause_other_stays_and_resumes_the_implementer(self):
+        self.put_checked()
+        text, out = self.route("F4", "F6")
+        route = sec(text, "Cycle route")
+        self.assertTrue(route.startswith("stay: every open item is cause: other (F4, F6)"), route)
+        self.assertIn("orch spawn implementer --reused", route)
+        self.assertIn("cycle route: stay:", out)
+
+    def test_a_from_fix_finding_climbs(self):
+        self.put_checked()
+        text, out = self.route("F4", "F5")
+        route = sec(text, "Cycle route")
+        self.assertTrue(route.startswith("climb: raise one rung"), route)
+        self.assertIn("F5 cause: from-fix", route)
+        self.assertNotIn("F4", route)
+        self.assertIn("cycle route: climb:", out)
+
+    def test_a_routed_finding_still_open_after_a_check_climbs(self):
+        self.put_checked()
+        route = sec(self.route("F1", "F4")[0], "Cycle route")
+        self.assertIn("F1 is a routed finding still open after a check", route)
+        self.assertTrue(route.startswith("climb"), route)
+
+    def test_a_missing_cause_reads_as_from_fix(self):
+        self.put_checked()
+        route = sec(self.route("F6", "F7")[0], "Cycle route")
+        self.assertTrue(route.startswith("climb"), route)
+        self.assertIn("F7 has no cause: (reads from-fix)", route)
+
+    def test_a_security_id_beside_check_findings_climbs(self):
+        self.put_checked()
+        route = sec(self.route("F4", "S1")[0], "Cycle route")
+        self.assertIn("S1 is a security finding", route)
+
+    def test_findings_of_a_full_round_get_no_cycle_route(self):
+        # cycle 1: the round's findings, no check raised or judged any of them
+        text, out = self.brief("fix", "1", "--findings", "F1,F3")
+        self.assertNotIn("Cycle route", text)
+        self.assertNotIn("cycle route", out)
+        self.put_checked()
+        text, out = self.brief("fix", "1", "--findings", "F3")        # F3 is closed by the check: nothing open to weigh
+        self.assertNotIn("cycle route", out)
+
+    def test_class_repeat_lines_are_unchanged_beside_a_route(self):
+        self.put_checked()
+        text, out = self.route("F4", "F6")
+        self.assertNotIn("class repeat", out)
+
     def test_a_list_of_only_nits_is_refused_and_names_the_follow_up_route(self):
         err = self.refused(2, "fix", "1", "--findings", "F2")
         self.assertIn("every selected finding (F2) is a nit", err)

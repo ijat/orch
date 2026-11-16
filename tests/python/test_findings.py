@@ -490,6 +490,43 @@ class TestFindingClass(ReviewBase):
         self.assertEqual(fd.finding_rounds(p), {"F1": 1, "F2": 1})
 
 
+class TestCause(ReviewBase):
+    TEXT = ("### F1 — a\n- severity: should-fix\n- origin: introduced\n- file: a:1\n\n"
+            "## Check of round 1\n\n- F1: not fixed — x\n\n"
+            "### F2 — b\n- severity: should-fix\n- origin: introduced\n- file: a:2\n- cause: Other\n\n"
+            "### F3 — c\n- severity: should-fix\n- origin: introduced\n- file: a:3\n- cause: maybe\n\n"
+            "### F4 — d\n- severity: should-fix\n- origin: introduced\n- file: a:4\n")
+
+    def test_cause_in_check_and_status_in_check_are_read(self):
+        p = fd.parse_text(self.TEXT)
+        got = [(f.id, f.cause, f.in_check, f.phrase_in_check) for f in p.findings]
+        self.assertEqual(got, [("F1", None, False, True), ("F2", "other", True, False),
+                               ("F3", None, True, False), ("F4", None, True, False)])
+
+    def test_old_files_have_no_cause_and_no_check_origin(self):
+        p = fd.parse_text(fixture("rounds.md"))
+        self.assertTrue(all(f.cause is None and f.cause_raw is None for f in p.findings))
+        self.assertFalse(any(f.in_check for f in p.findings))
+        full = fd.parse_text(block("F1") + "\n" + block("F2") + "\n## Round 2\n\n- F1: still open — x\n")
+        self.assertIsNone(fd.cycle_route(full, ["F1", "F2"]))               # no check involved: routed as always
+
+    def test_route_verdicts(self):
+        p = fd.parse_text(self.TEXT)
+        self.assertEqual(fd.cycle_route(p, ["F2"]), ("stay", ["every open item is cause: other (F2)"]))
+        v, why = fd.cycle_route(p, ["F2", "F4"])
+        self.assertEqual(v, "climb")
+        self.assertEqual(why, ["F4 has no cause: (reads from-fix)"])
+        self.assertEqual(fd.cycle_route(p, ["F1", "F2"])[0], "climb")
+        self.assertEqual(fd.cycle_route(p, ["F3"])[0], "climb")                # an unreadable cause reads as from-fix
+
+    def test_a_bad_cause_is_reported_when_written(self):
+        rc, _, err = self.write_review("### F1 — x\n- severity: nit\n- origin: introduced\n- file: a:1\n- cause: maybe\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("`- cause:` must be from-fix or other", err)
+        rc, _, err = self.write_review("### F1 — x\n- severity: nit\n- origin: introduced\n- file: a:1\n- cause: other\n")
+        self.assertEqual(rc, 0, err)
+
+
 class TestOptionalSecurityLow(ReviewBase):
     SEC = ("# Security review: add-login\n\n## Findings\n\n"
            "### S1 — hardening\n- severity: low\n- file: src/a.py:1\n- fix: optional\n- resolution:\n\n"
