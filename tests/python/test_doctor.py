@@ -41,7 +41,8 @@ def make_exec(path, text="#!/bin/sh\nexit 0\n"):
 
 
 def git(repo, *args):
-    subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+    subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+                   "-c", "maintenance.auto=false", "-c", "gc.auto=0"]
                    + list(args), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -95,7 +96,8 @@ class DoctorBase(core.Base):
         rep, _ = self.doctor(repo, env)
         return next(c for c in rep["checks"] if c["id"] == check_id)
 
-    def write_task(self, repo, slug, state="implementing", repo_path="", worktree="", age_days=0, state_line=True):
+    def write_task(self, repo, slug, state="implementing", repo_path="", worktree="", age_days=0, state_line=True,
+                   raw=None):
         d = self.tdir(repo, slug)
         os.makedirs(d, exist_ok=True)
         lines = ["# Status: %s" % slug, ""]
@@ -103,8 +105,8 @@ class DoctorBase(core.Base):
             lines.append("- task_state: %s" % state)
         lines += ["- repo: %s" % repo_path, "- worktree: %s" % worktree, ""]
         sf = os.path.join(d, "status.md")
-        with open(sf, "w") as fh:
-            fh.write("\n".join(lines))
+        with open(sf, "wb") as fh:
+            fh.write(raw if raw is not None else "\n".join(lines).encode("utf-8"))
         if age_days:
             t = time.time() - age_days * 86400
             os.utime(sf, (t, t))
@@ -153,7 +155,7 @@ class TestReport(DoctorBase):
         self.assertEqual(rep["counts"]["fail"], 0, rep["checks"])
         self.assertGreater(rep["counts"]["warn"], 0)       # the dev copy and the missing usage log
         self.assertEqual(rc, 0)
-        self.write_task("myapp", "broken", state_line=False)
+        self.write_task("myapp", "broken", raw=b"\xff\xfe not utf-8")
         rep, rc = self.doctor()
         self.assertEqual(rc, 2)
         self.assertEqual(self.check("tasks.parse")["status"], "fail")
@@ -308,6 +310,21 @@ class TestIndex(DoctorBase):
             self.assertIn(state, c["detail"])
             self.assertIn("orch:graph", c["fix"]["text"])
 
+    def test_state_and_marker_check_the_main_checkout_from_a_linked_worktree(self):
+        repo = self.make_repo()
+        wt = os.path.join(self.tmp, "linked")
+        git(repo, "worktree", "add", "-q", "-b", "side", wt)
+        self.fake_index(fake_status='{"schema":1,"state":"stale"}')
+        c = self.check("index.state", wt)
+        self.assertEqual(c["status"], "warn")
+        self.assertIn("main checkout %s" % repo, c["detail"])
+        self.assertIn("--repo %s" % repo, c["fix"]["text"])
+        self.assertNotIn("linked", c["fix"]["text"])
+        self.marker(repo, "pid=%d\n" % self.dead_pid())
+        c = self.check("index.marker", wt)
+        self.assertEqual(c["status"], "warn")
+        self.assertIn("main checkout %s" % repo, c["detail"])
+
     def test_state_unusable_answer_warns(self):
         repo = self.make_repo()
         self.fake_index(fake_status="not json", fake_rc="1")
@@ -417,6 +434,7 @@ class TestInstall(DoctorBase):
         c = self.check("install.pointer")
         self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "manual"))      # a development copy cannot move it
         self.assertIn("not the installed copy", c["detail"])
+        self.assertIn("start a new session or run /reload-plugins; the pointer moves at SessionStart", c["fix"]["text"])
 
     @unittest.skipUnless(POSIX, "symlinks")
     def test_pointer_dangling_or_missing_warns_and_is_auto_only_for_the_live_copy(self):
@@ -550,13 +568,20 @@ class TestSettings(DoctorBase):
 
 
 class TestTasks(DoctorBase):
-    def test_parse_ok_and_fail_listing_the_folders(self):
+    def test_parse_an_old_format_status_is_counted_never_a_problem(self):
         self.write_task("myapp", "good")
-        self.assertEqual(self.check("tasks.parse")["status"], "ok")
+        c = self.check("tasks.parse")
+        self.assertEqual((c["status"], c["detail"]), ("ok", "1 task folders read (0 old-format)"))
         self.write_task("myapp", "no-state", state_line=False)
         c = self.check("tasks.parse")
-        self.assertEqual(c["status"], "fail")
-        self.assertIn("myapp/no-state", c["detail"])
+        self.assertEqual((c["status"], c["detail"]), ("ok", "2 task folders read (1 old-format)"))
+
+    def test_parse_an_undecodable_status_fails_listing_the_folder(self):
+        self.write_task("myapp", "good")
+        self.write_task("myapp", "garbled", raw=b"- task_state: implementing\n\xff\xfe\n")
+        c = self.check("tasks.parse")
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("fail", "manual"))
+        self.assertIn("myapp/garbled", c["detail"])
         self.assertNotIn("myapp/good", c["detail"])
 
     @unittest.skipUnless(POSIX and hasattr(os, "geteuid") and os.geteuid() != 0, "needs a non-root POSIX user")

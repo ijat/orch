@@ -202,12 +202,17 @@ class Ctx(object):
         self.repo = os.path.realpath(top) if top else None
         self.main_root = None
         self.common_dir = None
+        self.index_repo = None      # the main checkout: the index lives in its common dir, and only it is rebuilt
         if self.repo:
             out = git(self.repo, "worktree", "list", "--porcelain") or ""
             first = re.search(r"^worktree (.+)$", out, re.M)
             self.main_root = os.path.realpath(first.group(1)) if first else self.repo
             common = git(self.repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
             self.common_dir = common or None
+            if common and os.path.basename(os.path.normpath(common)) == ".git":
+                self.index_repo = os.path.realpath(os.path.dirname(os.path.normpath(common)))
+            else:
+                self.index_repo = self.repo
         self._index = False
         self._tasks = None
 
@@ -227,10 +232,12 @@ class Ctx(object):
                 row = {"dir": d, "name": "%s/%s" % (repo, slug), "readable": True, "has_state": False, "state": None,
                        "repo_path": None, "worktree": "", "mtime": 0.0}
                 try:
+                    with open(sf, "rb") as fh:
+                        fh.read().decode("utf-8")           # a status.md that cannot be decoded is unreadable
                     text = st.read_text_like_index(sf)
                     mtimes = [os.path.getmtime(p) for p in (sf, os.path.join(d, "log.md")) if os.path.exists(p)]
                     row["mtime"] = max(mtimes)
-                except OSError:
+                except (OSError, UnicodeDecodeError):
                     row["readable"] = False
                     rows.append(row)
                     continue
@@ -318,7 +325,7 @@ def check_index_state(ctx):
     found = ctx.index()
     if not found:
         return warn("not checked: no orch-index binary", "none")
-    res = run_cmd([found[0], "status", "--json", "--repo", ctx.repo])
+    res = run_cmd([found[0], "status", "--json", "--repo", ctx.index_repo])
     data = None
     if res is not None:
         try:
@@ -327,14 +334,16 @@ def check_index_state(ctx):
             data = None
     if not isinstance(data, dict) or not isinstance(data.get("state"), str):
         return warn("orch-index status gave no usable answer for this repo", "manual",
-                    "run `orch-index status --json --repo %s` and read its error" % ctx.repo)
+                    "run `orch-index status --json --repo %s` and read its error" % ctx.index_repo)
     state = data["state"]
+    where = "main checkout %s" % tilde(ctx.index_repo)
     if state == "current":
-        return ok("current")
+        return ok("current (%s)" % where)
     behind = data.get("commits_behind")
     extra = " (%d commits behind)" % behind if isinstance(behind, int) and behind > 0 else ""
     running = " (a rebuild is running)" if data.get("indexing") is True else ""
-    return warn("%s%s%s" % (state, extra, running), "manual", "ask orch:graph, or run `orch-index index --repo %s`" % ctx.repo)
+    return warn("%s%s%s (%s)" % (state, extra, running, where), "manual",
+                "ask orch:graph, or run `orch-index index --repo %s`" % ctx.index_repo)
 
 
 def check_index_marker(ctx):
@@ -346,10 +355,11 @@ def check_index_marker(ctx):
     pid, age = read_marker(marker)
     if marker_is_live(pid, age):
         return ok("a rebuild is running%s" % (" (pid %d)" % pid if pid else ""))
+    where = "main checkout %s" % tilde(ctx.index_repo)
     text = "remove the dead indexing marker %s" % tilde(marker)
     if writes_allowed():
-        return warn("dead indexing marker (no rebuild runs)", "auto", text)
-    return warn("dead indexing marker (no rebuild runs)", "manual", text)
+        return warn("dead indexing marker, no rebuild runs (%s)" % where, "auto", text)
+    return warn("dead indexing marker, no rebuild runs (%s)" % where, "manual", text)
 
 
 # ---- install checks ------------------------------------------------------------------------------------------------
@@ -384,6 +394,8 @@ def check_install_pointer(ctx):
     text = "point %s at %s" % (tilde(link), tilde(own))
     if is_live() and (not listed or own in listed):
         return warn(what, "auto", text)
+    if exists:
+        return warn(what, "manual", "start a new session or run /reload-plugins; the pointer moves at SessionStart")
     return warn(what, "manual", "start a new Claude Code session (its start-up hook moves the pointer), or run "
                                 "`orch session-start <plugin root>` from the installed copy")
 
@@ -491,11 +503,12 @@ def _ago(seconds):
 
 def check_tasks_parse(ctx):
     tasks = ctx.tasks()
-    bad = [t["name"] for t in tasks if not t["readable"] or not t["has_state"]]
+    bad = [t["name"] for t in tasks if not t["readable"]]
     if bad:
-        return fail("no readable task_state in: %s" % short_list(bad), "manual",
-                    "open each status.md and restore its `- task_state:` line (see the status template)")
-    return ok("%d task folders read" % len(tasks))
+        return fail("status.md cannot be read in: %s" % short_list(bad), "manual",
+                    "check the file's permissions and that it is UTF-8 text")
+    old = sum(1 for t in tasks if not t["has_state"])      # old format (no task_state line): works as it is
+    return ok("%d task folders read (%d old-format)" % (len(tasks), old))
 
 
 def active(tasks):
