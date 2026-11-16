@@ -123,6 +123,55 @@ def tracked_changes(path):
     return "%d changed tracked path(s)" % len([l for l in r.out.splitlines() if l.strip()]) if r.out.strip() else None
 
 
+def glob_re(glob):
+    """Regex of one docs-only glob: `**/` any directories (or none), `**` anything, `*` and `?` within one path part."""
+    out, i = [], 0
+    while i < len(glob):
+        if glob.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif glob.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif glob[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif glob[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(glob[i]))
+            i += 1
+    return re.compile("^" + "".join(out) + "$")
+
+
+def docs_only_since(repo, from_sha, to_sha, globs):
+    """(True, [paths]) when `from_sha` is a proper ancestor of `to_sha` and every path changed between them (both
+    sides of a rename, so rename detection is off) matches one of `globs`; else (False, why). Off (`globs` empty),
+    a failing git call, a non-ancestor and an empty range are all False."""
+    if not globs:
+        return False, "docs-only is off in policy.md"
+    if not (isinstance(from_sha, str) and isinstance(to_sha, str)
+            and HEX_RE.match(from_sha.lower()) and HEX_RE.match(to_sha.lower())):
+        return False, "no full sha to compare"
+    a, b = from_sha.lower(), to_sha.lower()
+    if a == b:
+        return False, "no commits since %s" % a[:9]
+    if not git(repo, "merge-base", "--is-ancestor", a, b).ok:
+        return False, "%s is not an ancestor of %s" % (a[:9], b[:9])
+    r = git(repo, "diff", "--name-only", "--no-renames", "-z", a, b)
+    if not r.ok:
+        return False, "git diff failed: %s" % first_lines(r, 1)
+    paths = [p for p in r.out.split("\0") if p]
+    if not paths:
+        return False, "no changed paths since %s" % a[:9]
+    pats = [glob_re(g) for g in globs]
+    miss = [p for p in paths if not any(pt.match(p) for pt in pats)]
+    if miss:
+        return False, "not docs-only: %s%s" % (", ".join(miss[:3]), " (+%d more)" % (len(miss) - 3) if len(miss) > 3 else "")
+    return True, paths
+
+
 def bad_ref(name):
     if not name or name in ("unknown", "none"):
         return "empty or unknown"

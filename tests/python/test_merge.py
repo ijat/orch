@@ -279,12 +279,31 @@ class TestPolicy(GitBase):
         os.makedirs(os.path.join(self.root, "myapp", "policy.md"))   # a directory where the file should be
         self.assertEqual(policy.read_policy(self.d).merge, "ask")
 
+    def test_docs_only_default_none_globs_and_fail_closed_values(self):
+        self.setup_task()
+        D = policy.DOCS_ONLY_DEFAULT
+        self.assertEqual(policy.read_policy(self.d).docs_only, D)                 # no file
+        cases = [("- merge: auto\n", D), ("- docs-only: default\n", D), ("- docs-only: none\n", ()),
+                 ("- docs-only: docs/**/*.md, NOTES.md\n", ("docs/**/*.md", "NOTES.md")),
+                 ("- docs-only: default\n- docs-only: none\n", ()),                  # any none wins
+                 ("- docs-only: default | none | <comma-separated globs>\n", ()),     # unedited template text
+                 ("- docs-only:\n", ()), ("- docs-only: docs/*.md,\n", ()),
+                 ("- docs-only: /etc/*.md\n", ()), ("- docs-only: ../x.md\n", ()),
+                 ("<!-- - docs-only: none -->\n", D)]
+        for text, want in cases:
+            self.policy_file(text)
+            self.assertEqual(policy.read_policy(self.d).docs_only, want, text)
+        os.remove(os.path.join(self.root, "myapp", "policy.md"))
+        os.makedirs(os.path.join(self.root, "myapp", "policy.md"))                   # unreadable: merge asks, docs-only off
+        self.assertEqual(policy.read_policy(self.d).docs_only, ())
+
     def test_template_matches_the_contract(self):
         path = os.path.join(core.BIN, "..", "skills", "orchestrate", "templates", "policy.md")
         text = rd(path)
         self.assertTrue(text.startswith("# Policy: <repo-name>\n"))
         self.assertIn("- merge: auto | ask\n", text)
         self.assertIn("- security: rule | always | ask\n", text)
+        self.assertIn("- docs-only: default | none | <comma-separated globs>\n", text)
         self.assertEqual(text.count("<!--"), 1)
         self.assertIn("absent file means `merge: auto` and `security: rule`", text)
 
@@ -305,6 +324,67 @@ class TestPolicy(GitBase):
         with open(os.path.join(other, "policy.md"), "w") as fh:
             fh.write("- merge: ask\n")
         self.merge_ok("--check", "--recheck-ok")
+
+
+class TestDocsOnlySince(GitBase):
+    def setUp(self):
+        GitBase.setUp(self)
+        self.init_repo(self.repo)
+        self.base = self.git(self.repo, "rev-parse", "HEAD")
+
+    def sub(self, name, text="x\n"):
+        os.makedirs(os.path.dirname(os.path.join(self.repo, name)) or self.repo, exist_ok=True)
+        return self.commit(self.repo, name, text)
+
+    def since(self, globs=policy.DOCS_ONLY_DEFAULT, a=None, b=None):
+        return merge.docs_only_since(self.repo, a or self.base, b or self.git(self.repo, "rev-parse", "HEAD"), globs)
+
+    def test_default_globs_accept_docs_and_root_state_files(self):
+        self.sub("docs/a/b.md")
+        self.sub("STATE.md")
+        self.sub("docs/c.md")
+        ok, paths = self.since()
+        self.assertTrue(ok, paths)
+        self.assertEqual(sorted(paths), ["STATE.md", "docs/a/b.md", "docs/c.md"])
+
+    def test_a_path_outside_the_globs_rejects_the_range(self):
+        for name in ("README.md", "src/x.rs", "sub/STATE.md", "docs/x.txt", "docs-extra/a.md"):
+            base = self.git(self.repo, "rev-parse", "HEAD")
+            self.sub("docs/ok-%s.md" % name.replace("/", "-"))
+            tip = self.sub(name)
+            ok, why = self.since(a=base, b=tip)
+            self.assertFalse(ok, name)
+            self.assertIn(name, why)
+
+    def test_a_rename_into_docs_is_rejected_for_the_old_path(self):
+        self.sub("src/a.md")
+        base = self.git(self.repo, "rev-parse", "HEAD")
+        os.makedirs(os.path.join(self.repo, "docs"))
+        self.git(self.repo, "mv", "src/a.md", "docs/a.md")
+        self.git(self.repo, "commit", "-q", "-m", "move")
+        ok, why = self.since(a=base)
+        self.assertFalse(ok)
+        self.assertIn("src/a.md", why)
+
+    def test_off_non_ancestor_empty_and_git_failure_are_false(self):
+        tip = self.sub("docs/a.md")
+        self.assertEqual(merge.docs_only_since(self.repo, self.base, tip, ())[0], False)      # none
+        self.assertFalse(self.since(a=tip, b=tip)[0])                                         # empty range
+        self.assertFalse(self.since(a=tip, b=self.base)[0])                                   # backwards: not an ancestor
+        self.git(self.repo, "checkout", "-q", "-b", "side", self.base)
+        side = self.sub("docs/side.md")
+        self.assertFalse(self.since(a=side, b=tip)[0])                                        # diverged
+        self.assertFalse(self.since(a="0" * 40, b=tip)[0])                                    # unknown commit
+        self.assertFalse(self.since(a="abc", b=tip)[0])                                       # not a full sha
+        self.assertFalse(merge.docs_only_since(self.repo, None, tip, policy.DOCS_ONLY_DEFAULT)[0])
+        self.assertFalse(merge.docs_only_since(os.path.join(self.tmp, "nope"), self.base, tip,
+                                               policy.DOCS_ONLY_DEFAULT)[0])                  # git fails
+
+    def test_custom_globs_and_double_star_nesting(self):
+        self.sub("notes/a/b/c.txt")
+        self.assertTrue(self.since(("notes/**",))[0])
+        self.assertTrue(self.since(("notes/**/*.txt",))[0])
+        self.assertFalse(self.since(("notes/*.txt",))[0])                                      # one level only
 
 
 class TestMergeAndCleanup(GitBase):
