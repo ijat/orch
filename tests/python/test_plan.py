@@ -549,6 +549,92 @@ class TestPlanCheckCommand(core.Base):
         self.assertIn("WARN only 1 milestone(s) \u2014 consider a single plan", r.stdout)
         self.assertNotIn("neither", r.stdout)
 
+    SPLIT_HEAD = ("# Roadmap\n\n- shape: roadmap \u2014 user asked: \"milestones\"\n\n## Milestones\n\n"
+                  "| M | goal | depends on | mode | tiers | sensitive | review | merge | you | size | confidence | split |\n"
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+
+    def split_check(self, rows, contracts=""):
+        """Run the program checker on a 12-column roadmap; rows are (review, merge, you, size, split) per milestone."""
+        checker = os.path.join(BIN, "orch-program-check.py")
+        body = "".join(f"| {i} | g | {'-' if i == 1 else i - 1} | standard | opus/high | - | {rv} | {mg} | {you} | {sz} | high | {sp} |\n"
+                       for i, (rv, mg, you, sz, sp) in enumerate(rows, 1))
+        text = self.SPLIT_HEAD + body + ("\n## Contracts between milestones\n\n" + contracts if contracts else "")
+        r = subprocess.run([sys.executable, checker, self.write("split/roadmap.md", text)], stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, universal_newlines=True)
+        return r.returncode, [l for l in r.stdout.splitlines() if l.startswith(("FAIL ", "WARN "))]
+
+    def test_program_checker_accepts_valid_split_reasons(self):
+        rc, lines = self.split_check([
+            ("code", "-", "-", "M", "premise: the wire format is only known after M1"),
+            ("code", "yes", "mock", "L", "see: the mock before the UI is built"),
+            ("code", "yes", "-", "M", "ship: the API goes live"),
+            ("code", "yes", "-", "M", "span: the next milestone is too large to review with this one"),
+            ("code", "yes", "-", "L", "-")])
+        self.assertEqual((rc, [l for l in lines if "split" in l]), (0, []), lines)
+
+    def test_program_checker_split_reason_rules(self):
+        base = [("code", "yes", "-", "M", "premise: x"), ("code", "yes", "-", "M", "-")]
+
+        def first(split, row=0, **kw):
+            rows = [list(r) for r in base]
+            rows[row][4] = split
+            for k, v in kw.items():
+                rows[row][{"review": 0, "merge": 1, "you": 2, "size": 3}[k]] = v
+            return self.split_check([tuple(r) for r in rows])
+
+        for bad in ("-", "", "because", "see the mock", "ship", "span:", "premise"):
+            rc, lines = first(bad)
+            self.assertEqual(rc, 1, bad)
+            self.assertTrue(any(l.startswith("FAIL M1:") and "split" in l for l in lines), (bad, lines))
+        rc, lines = first("see: the mock")                           # you = -
+        self.assertEqual(rc, 1); self.assertTrue(any("`you` cell is `-`" in l for l in lines), lines)
+        rc, lines = first("see: the mock", you="mock")
+        self.assertEqual(rc, 0, lines)
+        rc, lines = first("ship: goes live", merge="-", review="skip")   # not a merge point
+        self.assertTrue(any("not a merge point" in l for l in lines), lines)
+        rc, lines = first("span: too big")                              # neither row is L: WARN, not FAIL
+        self.assertEqual(rc, 0)
+        self.assertTrue(any(l.startswith("WARN M1: split `span:`") for l in lines), lines)
+        rc, lines = first("span: too big", size="L")
+        self.assertFalse(any("split" in l for l in lines), lines)
+        rc, lines = first("-", row=1)                                    # last row `-` is fine
+        self.assertFalse(any("(last)" in l for l in lines), lines)
+        rc, lines = first("premise: x", row=1)                          # last row not `-`: WARN
+        self.assertEqual(rc, 0)
+        self.assertTrue(any(l.startswith("WARN M2 (last): split") for l in lines), lines)
+
+    def test_program_checker_premise_contract_must_be_produced_by_the_row(self):
+        contracts = "- C1 (M1 \u2192 M2): the wire format\n"
+        rows = lambda s1: [("code", "yes", "-", "M", s1), ("code", "yes", "-", "M", "-")]
+        self.assertEqual(self.split_check(rows("premise C1"), contracts)[0], 0)
+        self.assertEqual(self.split_check(rows("premise: C1 fixes the format"), contracts)[0], 0)
+        rc, lines = self.split_check(rows("premise C2"), contracts)
+        self.assertEqual(rc, 1)
+        self.assertTrue(any("C2, a contract M1 does not produce" in l for l in lines), lines)
+        rc, lines = self.split_check([("code", "yes", "-", "M", "premise C1"), ("code", "yes", "-", "M", "-")],
+                                     "- C1 (M2 \u2192 M3): other\n")
+        self.assertTrue(any("C1, a contract M1 does not produce" in l for l in lines), lines)
+
+    def test_program_checker_old_header_warns_once_and_skips_split_checks(self):
+        checker = os.path.join(BIN, "orch-program-check.py")
+        head = ("# Roadmap\n\n- shape: roadmap \u2014 user asked: \"milestones\"\n\n## Milestones\n\n| M | goal | depends on | mode | tiers | sensitive | review | merge | you | size | confidence |\n"
+                "|---|---|---|---|---|---|---|---|---|---|---|\n")
+        rows = "".join(f"| {i} | g | {'-' if i == 1 else i - 1} | standard | opus/high | - | code | yes | merge | M | high |\n" for i in (1, 2, 3))
+        r = subprocess.run([sys.executable, checker, self.write("old/roadmap.md", head + rows)], stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, universal_newlines=True)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual([l for l in r.stdout.splitlines() if "split" in l],
+                         ["WARN milestone table has no `split` column \u2014 old format; add it so each milestone names what forces the split"])
+        self.assertTrue(r.stdout.splitlines()[-1].startswith("OK: 3 milestones"), r.stdout)
+
+    def test_roadmap_template_passes_the_header_check(self):
+        checker = os.path.join(BIN, "orch-program-check.py")
+        tpl = os.path.join(BIN, "..", "skills", "orchestrate", "templates", "roadmap.md")
+        r = subprocess.run([sys.executable, checker, tpl], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        self.assertNotIn("header must be", r.stdout)
+        self.assertNotIn("no `split` column", r.stdout)
+        self.assertNotIn("split", "".join(l for l in r.stdout.splitlines() if l.startswith("FAIL")))
+
     def test_main_restores_argv(self):
         saved = list(sys.argv)
         with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
