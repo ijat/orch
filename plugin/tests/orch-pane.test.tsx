@@ -6,12 +6,12 @@ import {
   agentPalette, agentPct, agentPctTail, askContext, barCells, barLayout, countTail, fold, goalLine, hhmm, idleMinutes, isStale, lastActivity, lineText, mdLite,
   bytesText, indexCandidates, indexDetails, indexHeadline, indexLook, indexTarget, overallTail, parseIndex, placeText, plainInput, scopeLabel, shimmer,
   sortByAttention, splitScope, isMine, spawnOf, sparkline, stepsTail, textKey,
-  MEMORY_PROMPT, WAKE_TEXT, memoryStateOf, acceptable, answerOf, answersArgv, autoPairs, historyRows, isCritical, mergeOrder, metaText, nextInQueue, optionNote,
+  MEMORY_PROMPT, WAKE_TEXT, doctorAutoCount, doctorCouldNot, doctorProblems, doctorUnfixed, memoryStateOf, parseDoctor, acceptable, answerOf, answersArgv, autoPairs, historyRows, isCritical, mergeOrder, metaText, nextInQueue, optionNote,
   pageCount, pickCurrent, pickedLabel, staleQuestion, togglePick, isChosen, isMulti, needsHoldRow, openListOf, skipFor,
   COMPACT_TOOL_FULL, COMPACT_WAKE_TEXT, busyReason,
 } from '../hooks/pane/lib'
 import type { ItemState, MdLine } from '../hooks/pane/lib'
-import type { Draft, IndexStatus, StatusQuestion, StatusRole, StatusTask } from '../types'
+import type { DoctorReport, Draft, IndexStatus, StatusQuestion, StatusRole, StatusTask } from '../types'
 
 const NOW = Date.parse('2026-10-29T10:30Z')
 
@@ -88,6 +88,8 @@ type World = {
   // `orch memory` runs, the value `autoMemoryEnabled` has in the project's local settings file ('false' | 'unset'), the
   // global file's value, and whether a switch fails.
   memoryRuns: string[][]; memoryLocal: 'false' | 'unset'; memoryGlobal: 'false' | 'unset'; memoryRefuses?: boolean
+  // `orch doctor` runs (argv and the timeout the pane gave), what a plain run prints and what a `--fix` run prints.
+  doctorRuns: { argv: string[]; timeoutMs: unknown }[]; doctor: Ran; doctorFixed: Ran; doctorHang?: Promise<void>
   // Paths `fs.exists` finds (the orch-index candidates), and what `uname -sm` prints (null: it fails).
   files: Set<string>; uname: string | null
 }
@@ -122,6 +124,7 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
   const w: World = {
     runs: [], indexRuns: [], opens: 0, paneOpen: true, placed: true, result, index: INDEX_RAN,
     answers: [], answered: { exitCode: 0, stdout: 'Q1 answered', stderr: '' }, onAnswers: () => {}, groups: {}, groupRuns: [], toasts: [], wakes: [], notes: [], tools: [], compacts: [], compactFails: 0, order: [], settingRuns: [], mythos: 'off', memoryRuns: [], memoryLocal: 'unset', memoryGlobal: 'unset',
+    doctorRuns: [], doctor: { exitCode: 0, stdout: '', stderr: '' }, doctorFixed: { exitCode: 0, stdout: '', stderr: '' },
     files: new Set(['/home/u/.claude/orch-data/bin/orch-index', 'C:/home/u/.claude/orch-data/bin/orch-index.exe']), uname: 'Darwin arm64\n',
   }
   mock.env(on, env)
@@ -149,6 +152,11 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
         ? `${w.installedAt ?? PLUGIN_ROOT} abc1234def56789`
         : e.argv[0]?.includes('orch-index') ? 'orch-index 0.2.0' : 'orch 0.1.0'
       return { value: { exitCode: 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+    if (e.argv.includes('doctor')) {
+      w.doctorRuns.push({ argv: [...e.argv], timeoutMs: (e as { init?: { timeoutMs?: unknown } }).init?.timeoutMs })
+      const answer = () => ({ value: { ...(e.argv.includes('--fix') ? w.doctorFixed : w.doctor), isStdoutTruncated: false, isStderrTruncated: false } })
+      return w.doctorHang ? w.doctorHang.then(answer) : answer()
     }
     if (e.argv.includes('memory')) {
       // `orch memory status --json | auto-off | auto-on --project <cwd>`: the project's local settings file is a field of the world.
@@ -2433,6 +2441,164 @@ test('Auto-memory off for this project: the box shows the CLI value (a refused w
   await ui.press({ key: 'opt-memory-off' })
   expect(w.memoryLocal).toBe('unset')
   expect(await buttonText(ui, 'opt-memory-off')).toMatch(/^\[ \] /)       // the write failed: the box keeps what the CLI says
+  await ui.unmount()
+})
+
+// ---- Doctor ----------------------------------------------------------------------------------------------------------
+
+const chk = (id: string, status: 'ok' | 'warn' | 'fail', over: object = {}) => ({
+  id, area: 'index', status, title: `Title ${id}`, detail: `detail ${id}`, fix: { kind: 'none', text: '' }, ...over,
+})
+const report = (checks: object[], over: object = {}) => JSON.stringify({
+  schema: 1, repo: '/proj', checks, counts: { ok: 0, warn: 0, fail: 0 }, ...over,
+})
+const MIXED = report([
+  chk('ok.one', 'ok'),
+  chk('warn.manual', 'warn', { fix: { kind: 'manual', text: 'run the manual thing' } }),
+  chk('fail.auto', 'fail', { fix: { kind: 'auto', text: 'create the folders' } }),
+  chk('ok.two', 'ok'),
+])
+
+test('parseDoctor reads schema 1 with a checks array only; doctorCouldNot says why a run gave nothing', () => {
+  expect(parseDoctor(MIXED)?.checks.length).toBe(4)
+  expect(parseDoctor('not json')).toBeNull()
+  expect(parseDoctor('{}')).toBeNull()
+  expect(parseDoctor(JSON.stringify({ schema: 2, checks: [] }))).toBeNull()
+  expect(parseDoctor(JSON.stringify({ schema: 1, checks: 'x' }))).toBeNull()
+  expect(doctorCouldNot(1, '\n  orch: --repo /x is not a folder\nmore')).toBe('orch doctor could not run: orch: --repo /x is not a folder')
+  expect(doctorCouldNot(3, '')).toBe('orch doctor could not run: exit 3')
+  const r = parseDoctor(MIXED) as DoctorReport
+  expect(doctorProblems(r).map(c => c.id)).toEqual(['warn.manual', 'fail.auto'])
+  expect(doctorAutoCount(r)).toBe(1)
+  expect(doctorUnfixed({ ...r, fixed: [{ id: 'a', result: 'done', detail: '' }, { id: 'b', result: 'failed', detail: 'x' }] }).map(f => f.id)).toEqual(['b'])
+})
+
+test('Doctor: nothing runs at start, on a poll or when More opens; a press runs `orch doctor --json --repo <cwd>`', { timeoutMs: 30000 }, async ($, on) => {
+  const { ui, w, clock } = await pane($, on, [PROGRAM])
+  w.doctor = { exitCode: 0, stdout: report([chk('a', 'ok')]), stderr: '' }
+  await ui.press({ key: 'tab:more' })
+  await clock.advance(8000 * 3)
+  expect(w.doctorRuns).toEqual([])
+  expect(await buttonText(ui, 'act-doctor')).toBe('Run orch doctor')
+  await ui.press({ key: 'act-doctor' })
+  expect(w.doctorRuns.map(r => r.argv)).toEqual([[ORCH, 'doctor', '--json', '--repo', '/proj']])
+  expect(w.doctorRuns[0]?.timeoutMs).toBe(60000)
+  await clock.advance(8000 * 3)
+  expect(w.doctorRuns.length).toBe(1)
+  await ui.unmount()
+})
+
+test('Doctor on Windows runs through python', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on, { exitCode: 0, stdout: output(PROGRAM), stderr: '' }, { OS: 'Windows_NT', USERPROFILE: 'C:\\home\\u', HOME: '/c/home/u' })
+  memStore(on, {})
+  await start($, clock)
+  const ui = await $.ui.mount(PANE60('terminal'))
+  w.doctor = { exitCode: 0, stdout: report([chk('a', 'ok')]), stderr: '' }
+  await ui.press({ key: 'tab:more' })
+  await ui.press({ key: 'act-doctor' })
+  expect(w.doctorRuns.map(r => r.argv)).toEqual([['python', ORCH, 'doctor', '--json', '--repo', '/proj']])
+  await ui.unmount()
+})
+
+test('Doctor shows problems only: ok checks are absent, warn and fail carry their fix text, an auto fix gets a Fix N row', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  w.doctor = { exitCode: 2, stdout: MIXED, stderr: '' }      // exit 2 with a report is a normal result
+  await ui.press({ key: 'tab:more' })
+  await ui.press({ key: 'act-doctor' })
+  const text = await allText(ui)
+  expect(text).toContain('Doctor')
+  expect(text).toContain('! Title warn.manual: detail warn.manual')
+  expect(text).toContain('run the manual thing')
+  expect(text).toContain('✗ Title fail.auto: detail fail.auto')
+  expect(text).toContain('create the folders')
+  expect(text).not.toContain('Title ok.one')
+  expect(text).not.toContain('all 4 checks passed')
+  expect(await buttonText(ui, 'act-doctor-fix')).toBe('Fix 1 automatically')
+  const warnRow = (await ui.findAll({ type: 'Text', text: /Title warn\.manual/ }))[0]
+  const failRow = (await ui.findAll({ type: 'Text', text: /Title fail\.auto/ }))[0]
+  expect(warnRow?.props?.color).toBe('warning')
+  expect(failRow?.props?.color).toBe('error')
+  await ui.unmount()
+})
+
+test('Doctor with no problems shows one success line and no fix row; manual-only problems offer no fix row either', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  w.doctor = { exitCode: 0, stdout: report([chk('a', 'ok'), chk('b', 'ok'), chk('c', 'ok')]), stderr: '' }
+  await ui.press({ key: 'tab:more' })
+  await ui.press({ key: 'act-doctor' })
+  expect(await allText(ui)).toContain('all 3 checks passed')
+  expect(await buttonText(ui, 'act-doctor-fix')).toBeUndefined()
+  w.doctor = { exitCode: 0, stdout: report([chk('a', 'warn', { fix: { kind: 'manual', text: 'by hand' } })]), stderr: '' }
+  await ui.press({ key: 'act-doctor' })
+  const text = await allText(ui)
+  expect(text).not.toContain('all 1 checks passed')
+  expect(text).toContain('by hand')
+  expect(await buttonText(ui, 'act-doctor-fix')).toBeUndefined()
+  await ui.unmount()
+})
+
+test('Doctor Fix N automatically runs `--fix`, draws the new report and a line for each fix that failed or was skipped', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  w.doctor = { exitCode: 2, stdout: MIXED, stderr: '' }
+  w.doctorFixed = {
+    exitCode: 2, stderr: '',
+    stdout: report([chk('still', 'fail', { fix: { kind: 'manual', text: 'by hand now' } })], {
+      fixed: [{ id: 'install.data', result: 'done', detail: 'created x' }, { id: 'index.binary', result: 'failed', detail: 'failed: checksum' },
+        { id: 'index.marker', result: 'skipped', detail: 'a rebuild holds the marker (live)' }],
+    }),
+  }
+  await ui.press({ key: 'tab:more' })
+  await ui.press({ key: 'act-doctor' })
+  await ui.press({ key: 'act-doctor-fix' })
+  expect(w.doctorRuns.map(r => r.argv)).toEqual([
+    [ORCH, 'doctor', '--json', '--repo', '/proj'],
+    [ORCH, 'doctor', '--fix', '--json', '--repo', '/proj'],
+  ])
+  expect(w.doctorRuns.map(r => r.timeoutMs)).toEqual([60000, 330000])
+  const text = await allText(ui)
+  expect(text).toContain('✗ Title still: detail still')
+  expect(text).toContain('fix index.binary failed: failed: checksum')
+  expect(text).toContain('fix index.marker skipped: a rebuild holds the marker (live)')
+  expect(text).not.toContain('install.data')
+  expect(text).not.toContain('Title fail.auto')
+  expect(await buttonText(ui, 'act-doctor-fix')).toBeUndefined()      // the new report has nothing auto-fixable
+  await ui.unmount()
+})
+
+test('Doctor: output that is not a report, or a run that fails, shows one could-not-run line', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  await ui.press({ key: 'tab:more' })
+  w.doctor = { exitCode: 0, stdout: 'garbage', stderr: '' }
+  await ui.press({ key: 'act-doctor' })
+  expect(await allText(ui)).toContain('orch doctor could not run: exit 0')
+  w.doctor = { exitCode: 1, stdout: '', stderr: 'orch: --repo /x is not a folder\n' }
+  await ui.press({ key: 'act-doctor' })
+  const text = await allText(ui)
+  expect(text).toContain('orch doctor could not run: orch: --repo /x is not a folder')
+  expect(text).not.toContain('exit 0')
+  w.doctor = { exitCode: 3, stdout: report([chk('a', 'ok')]), stderr: 'orch: internal error: X' }   // a valid report under another exit code is not trusted
+  await ui.press({ key: 'act-doctor' })
+  expect(await allText(ui)).toContain('orch doctor could not run: orch: internal error: X')
+  await ui.unmount()
+})
+
+test('Doctor: while it runs the row reads Running orch doctor… and a second press does nothing', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  let release = () => {}
+  w.doctorHang = new Promise<void>(r => { release = r })
+  w.doctor = { exitCode: 0, stdout: report([chk('a', 'ok')]), stderr: '' }
+  await ui.press({ key: 'tab:more' })
+  const first = ui.press({ key: 'act-doctor' })
+  await new Promise(r => setTimeout(r, 20))
+  expect(await buttonText(ui, 'act-doctor')).toBe('Running orch doctor…')
+  await ui.press({ key: 'act-doctor' })
+  expect(w.doctorRuns.length).toBe(1)
+  release()
+  await first
+  expect(await buttonText(ui, 'act-doctor')).toBe('Run orch doctor')
+  expect(await allText(ui)).toContain('all 1 checks passed')
+  expect(w.doctorRuns.length).toBe(1)
   await ui.unmount()
 })
 

@@ -1,9 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { About, AboutPart, AskState, Draft, Drafts, IndexStatus, PlainEntry, QState, Snapshot, StatusJson, StatusMilestone, StatusQuestion, StatusStep, StatusTask, Tab } from '../../types'
+import type { About, AboutPart, AskState, DoctorState, Draft, Drafts, IndexStatus, PlainEntry, QState, Snapshot, StatusJson, StatusMilestone, StatusQuestion, StatusStep, StatusTask, Tab } from '../../types'
 import {
   GREY, agentPalette, agentPct, agentPctTail, ago, askContext, barCells, barLayout, clip, countTail, elapsed, fold, goalLine, hhmm, idleMinutes, indexCandidates, indexDetails, indexHeadline, indexTarget,
+  doctorAutoCount, doctorCouldNot, doctorProblems, doctorUnfixed, parseDoctor,
   indexLook, indexNeedsAnswerWarning, isRunning, isStale, lastActivity, mdLite, overallTail, parseIndex, placeText, plainInput,
   isMine, scopeLabel, shimmer, splitScope, spawnOf, stateColor, stepsTail, stripMarks, textKey,
   HISTORY_PAGE, MEMORY_PROMPT, NO_DRAFT, WAKE_TEXT, memoryStateOf, acceptable, activeGroupOf, answerOf, answersArgv, autoPairs, confirmedOf, groupKey, hasOptions,
@@ -52,6 +53,13 @@ const MYTHOS_SETTING = 'mythos_review'
 // Auto-memory off for this project: read from `orch memory status --json` (the settings file is the truth, not $.store).
 const MEMORY_START: MemoryState = { off: false, note: null }
 const memory = atom({ plugin: 'orch', key: 'memory' } as const, MEMORY_START, { shape: 'memory-1' })
+// The Doctor section: `orch doctor` runs only on a press (never on a poll, at start or when a tab opens); its result is
+// kept until the next run. The flag stops a second press while one runs.
+const DOCTOR_IDLE: DoctorState = { state: 'idle' }
+const doctor = atom({ plugin: 'orch', key: 'doctor' } as const, DOCTOR_IDLE, { shape: 'doctor-1' })
+const DOCTOR_TIMEOUT_MS = 60000
+const DOCTOR_FIX_TIMEOUT_MS = 330000
+let doctorRunning = false
 // Unsent answers (D5): the atom serves the drawing, $.store keeps them; a pane whose atom was lost reloads them.
 const EMPTY_DRAFTS: { loaded: boolean; byTask: Drafts } = { loaded: false, byTask: {} }
 const drafts = atom({ plugin: 'orch', key: 'drafts' } as const, EMPTY_DRAFTS, { shape: 'drafts-1' })
@@ -784,6 +792,33 @@ async function loadMemory($: EngineInterface) {
   }
 }
 
+// `orch doctor --json --repo <cwd>` (with `--fix` for the fix row) -> the doctor atom. Exit 2 with a report is a normal result
+// (checks failed); no report, or any other exit, is one "could not run" line.
+async function runDoctor($: EngineInterface, fix: boolean) {
+  if (doctorRunning) return
+  doctorRunning = true
+  try {
+    await update($, doctor, () => ({ state: 'running', fix }))
+    const where = await whereIsOrch($)
+    if (!where) {
+      await update($, doctor, () => ({ state: 'error', message: 'orch doctor could not run: no home folder' }))
+      return
+    }
+    const argv = [...(where.windows ? ['python'] : []), where.orch, 'doctor', ...(fix ? ['--fix'] : []), '--json', '--repo', where.cwd]
+    let next: DoctorState
+    try {
+      const ran = await $.process.run(argv, { timeoutMs: fix ? DOCTOR_FIX_TIMEOUT_MS : DOCTOR_TIMEOUT_MS })
+      const report = ran.exitCode === 0 || ran.exitCode === 2 ? parseDoctor(ran.stdout) : null
+      next = report ? { state: 'done', report } : { state: 'error', message: doctorCouldNot(ran.exitCode, ran.stderr) }
+    } catch (e) {
+      next = { state: 'error', message: `orch doctor could not run: ${e instanceof Error ? e.message.split('\n')[0] : 'failed'}` }
+    }
+    await update($, doctor, () => next)
+  } finally {
+    doctorRunning = false
+  }
+}
+
 // Switch auto-memory off (or back to Claude's default) for this project through the CLI, then show what it now says.
 async function toggleMemory($: EngineInterface) {
   const where = await whereIsOrch($)
@@ -1095,6 +1130,7 @@ export const registerPane: Register = on => {
     const compactSendOn = (await read($, compactSend)) === true
     const mythosOn = (await read($, mythos)) === true
     const memoryState = await read($, memory)
+    const doctorState = await read($, doctor)
     const qs = await readQ($)
     const stored = await read($, drafts)
     const ds: Drafts = stored && typeof stored.byTask === 'object' && stored.byTask ? stored.byTask : {}
@@ -1742,6 +1778,35 @@ export const registerPane: Register = on => {
       uiRows = await settingRows($)
     }
 
+    // The Doctor section: problems only, fix text dim beneath; none -> one success line.
+    const doctorRows = () => {
+      const running = doctorState.state === 'running'
+      const rows: ReturnType<typeof action>[] = [
+        action('act-doctor', running ? 'Running orch doctor…' : 'Run orch doctor', 'checks orch-index, the install, settings and tasks; runs only when you press it', () => runDoctor($, false)),
+      ]
+      if (doctorState.state === 'error') rows.push(<Text color="error">{doctorState.message}</Text>)
+      if (doctorState.state === 'done') {
+        const report = doctorState.report
+        const problems = doctorProblems(report)
+        if (problems.length === 0) rows.push(<Text color="success">{`all ${report.checks.length} checks passed`}</Text>)
+        for (const c of problems) {
+          rows.push(
+            <Box flexDirection="column">
+              <Text color={c.status === 'fail' ? 'error' : 'warning'}>{`${c.status === 'fail' ? '✗' : '!'} ${c.title}: ${c.detail}`}</Text>
+              {c.fix.kind !== 'none' && c.fix.text ? <Box paddingLeft={2}><Text dimColor>{c.fix.text}</Text></Box> : null}
+            </Box>,
+          )
+        }
+        for (const f of doctorUnfixed(report)) rows.push(<Text color={f.result === 'failed' ? 'error' : 'warning'}>{`fix ${f.id} ${f.result}: ${f.detail}`}</Text>)
+        const fixable = doctorAutoCount(report)
+        if (fixable > 0 && !running) {
+          rows.push(<Box marginTop={1} />)
+          rows.push(action('act-doctor-fix', `Fix ${fixable} automatically`, 'creates missing folders, installs orch-index, repoints the plugin link, removes a dead indexing marker; nothing else', () => runDoctor($, true)))
+        }
+      }
+      return rows
+    }
+
     const moreTab = () => {
       const index = indexRows()
       return [
@@ -1763,6 +1828,10 @@ export const registerPane: Register = on => {
               ...uiRows.map(row => choice(row.key, row.label, row.value, row.note, () => pressSetting($, row.id))),
             ]
           : []),
+        blank,
+        subhead('Doctor'),
+        ...doctorRows(),
+        blank,
         ...(snap.about
           ? [
               subhead('About'),
