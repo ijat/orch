@@ -1,5 +1,5 @@
 // Pure logic of the pane: no `$`, no JSX. register.tsx draws with it; the tests call it directly.
-import type { Draft, IndexStatus, StatusOption, StatusQuestion, StatusRole, StatusTask } from '../../types'
+import type { Draft, DoctorReport, IndexStatus, StatusOption, StatusQuestion, StatusRole, StatusTask } from '../../types'
 
 // -- small text helpers ---------------------------------------------------------------------------
 
@@ -188,6 +188,27 @@ export function parseIndex(text: string): IndexStatus | null {
     return null
   }
 }
+
+// `orch doctor --json` output -> the report, or null unless it is schema 1 with a checks array.
+export function parseDoctor(text: string): DoctorReport | null {
+  try {
+    const v = JSON.parse(text) as Partial<DoctorReport> | null
+    return v && v.schema === 1 && Array.isArray(v.checks) ? (v as DoctorReport) : null
+  } catch {
+    return null
+  }
+}
+
+// The one line shown when the run gave no report: the first stderr line, else the exit code.
+export function doctorCouldNot(exitCode: number, stderr: string): string {
+  const first = stderr.split('\n').map(l => l.trim()).find(l => l.length > 0)
+  return `orch doctor could not run: ${first ?? `exit ${exitCode}`}`
+}
+
+export const doctorProblems = (r: DoctorReport) => r.checks.filter(c => c.status !== 'ok')
+export const doctorAutoCount = (r: DoctorReport) => doctorProblems(r).filter(c => c.fix?.kind === 'auto').length
+// Fixes that did not happen: shown after a `--fix` run, one line each.
+export const doctorUnfixed = (r: DoctorReport) => (r.fixed ?? []).filter(f => f.result !== 'done')
 
 // Theme key and words for the index state: latest / stale / outdated / not built.
 export function indexLook(ix: IndexStatus): { color: string; words: string } {

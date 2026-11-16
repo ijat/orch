@@ -156,6 +156,30 @@ export type Snapshot = {
 export type AboutPart = { name: string; installed: boolean; version: string | null; commit: string | null }
 export type About = AboutPart[]
 
+// `orch doctor --json` (schema 1): one entry per check; `fixed` is there after `--fix`.
+export type DoctorCheck = {
+  id: string
+  area: 'index' | 'install' | 'settings' | 'tasks'
+  status: 'ok' | 'warn' | 'fail'
+  title: string
+  detail: string
+  fix: { kind: 'auto' | 'manual' | 'none'; text: string }
+}
+export type DoctorFixed = { id: string; result: 'done' | 'failed' | 'skipped'; detail: string }
+export type DoctorReport = {
+  schema: 1
+  repo: string | null
+  checks: DoctorCheck[]
+  counts: { ok: number; warn: number; fail: number }
+  fixed?: DoctorFixed[]
+}
+// The Doctor section's one state: nothing run yet, running (a second press does nothing), a report, or why it could not run.
+export type DoctorState =
+  | { state: 'idle' }
+  | { state: 'running'; fix: boolean }
+  | { state: 'done'; report: DoctorReport }
+  | { state: 'error'; message: string }
+
 // A plain-language summary, by the cache key of the text it summarises.
 export type PlainEntry = { state: 'pending'; at: number } | { state: 'done'; text: string } | { state: 'error'; reason: string }
 
