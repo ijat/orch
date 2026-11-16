@@ -325,6 +325,9 @@ rule, is not blocked.
    60–3600s — chain; no epoch: every 15–20 min) running `orch usage`; a drop of > 5 points since the pause
    = rolled over, else `noop: true`.
 
+A pause the **user** asks for is `task_state: paused_user` (`PROGRAM.md` § 2, after the milestone is closed): it never resumes by
+itself, `usage wait` does not watch it and `orch current` asks about it.
+
 This self-initiated pause is the **only** automatic resume. A hard crash (API error, closed
 terminal, cutoff before you paused) is not: the user re-invokes, and you resume from the files.
 Never tell the user otherwise.

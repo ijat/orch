@@ -1599,7 +1599,7 @@ class Wait:
         if e.state == 'UNKNOWN':
             return 4, self.line('UNKNOWN', e)
         paused = self.until_reset or task_state(self.task_dir) == 'paused_usage_limit'
-        if not paused and e.state == 'STOP':
+        if not paused and e.state == 'STOP' and task_state(self.task_dir) != 'paused_user':
             return 2, self.line('STOP', e)
         # A task-less wait launched after the last known window's reset, before any sample of the new window: the
         # reset has passed and the estimate is below the line, which is the event its caller waits for. Watching for
@@ -1629,7 +1629,10 @@ class Wait:
                 paused, t_pause = True, now
                 if e.state != 'UNKNOWN':
                     r5_0, p_0 = getattr(e, 'window', None), e.p5
-            if paused:
+            held = ts == 'paused_user'     # the user paused the task: nothing to resume or watch (only paused_usage_limit resumes by itself)
+            if held:
+                pass
+            elif paused:
                 w = getattr(e, 'window', None)
                 if r5_0 is not None and now >= r5_0 + 120:
                     return 10, self.line('RESET', e, reason='clock')
@@ -1648,7 +1651,7 @@ class Wait:
                     return 4, self.line('UNKNOWN', e, reason='degraded')
             else:
                 degraded = None
-            if not paused:
+            if not paused and not held:
                 if self.task_dir:
                     c = self._checkin(now)
                     if c:

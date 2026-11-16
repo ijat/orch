@@ -28,7 +28,7 @@ COLUMN_NAMES = {
 
 # orch-index.sh's classification (same rules, same quirks): see bin/orch-index.sh.
 INDEX_ENUM = {"planning", "awaiting_approval", "implementing", "reviewing", "awaiting_merge",
-              "paused_usage_limit", "done", "abandoned"}
+              "paused_usage_limit", "paused_user", "done", "abandoned"}
 INDEX_TERMINAL = {"done", "abandoned", "merged"}
 
 Clean = namedtuple("Clean", "value missing")

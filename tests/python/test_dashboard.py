@@ -153,7 +153,7 @@ class TestData(Base):
     def test_state_words_table(self):
         want = {"planning": "Planning", "awaiting_approval": "Waiting for your approval", "implementing": "Building",
                 "reviewing": "Reviewing", "awaiting_merge": "Ready to merge", "paused_usage_limit": "Paused: usage limit",
-                "done": "Done", "abandoned": "Abandoned"}
+                "paused_user": "Paused (you asked)", "done": "Done", "abandoned": "Abandoned"}
         self.assertEqual(db.STATE_WORDS, want)
         d = os.path.join(self.root, "myapp", "odd-state")
         os.makedirs(d)
@@ -322,6 +322,25 @@ class TestData(Base):
             fh.write(json.dumps({"ts": "2026-03-01T09:45Z", "kind": "milestone_end", "milestone": 3, "outcome": "merged"}) + "\n")
             fh.write(json.dumps({"ts": "2026-03-01T09:46Z", "kind": "milestone_end", "milestone": 4, "outcome": "abandoned"}) + "\n")
         self.assertEqual(self.task(self.dash().data(NOW), "My App/fix-menu")["milestones_done"], 2)
+
+    def test_any_outcome_but_blocked_or_abandoned_closes_a_milestone(self):
+        # a Halo-like journal: old programs wrote reviewed, pass, implemented, complete … for a closed milestone
+        d = os.path.join(self.root, "My App", "fix-menu")
+        with open(os.path.join(d, "journal.jsonl"), "a") as fh:
+            for m, outcome in ((3, "complete"), (4, "reviewed"), (5, "pass"), (6, "implemented"), (7, "merged"), (8, "complete")):
+                fh.write(json.dumps({"ts": "2026-03-01T09:%02dZ" % (40 + m), "kind": "milestone_end", "milestone": m, "outcome": outcome}) + "\n")
+            fh.write(json.dumps({"ts": "2026-03-01T09:55Z", "kind": "milestone_end", "milestone": 9, "outcome": None}) + "\n")
+            fh.write(json.dumps({"ts": "2026-03-01T09:56Z", "kind": "milestone_end", "milestone": 10, "outcome": "blocked"}) + "\n")
+        # M1 (the fixture's own end) + M3-M9; M2 and M10 are blocked
+        self.assertEqual(self.task(self.dash().data(NOW), "My App/fix-menu")["milestones_done"], 8)
+
+    def test_a_user_pause_reads_as_paused_and_says_who(self):
+        d = os.path.join(self.root, "myapp", "user-pause")
+        os.makedirs(d)
+        with open(os.path.join(d, "status.md"), "w") as fh:
+            fh.write("# s\n\n- task_state: paused_user\n\n| role | state | timestamp (UTC) | last completed step | notes |\n|---|---|---|---|---|\n")
+        t = self.task(self.dash().data(NOW), "myapp/user-pause")
+        self.assertEqual((t["state"], t["state_words"], t["paused"]), ("paused_user", "Paused (you asked)", True))
 
     def test_a_merge_point_covers_earlier_started_milestones_only(self):
         d = os.path.join(self.root, "My App", "fix-menu")

@@ -60,7 +60,7 @@ A field not listed is a string, or free JSON when written with `:=`:
 - boolean: `security_offer.late`, `sketch.{sketch_wrong,escalated}`, `plan_shape.overridden`, `checkpoint.asked`, `auto_security.ran`, `assumed_decision.reversible`, `merge_point.tree_equal`
 - array: `*.alternatives`, `spawn.steps`, `security_offer.areas`, `mythos_offer.areas`, `auto_security.areas`, `plan_shape.criteria`, `replan.changed`, `review_point.span`, `milestone_end.tiers`, `milestone_plan.rows`, `continue_gate.{steps,routed,reasons}`
 
-- enum: `mythos_offer.trigger={severe,program_end,init_first,request}`, `mythos_offer.answer={accepted,declined}` (any other value is refused; null stays allowed)
+- enum: `mythos_offer.trigger={severe,program_end,init_first,request}`, `mythos_offer.answer={accepted,declined}`, `milestone_end.outcome={done,blocked,abandoned}` (any other value is refused; null stays allowed)
 
 In a program, every other line also carries `milestone` (number, or null before the first one).
 

@@ -761,6 +761,21 @@ class TestJournal(Base):
         # other kinds keep their free-text fields
         self.j("security_offer", "areas=auth", "answer=whatever", "late=false")
 
+    def test_milestone_end_outcome_is_done_blocked_or_abandoned(self):
+        for outcome in ("done", "blocked", "abandoned"):
+            self.j("milestone_end", "milestone=1", "outcome=" + outcome, "tiers=sonnet/high", "rounds=1")
+            self.assertEqual(self.last()["outcome"], outcome)
+            self.j("milestone_start", "milestone=1")
+        self.j("milestone_end", "milestone=1", "outcome:=null", "tiers=sonnet/high", "rounds=1")        # null stays allowed
+        self.assertIsNone(self.last()["outcome"])
+        self.j("milestone_start", "milestone=1")
+        for arg in ("outcome=complete", "outcome=merged", "outcome=Done"):
+            n = len(self.journal_lines(self.d))
+            err = self.refuse(1, "journal", "milestone_end", "milestone=1", arg, "-t", "myapp/add-login")
+            for word in ("done", "blocked", "abandoned"):
+                self.assertIn(word, err)
+            self.assertEqual(len(self.journal_lines(self.d)), n, arg)
+
     def test_integers_must_not_be_floats_or_bools(self):
         self.refuse(1, "journal", "return", "tokens:=true", "-t", "myapp/add-login")
         self.refuse(1, "journal", "return", "tokens:=2.0", "-t", "myapp/add-login")

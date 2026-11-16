@@ -264,6 +264,28 @@ class TestPaused(Base):
                                 task_dir=d, refresh=True, sid=SID, max_sec=3600)
         self.assertEqual(code, 13)
 
+    def test_a_user_pause_never_stops_resets_or_checks_in(self):
+        d = self.task(state='paused_user',
+                      journal=[{'ts': ts(BASE - 7200), 'kind': 'spawn', 'role': 'implementer'}])
+        for sample in (lambda: est('STOP', 99), lambda: est('WARN', 93, line=95, age5=900, ext=3, own_last=self.clock.t - 10)):
+            self.clock = Clock(BASE)
+            code, line = self.run_wait(sample, task_dir=d, refresh=True, sid=SID, max_sec=3600, interval=300)
+            self.assertEqual(code, 13, line)
+            self.assertIn('reason=max', line)
+
+    def test_a_user_pause_over_a_usage_pause_does_not_auto_resume(self):
+        d = self.task(state='paused_usage_limit')
+        self.clock.hooks.append((BASE + 60, lambda: self.set_state(d, 'paused_user')))
+        code, line = self.run_wait(lambda: est('STOP', 99), task_dir=d, interval=60, max_sec=R5 + 3600 - BASE)
+        self.assertEqual(code, 13, line)                      # the usage pause's RESET (clock) would have been 10
+
+    def test_resuming_a_user_pause_watches_again(self):
+        d = self.task(state='paused_user')
+        self.clock.hooks.append((BASE + 120, lambda: self.set_state(d, 'implementing')))
+        code, line = self.run_wait(lambda: est('STOP', 99), task_dir=d, interval=60)
+        self.assertEqual(code, 2, line)
+        self.assertGreaterEqual(self.clock.t, BASE + 120)
+
 
 class TestRolledAtLaunch(Base):
     """A task-less wait launched after the reset on a stale sample (no sample of the new window yet): the reset has

@@ -5,7 +5,7 @@
      An optional `driver_session` field line (the Claude Code session id) is added by `orch init`, `orch resume` and `orch spawn`
      (from CLAUDE_CODE_SESSION_ID, last writer wins); `orch status --json --session <id>` uses it. Never write it by hand. -->
 
-- task_state: planning | awaiting_approval | implementing | reviewing | awaiting_merge | paused_usage_limit | done | abandoned
+- task_state: planning | awaiting_approval | implementing | reviewing | awaiting_merge | paused_usage_limit | paused_user | done | abandoned
 - mode: standard | lite | interactive
 - shape: single | roadmap
 - milestone: n/a | M<n> — <detail-plan | implementing | testing | reviewing | awaiting_merge>   (roadmap only)

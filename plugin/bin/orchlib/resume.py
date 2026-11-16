@@ -25,6 +25,7 @@ NEXT = {
     "awaiting_merge": "check reviews and the final gate are current for the branch tip, then `orch merge`; ask only if it refuses",
     "paused_usage_limit": "arm `orch -t <task> usage wait --until-reset` in the background (RESET = exit 10), or check `orch usage`; "
                           "below the line -> `orch journal resume`, `orch set task_state=...`, continue the paused step",
+    "paused_user": "the user paused it: ask before going on; resume only on their word (`orch journal resume`, `orch set task_state=...`)",
     "done": "finished: nothing to resume (retro.md, `orch end` already run or not needed)",
     "abandoned": "finished: nothing to resume",
 }

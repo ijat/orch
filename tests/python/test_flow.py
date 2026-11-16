@@ -932,7 +932,7 @@ class TestResume(FlowBase):
     def test_every_state_has_a_suggestion_and_unknown_falls_back(self):
         want = {"planning": "spawn planner", "awaiting_approval": "plan gate", "implementing": "orch brief implement",
                 "reviewing": "review", "awaiting_merge": "orch merge", "paused_usage_limit": "usage wait --until-reset",
-                "done": "nothing to resume", "abandoned": "nothing to resume"}
+                "paused_user": "ask before going on", "done": "nothing to resume", "abandoned": "nothing to resume"}
         for state, text in want.items():
             self.ok("set", "task_state=%s" % state, "-t", T)
             out, _ = self.ok("resume", T)
