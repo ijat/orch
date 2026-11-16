@@ -519,6 +519,19 @@ class TestCause(ReviewBase):
         self.assertEqual(fd.cycle_route(p, ["F1", "F2"])[0], "climb")
         self.assertEqual(fd.cycle_route(p, ["F3"])[0], "climb")                # an unreadable cause reads as from-fix
 
+    def test_a_check_raised_finding_a_later_check_reports_not_fixed_climbs(self):
+        text = (block("F1") + "\n## Check of round 1\n\n- F1: fixed — ok\n\n"
+                "### F2 — b\n- severity: should-fix\n- origin: introduced\n- file: a:2\n- cause: other\n\n"
+                "## Check 2 of round 1\n\n- F2: not fixed — still there\n")
+        p = fd.parse_text(text)
+        f2 = p.get("F2")
+        self.assertEqual((f2.in_check, f2.phrase_in_check, f2.state, f2.cause), (True, True, "open", "other"))
+        self.assertEqual(fd.cycle_route(p, ["F2"]),
+                         ("climb", ["F2 is a routed finding still open after a check"]))
+        # before check 2 judges it, the same finding is a fresh `other` and stays
+        fresh = fd.parse_text(text.split("## Check 2")[0])
+        self.assertEqual(fd.cycle_route(fresh, ["F2"])[0], "stay")
+
     def test_a_bad_cause_is_reported_when_written(self):
         rc, _, err = self.write_review("### F1 — x\n- severity: nit\n- origin: introduced\n- file: a:1\n- cause: maybe\n")
         self.assertEqual(rc, 1)

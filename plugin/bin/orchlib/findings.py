@@ -422,13 +422,13 @@ def cycle_route(parsed, routed):
         f = parsed.get(fid)
         if f is None or f.state == "closed":
             continue
-        if f.in_check:
+        if f.phrase_in_check:       # routed and judged by a later check (whatever raised it, whatever its cause): still open, so climb
+            items.append((fid, "climb", "%s is a routed finding still open after a check" % fid))
+        elif f.in_check:
             if f.cause == "other":
                 items.append((fid, "other", "%s cause: other" % fid))
             else:
                 items.append((fid, "climb", "%s %s" % (fid, "cause: from-fix" if f.cause else "has no cause: (reads from-fix)")))
-        elif f.phrase_in_check:
-            items.append((fid, "climb", "%s is a routed finding still open after a check" % fid))
         else:
             items.append((fid, "climb", "%s is a routed finding no check has judged yet" % fid))
     if not any(f is not None and f.state != "closed" and (f.in_check or f.phrase_in_check)
