@@ -9,6 +9,9 @@ import re, sys
 
 COLS = ["m", "depends", "mode", "tiers", "sensitive", "review", "merge", "you", "size", "confidence"]
 HEADER = ["M", "goal", "depends on", "mode", "tiers", "sensitive", "review", "merge", "you", "size", "confidence"]
+HEADER_SPLIT = HEADER + ["split"]   # current format; the 11-column HEADER is the old one (programs in flight) and only WARNs
+CONTRACT_RE = re.compile(r"^\s*-\s*(C\d+)\s*\(\s*M(\d+)\s*(?:→|->)\s*(M\d+(?:\s*,\s*M\d+)*)\s*\)")
+SPLIT_KINDS = ("premise", "see", "ship", "span")
 WEIGHT = {"S": 1, "M": 2, "L": 4}
 SPAN_WEIGHT_WARN = 8      # heuristic only: no size effect on review rounds was found (n=14, 2026-10-15)
 SPAN_LEN_WARN = 3         # more milestones than this in one review span → WARN
@@ -30,24 +33,28 @@ def cells(line):
 
 
 def parse_table(lines, fails):
-    rows, header_seen = [], False
+    """(rows, has_split) or None. Two headers are accepted: the 12-column one with `split` and the old 11-column one."""
+    rows, header_seen, header = [], False, HEADER
     for ln in lines:
         if not ln.strip().startswith("|"):
             continue
         c = cells(ln)
         if not header_seen:
-            if [x.lower() for x in c] != [h.lower() for h in HEADER]:
-                fails.append(f"milestone table header must be: | {' | '.join(HEADER)} |")
+            low = [x.lower() for x in c]
+            if low == [h.lower() for h in HEADER_SPLIT]:
+                header = HEADER_SPLIT
+            elif low != [h.lower() for h in HEADER]:
+                fails.append(f"milestone table header must be: | {' | '.join(HEADER_SPLIT)} |")
                 return None
             header_seen = True; continue
         if all(re.fullmatch(r":?-{3,}:?", x) for x in c):
             continue
-        if len(c) != len(HEADER):
-            fails.append(f"row has {len(c)} cells, expected {len(HEADER)}: {ln.strip()}"); continue
-        r = dict(zip(["m", "goal"] + COLS[1:], c))
+        if len(c) != len(header):
+            fails.append(f"row has {len(c)} cells, expected {len(header)}: {ln.strip()}"); continue
+        r = dict(zip(["m", "goal"] + COLS[1:] + ["split"], c))
         r["raw"] = ln.strip()
         rows.append(r)
-    return rows if header_seen else None
+    return (rows, header is HEADER_SPLIT) if header_seen else None
 
 
 def main():
@@ -62,10 +69,13 @@ def main():
     fails, warns = [], []
     if "milestones" not in sec:
         print("ERROR no '## Milestones' section"); return 2
-    rows = parse_table(sec["milestones"], fails)
-    if rows is None or (not rows and not fails):
+    parsed = parse_table(sec["milestones"], fails)
+    if parsed is None or (not parsed[0] and not fails):
         for f in fails: print("FAIL", f)
         print("ERROR no milestone table rows"); return 2
+    rows, has_split = parsed
+    if not has_split:
+        warns.append("milestone table has no `split` column — old format; add it so each milestone names what forces the split")
 
     # --- value validation ---
     ms = []
@@ -133,9 +143,44 @@ def main():
         if last["review"] == "-" or last["merge"] != "yes":
             fails.append(f"M{last['n']} (last): must be a merge point, and a review point or `skip`")
 
+    # F/W: every milestone but the last names what forces the split from the next one (12-column tables only)
+    if has_split:
+        produced = {}   # contract id -> producing milestone
+        for ln in sec.get("contracts between milestones", []):
+            m = CONTRACT_RE.match(ln)
+            if m:
+                produced[m.group(1)] = int(m.group(2))
+        for i, r in enumerate(ms):
+            n, sp = r["n"], r["split"]
+            if i == len(ms) - 1:
+                if sp != "-":
+                    warns.append(f"M{n} (last): split should be `-` (nothing follows it), got `{sp}`")
+                continue
+            if sp in ("", "-"):
+                fails.append(f"M{n}: no split reason — name what forces the split from M{n + 1}: premise, see, ship or span")
+                continue
+            m = re.match(r"(premise|see|ship|span)\b\s*(:?)\s*(.*)$", sp, re.I)
+            if not m or (m.group(1).lower() != "premise" and (m.group(2) != ":" or not m.group(3).strip())):
+                fails.append(f"M{n}: split reason must start with `premise`, `see:`, `ship:` or `span:` followed by the reason — got `{sp}`")
+                continue
+            kind, rest = m.group(1).lower(), m.group(3).strip()
+            if kind == "premise":
+                if not rest:
+                    fails.append(f"M{n}: `premise` split names no premise — say what only M{n} settles, or `premise C<n>`")
+                    continue
+                for cid in re.match(r"(?:C\d+(?:\s*,\s*C\d+)*)?", rest).group(0).replace(" ", "").split(","):
+                    if cid and produced.get(cid) != n:
+                        fails.append(f"M{n}: split names {cid}, a contract M{n} does not produce")
+            elif kind == "see" and r["you"] == "-":
+                fails.append(f"M{n}: split `see:` but the `you` cell is `-` — no user stop to see it at")
+            elif kind == "ship" and r["merge"] != "yes":
+                fails.append(f"M{n}: split `ship:` but the milestone is not a merge point")
+            elif kind == "span" and "L" not in (r["size"], ms[i + 1]["size"]):
+                warns.append(f"M{n}: split `span:` but neither M{n} nor M{n + 1} is size L")
+
     # F: a contract's producer is reviewed before its first consumer starts
     for ln in sec.get("contracts between milestones", []):
-        m = re.match(r"^\s*-\s*(C\d+)\s*\(\s*M(\d+)\s*(?:→|->)\s*(M\d+(?:\s*,\s*M\d+)*)\s*\)", ln)
+        m = CONTRACT_RE.match(ln)
         if not m:
             continue
         cid, p = m.group(1), int(m.group(2))
