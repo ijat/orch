@@ -12,6 +12,15 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orch\" hook tier"
           }
         ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orch\" hook ask"
+          }
+        ]
       }
     ],
     "PostToolUse": [

@@ -1221,18 +1221,11 @@ def due_checkin(task_dir, now, stamps, harness=None):
     if not rows or not journal:
         return None
     logs = _log_activity(task_dir)
+    open_idx = flow.open_spawns(journal)
     best = None
     for role, row in rows:
-        i_s = i_r = None
-        for i, rec in enumerate(journal):
-            if rec.get('role') != role:
-                continue
-            k = flow.kind_of(rec)
-            if k == 'spawn':
-                i_s = i
-            elif k == 'return':
-                i_r = i
-        if i_s is None or (i_r is not None and i_r > i_s):
+        i_s = open_idx.get(role)
+        if i_s is None:
             continue
         t_spawn = _min_ts(journal[i_s].get('ts'))
         if t_spawn is None:
