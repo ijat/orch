@@ -1,0 +1,633 @@
+"""orch doctor: every check's ok and non-ok states, the report shapes, exit codes, read-only behaviour.
+
+Everything runs under a temporary HOME / ORCH_DIR / PATH; a fake orch-index script stands in for the binary; the plugin's
+own folder (doctor.BIN_DIR) is replaced by a scratch one. Nothing of the real orch data or settings is read.
+"""
+import json
+import os
+import shutil
+import stat
+import subprocess
+import sys
+import time
+import unittest
+from unittest import mock
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "plugin", "bin"))
+
+import test_core as core  # noqa: E402
+from orchlib import doctor  # noqa: E402
+
+POSIX = os.name != "nt"
+PIN = "0.2.0"
+FAKE_INDEX = """#!/bin/sh
+case "$1" in
+  --version) [ -n "$FAKE_VERSION_RC" ] && exit "$FAKE_VERSION_RC"; echo "orch-index ${FAKE_VERSION:-%s}" ;;
+  status) echo "$FAKE_STATUS"; exit "${FAKE_RC:-0}" ;;
+  *) exit 9 ;;
+esac
+""" % PIN
+GIT = shutil.which("git")
+
+
+def make_exec(path, text="#!/bin/sh\nexit 0\n"):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as fh:
+        fh.write(text)
+    os.chmod(path, 0o755)
+    return path
+
+
+def git(repo, *args):
+    subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+                   + list(args), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+class DoctorBase(core.Base):
+    def setUp(self):
+        core.Base.setUp(self)
+        self.plugin = os.path.join(self.tmp, "plugin")
+        self.bin = os.path.join(self.plugin, "bin")
+        os.makedirs(self.bin)
+        with open(os.path.join(self.bin, "orch-install-code-index.sh"), "w") as fh:
+            fh.write("#!/bin/sh\nreadonly ORCH_INDEX_VERSION=v%s\n" % PIN)
+        p = mock.patch.object(doctor, "BIN_DIR", self.bin)
+        p.start()
+        self.addCleanup(p.stop)
+        self.data = os.path.join(self.home, ".claude", "orch-data")
+        p = mock.patch.object(doctor, "data_bin", return_value=os.path.join(self.data, "bin"))
+        p.start()
+        self.addCleanup(p.stop)
+        # PATH holds git only, so no real orch-index is ever found there
+        self.gitbin = os.path.join(self.tmp, "gitbin")
+        os.makedirs(self.gitbin)
+        os.symlink(GIT, os.path.join(self.gitbin, "git"))
+        self.claude = os.path.join(self.home, ".claude")
+        self.nogit = os.path.join(self.tmp, "nogit")
+        os.makedirs(self.nogit)
+        self.env.update({"PATH": self.gitbin, "ORCH_INDEX_REAL": "", "FAKE_VERSION_RC": "", "FAKE_STATUS": "",
+                         "ORCH_DATA": "", "ORCH_CLAUDE_HOME": "", "ORCH_USAGE_HOME": "", "ORCH_USAGE_STATE": ""})
+        saved = {k: os.environ.get(k) for k in ("CLAUDE_CODE_DISABLE_AUTO_MEMORY",)}
+        os.environ.pop("CLAUDE_CODE_DISABLE_AUTO_MEMORY", None)
+        self.addCleanup(lambda: [os.environ.__setitem__(k, v) for k, v in saved.items() if v is not None])
+
+    def fake_index(self, **env):
+        path = make_exec(os.path.join(self.tmp, "fake", "orch-index"), FAKE_INDEX)
+        self.env["ORCH_INDEX_REAL"] = path
+        self.env.update({k.upper(): v for k, v in env.items()})
+        return path
+
+    def make_repo(self, name="repo"):
+        path = os.path.join(self.tmp, name)
+        os.makedirs(path)
+        git(path, "init", "-q")
+        git(path, "commit", "--allow-empty", "-q", "-m", "x")
+        return os.path.realpath(path)
+
+    def doctor(self, repo=None, env=None, *flags):
+        rc, out, err = self.run_orch("doctor", "--json", "--repo", repo or self.nogit, *flags, env=env or {})
+        self.assertIn(rc, (0, 2), "stderr=%s" % err)
+        return json.loads(out), rc
+
+    def check(self, check_id, repo=None, env=None):
+        rep, _ = self.doctor(repo, env)
+        return next(c for c in rep["checks"] if c["id"] == check_id)
+
+    def write_task(self, repo, slug, state="implementing", repo_path="", worktree="", age_days=0, state_line=True):
+        d = self.tdir(repo, slug)
+        os.makedirs(d, exist_ok=True)
+        lines = ["# Status: %s" % slug, ""]
+        if state_line:
+            lines.append("- task_state: %s" % state)
+        lines += ["- repo: %s" % repo_path, "- worktree: %s" % worktree, ""]
+        sf = os.path.join(d, "status.md")
+        with open(sf, "w") as fh:
+            fh.write("\n".join(lines))
+        if age_days:
+            t = time.time() - age_days * 86400
+            os.utime(sf, (t, t))
+        return d
+
+
+class TestReport(DoctorBase):
+    def test_json_shape_ids_areas_and_counts(self):
+        rep, _ = self.doctor()
+        self.assertEqual(rep["schema"], 1)
+        self.assertIsNone(rep["repo"])
+        ids = [c["id"] for c in rep["checks"]]
+        self.assertEqual(ids, [i for i, _, _, _ in doctor.CHECKS])
+        self.assertEqual(len(ids), 16)
+        for c in rep["checks"]:
+            self.assertEqual(sorted(c), ["area", "detail", "fix", "id", "status", "title"])
+            self.assertIn(c["area"], ("index", "install", "settings", "tasks"))
+            self.assertIn(c["status"], ("ok", "warn", "fail"))
+            self.assertIn(c["fix"]["kind"], ("auto", "manual", "none"))
+            self.assertEqual(sorted(c["fix"]), ["kind", "text"])
+        want = {s: sum(1 for c in rep["checks"] if c["status"] == s) for s in ("ok", "warn", "fail")}
+        self.assertEqual(rep["counts"], want)
+
+    def test_repo_is_the_resolved_toplevel(self):
+        repo = self.make_repo()
+        rep, _ = self.doctor(os.path.join(repo))
+        self.assertEqual(rep["repo"], repo)
+
+    def test_text_output_groups_by_area_with_fix_and_counts_line(self):
+        rc, out, _ = self.run_orch("doctor", "--repo", self.nogit)
+        lines = out.splitlines()
+        areas = [l for l in lines if l and not l.startswith(" ") and not l[0].isdigit()]
+        self.assertEqual(areas, ["index", "install", "settings", "tasks"])
+        self.assertIn("  FAIL orch-index binary: no orch-index binary found", lines)
+        i = lines.index("  FAIL orch-index binary: no orch-index binary found")
+        self.assertTrue(lines[i + 1].startswith("       fix (auto): "))
+        self.assertRegex(lines[-1], r"^\d+ ok, \d+ warn, \d+ fail$")
+        self.assertEqual(rc, 2)
+
+    def test_exit_codes_warnings_alone_exit_0_a_fail_exits_2(self):
+        self.fake_index(fake_status='{"state":"current"}')
+        os.makedirs(os.path.join(self.data, "logs"))
+        os.makedirs(os.path.join(self.data, "cache"))
+        os.makedirs(self.root, exist_ok=True)
+        rep, rc = self.doctor()
+        self.assertEqual(rep["counts"]["fail"], 0, rep["checks"])
+        self.assertGreater(rep["counts"]["warn"], 0)       # the dev copy and the missing usage log
+        self.assertEqual(rc, 0)
+        self.write_task("myapp", "broken", state_line=False)
+        rep, rc = self.doctor()
+        self.assertEqual(rc, 2)
+        self.assertEqual(self.check("tasks.parse")["status"], "fail")
+
+    def test_usage_errors_exit_1(self):
+        self.assertEqual(self.run_orch("doctor", "--repo", os.path.join(self.tmp, "nope"))[0], 1)
+        self.assertEqual(self.run_orch("doctor", "--bogus")[0], 1)
+
+    def test_a_check_that_raises_is_a_fail_and_the_others_still_run(self):
+        def boom(ctx):
+            raise RuntimeError("secret detail must not appear")
+        checks = [("a.boom", "index", "Boom", boom), ("a.fine", "index", "Fine", lambda ctx: doctor.ok("fine"))]
+        with mock.patch.object(doctor, "CHECKS", checks):
+            res = doctor.run_checks(doctor.Ctx(self.nogit))
+        self.assertEqual([r["status"] for r in res], ["fail", "ok"])
+        self.assertEqual(res[0]["detail"], "internal: RuntimeError")
+        self.assertNotIn("secret", json.dumps(res))
+
+    def test_read_only_nothing_is_created_or_changed(self):
+        repo = self.make_repo()
+        self.fake_index(fake_status='{"state":"stale","commits_behind":2}')
+        self.write_task("myapp", "t1", repo_path=repo)
+        os.makedirs(self.claude, exist_ok=True)
+        with open(os.path.join(self.claude, "settings.json"), "w") as fh:
+            fh.write("{bad")
+
+        def snap():
+            out = {}
+            for base in (self.home, repo):
+                for dp, _, names in os.walk(base):
+                    for n in names:
+                        p = os.path.join(dp, n)
+                        s = os.stat(p)
+                        out[p] = (s.st_size, s.st_mtime_ns)
+                    out[dp] = None
+            return out
+        before = snap()
+        rep, _ = self.doctor(repo)
+        self.assertEqual(snap(), before)
+        self.assertEqual(self.check("index.state", repo)["status"], "warn")
+        self.assertEqual(snap(), before)
+
+
+@unittest.skipUnless(POSIX, "fake orch-index is a shell script")
+class TestIndex(DoctorBase):
+    def test_binary_found_through_orch_index_real(self):
+        path = self.fake_index()
+        c = self.check("index.binary")
+        self.assertEqual(c["status"], "ok")
+        self.assertIn("ORCH_INDEX_REAL", c["detail"])
+        self.assertIn(os.path.basename(path), c["detail"])
+
+    def test_binary_missing_is_fail_with_auto_install_fix(self):
+        c = self.check("index.binary")
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("fail", "auto"))
+        self.assertIn("orch-index", c["fix"]["text"])
+
+    def test_binary_missing_in_a_development_copy_is_a_manual_fix(self):
+        c = self.check("index.binary", env={"ORCH_DIR": ""})
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("fail", "manual"))
+
+    def test_lookup_order_real_then_bundled_then_data_then_path(self):
+        target = "aarch64-apple-darwin"
+        with mock.patch.object(doctor, "index_target", return_value=target):
+            bundled = make_exec(os.path.join(self.bin, "vendor", "orch-index-%s" % target))
+            data = make_exec(os.path.join(self.data, "bin", "orch-index"))
+            onpath = make_exec(os.path.join(self.tmp, "pathbin", "orch-index"))
+            real = make_exec(os.path.join(self.tmp, "real", "x"))
+            env = {"PATH": os.path.dirname(onpath), "ORCH_INDEX_REAL": real}
+            with mock.patch.dict(os.environ, env):
+                self.assertEqual(doctor.find_index(), (real, "ORCH_INDEX_REAL"))
+                os.environ["ORCH_INDEX_REAL"] = os.path.join(self.tmp, "absent")
+                self.assertEqual(doctor.find_index(), (bundled, "bundled"))
+                os.unlink(bundled)
+                with mock.patch.object(doctor, "data_bin", return_value=os.path.dirname(data)):
+                    self.assertEqual(doctor.find_index(), (data, "data folder"))
+                    os.unlink(data)
+                    self.assertEqual(doctor.find_index(), (onpath, "PATH"))
+
+    def test_the_launcher_own_folder_on_path_is_skipped(self):
+        make_exec(os.path.join(self.bin, "orch-index"))
+        with mock.patch.dict(os.environ, {"PATH": self.bin, "ORCH_INDEX_REAL": ""}), \
+                mock.patch.object(doctor, "index_target", return_value=""):
+            self.assertIsNone(doctor.find_index())
+
+    def test_a_non_executable_file_is_not_a_binary(self):
+        path = os.path.join(self.tmp, "real", "orch-index")
+        make_exec(path)
+        os.chmod(path, 0o644)
+        with mock.patch.dict(os.environ, {"ORCH_INDEX_REAL": path, "PATH": self.gitbin}), \
+                mock.patch.object(doctor, "index_target", return_value=""):
+            self.assertIsNone(doctor.find_index())
+
+    def test_windows_uses_the_windows_target_and_exe_names(self):
+        target = "x86_64-pc-windows-msvc"
+        bundled = make_exec(os.path.join(self.bin, "vendor", "orch-index-%s.exe" % target))
+        make_exec(os.path.join(self.bin, "vendor", "orch-index-%s" % target))     # the wrong name is never picked
+        with mock.patch.dict(os.environ, {"ORCH_INDEX_REAL": "", "PATH": self.gitbin}), \
+                mock.patch.object(os, "name", "nt"):
+            self.assertEqual(doctor.index_target(), target)
+            self.assertEqual(doctor.find_index(), (bundled, "bundled"))
+            os.unlink(bundled)
+            data = make_exec(os.path.join(self.data, "bin", "orch-index.exe"))
+            with mock.patch.object(doctor, "data_bin", return_value=os.path.dirname(data)):
+                self.assertEqual(doctor.find_index(), (data, "data folder"))
+            os.unlink(data)
+            onpath = make_exec(os.path.join(self.tmp, "winpath", "orch-index.exe"))
+            os.environ["PATH"] = os.path.dirname(onpath)
+            self.assertEqual(doctor.find_index(), (onpath, "PATH"))
+
+    def test_unix_targets_map_like_the_launcher(self):
+        cases = {("Darwin", "arm64"): "aarch64-apple-darwin", ("Darwin", "x86_64"): "x86_64-apple-darwin",
+                 ("Linux", "x86_64"): "x86_64-unknown-linux-musl", ("Linux", "aarch64"): "aarch64-unknown-linux-musl",
+                 ("FreeBSD", "amd64"): ""}
+        for (system, machine), want in cases.items():
+            with mock.patch("platform.system", return_value=system), mock.patch("platform.machine", return_value=machine):
+                self.assertEqual(doctor.index_target(), want, (system, machine))
+
+    def test_version_ok_when_it_matches_the_pin(self):
+        self.fake_index()
+        c = self.check("index.version")
+        self.assertEqual(c["status"], "ok")
+        self.assertIn(PIN, c["detail"])
+
+    def test_version_mismatch_is_a_warning_naming_both(self):
+        self.fake_index(fake_version="0.1.0")
+        c = self.check("index.version")
+        self.assertEqual(c["status"], "warn")
+        self.assertIn("0.1.0", c["detail"])
+        self.assertIn(PIN, c["detail"])
+
+    def test_version_that_does_not_run_is_a_fail(self):
+        self.fake_index(fake_version_rc="3")
+        self.assertEqual(self.check("index.version")["status"], "fail")
+
+    def test_version_without_a_binary_is_not_checked(self):
+        c = self.check("index.version")
+        self.assertEqual(c["status"], "warn")
+        self.assertIn("not checked", c["detail"])
+
+    def test_state_current_is_ok(self):
+        repo = self.make_repo()
+        self.fake_index(fake_status='{"schema":1,"state":"current"}')
+        self.assertEqual(self.check("index.state", repo)["status"], "ok")
+
+    def test_state_stale_outdated_none_warn_with_a_manual_fix(self):
+        repo = self.make_repo()
+        for state in ("stale", "outdated", "none"):
+            self.fake_index(fake_status=json.dumps({"schema": 1, "state": state, "commits_behind": 3}))
+            c = self.check("index.state", repo)
+            self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "manual"), state)
+            self.assertIn(state, c["detail"])
+            self.assertIn("orch:graph", c["fix"]["text"])
+
+    def test_state_unusable_answer_warns(self):
+        repo = self.make_repo()
+        self.fake_index(fake_status="not json", fake_rc="1")
+        self.assertEqual(self.check("index.state", repo)["status"], "warn")
+
+    def test_state_outside_a_repo_is_ok(self):
+        self.fake_index()
+        c = self.check("index.state")
+        self.assertEqual((c["status"], c["detail"]), ("ok", "not in a git repo"))
+
+    def marker(self, repo, text, age=0):
+        d = os.path.join(repo, ".git", "orch-index")
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, "indexing")
+        with open(path, "w") as fh:
+            fh.write(text)
+        if age:
+            t = time.time() - age
+            os.utime(path, (t, t))
+        return path
+
+    def dead_pid(self):
+        p = subprocess.Popen([sys.executable, "-c", "pass"])
+        p.wait()
+        return p.pid
+
+    def test_marker_absent_is_ok(self):
+        repo = self.make_repo()
+        self.assertEqual(self.check("index.marker", repo)["status"], "ok")
+
+    def test_marker_of_a_running_rebuild_is_ok(self):
+        repo = self.make_repo()
+        self.marker(repo, "pid=%d started=2026-11-16T00:00:00Z\n" % os.getpid())
+        c = self.check("index.marker", repo)
+        self.assertEqual(c["status"], "ok")
+        self.assertIn("running", c["detail"])
+
+    def test_marker_with_a_dead_pid_warns_with_an_auto_fix(self):
+        repo = self.make_repo()
+        self.marker(repo, "pid=%d started=2026-11-16T00:00:00Z\n" % self.dead_pid())
+        c = self.check("index.marker", repo)
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "auto"))
+
+    def test_marker_older_than_30_minutes_is_dead_even_with_a_live_pid(self):
+        repo = self.make_repo()
+        self.marker(repo, "pid=%d started=x\n" % os.getpid(), age=31 * 60)
+        self.assertEqual(self.check("index.marker", repo)["status"], "warn")
+
+    def test_marker_without_a_pid_is_live_while_young(self):
+        repo = self.make_repo()
+        self.marker(repo, "garbage\n")
+        self.assertEqual(self.check("index.marker", repo)["status"], "ok")
+
+    def test_marker_fix_is_manual_in_a_development_copy(self):
+        repo = self.make_repo()
+        self.marker(repo, "pid=%d\n" % self.dead_pid())
+        self.assertEqual(self.check("index.marker", repo, env={"ORCH_DIR": ""})["fix"]["kind"], "manual")
+
+    def test_marker_is_found_through_a_linked_worktree(self):
+        repo = self.make_repo()
+        wt = os.path.join(self.tmp, "linked")
+        git(repo, "worktree", "add", "-q", "-b", "side", wt)
+        self.marker(repo, "pid=%d\n" % self.dead_pid())
+        self.assertEqual(self.check("index.marker", wt)["status"], "warn")
+
+
+class TestInstall(DoctorBase):
+    def test_copy_dev_copy_told_where_to_write_is_ok(self):
+        c = self.check("install.copy")
+        self.assertEqual(c["status"], "ok")
+        self.assertIn("development copy", c["detail"])
+
+    def test_copy_dev_copy_with_writes_refused_warns_naming_orch_dir(self):
+        c = self.check("install.copy", env={"ORCH_DIR": ""})
+        self.assertEqual(c["status"], "warn")
+        self.assertIn("ORCH_DIR", c["fix"]["text"])
+
+    def test_copy_installed_copy_is_ok(self):
+        with mock.patch.object(doctor, "is_live", return_value=True):
+            c = doctor.result("x", "install", "t", *doctor.check_install_copy(None))
+        self.assertEqual((c["status"], c["detail"].split(" (")[0]), ("ok", "installed copy"))
+
+    def listing(self, *paths):
+        d = os.path.join(self.home, ".claude", "plugins")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "installed_plugins.json"), "w") as fh:
+            json.dump({"version": 2, "plugins": {"orch@orch": [{"scope": "user", "installPath": p} for p in paths]}}, fh)
+
+    @unittest.skipUnless(POSIX, "symlinks")
+    def test_pointer_to_the_listed_root_is_ok(self):
+        listed = os.path.join(self.tmp, "cache", "abc")
+        os.makedirs(listed)
+        self.listing(listed)
+        os.makedirs(self.data)
+        os.symlink(listed, os.path.join(self.data, "plugin"))
+        self.assertEqual(self.check("install.pointer")["status"], "ok")
+
+    @unittest.skipUnless(POSIX, "symlinks")
+    def test_pointer_to_another_root_warns(self):
+        listed = os.path.join(self.tmp, "cache", "new")
+        old = os.path.join(self.tmp, "cache", "old")
+        os.makedirs(listed)
+        os.makedirs(old)
+        self.listing(listed)
+        os.makedirs(self.data)
+        os.symlink(old, os.path.join(self.data, "plugin"))
+        c = self.check("install.pointer")
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "manual"))      # a development copy cannot move it
+        self.assertIn("not the installed copy", c["detail"])
+
+    @unittest.skipUnless(POSIX, "symlinks")
+    def test_pointer_dangling_or_missing_warns_and_is_auto_only_for_the_live_copy(self):
+        self.listing(os.path.realpath(self.plugin))
+        c = self.check("install.pointer")
+        self.assertIn("missing", c["detail"])
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "manual"))
+        os.makedirs(self.data)
+        os.symlink(os.path.join(self.tmp, "gone"), os.path.join(self.data, "plugin"))
+        with mock.patch.dict(os.environ, self.env), mock.patch.object(doctor, "is_live", return_value=True):
+            kind, detail = doctor.check_install_pointer(None)[2], doctor.check_install_pointer(None)[1]
+        self.assertEqual(kind, "auto")
+        self.assertIn("gone", detail)
+
+    @unittest.skipUnless(POSIX, "symlinks")
+    def test_pointer_without_a_listing_is_ok_when_it_resolves(self):
+        os.makedirs(self.data)
+        os.symlink(self.plugin, os.path.join(self.data, "plugin"))
+        c = self.check("install.pointer")
+        self.assertEqual(c["status"], "ok")
+        self.assertIn("no installed_plugins.json entry", c["detail"])
+
+    def test_python_version(self):
+        self.assertEqual(self.check("install.python")["status"], "ok")
+        with mock.patch.object(sys, "version_info", (3, 8, 0, "final", 0)):
+            status, detail, kind, _ = doctor.check_install_python(None)
+        self.assertEqual((status, kind), ("fail", "manual"))
+        self.assertIn("3.8.0", detail)
+
+    def test_data_folders_missing_warn_with_an_auto_fix_then_ok(self):
+        c = self.check("install.data")
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "auto"))
+        self.assertIn("missing", c["detail"])
+        for sub in ("logs", "cache"):
+            os.makedirs(os.path.join(self.data, sub))
+        self.assertEqual(self.check("install.data")["status"], "ok")
+
+    def test_data_folders_missing_in_a_development_copy_is_manual(self):
+        self.assertEqual(self.check("install.data", env={"ORCH_DIR": ""})["fix"]["kind"], "manual")
+
+    @unittest.skipUnless(POSIX and hasattr(os, "geteuid") and os.geteuid() != 0, "needs a non-root POSIX user")
+    def test_data_folder_not_writable_is_a_manual_fail(self):
+        for sub in ("logs", "cache"):
+            os.makedirs(os.path.join(self.data, sub))
+        os.chmod(os.path.join(self.data, "logs"), 0o500)
+        self.addCleanup(os.chmod, os.path.join(self.data, "logs"), 0o700)
+        c = self.check("install.data")
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("fail", "manual"))
+        self.assertIn("logs", c["detail"])
+
+
+class TestSettings(DoctorBase):
+    SECRET = "sk-secret-value-123"
+
+    def orch_file(self):
+        return os.path.join(self.root, ".orch-settings.json")
+
+    def test_orch_settings_absent_valid_malformed_and_disallowed(self):
+        self.assertEqual(self.check("settings.orch")["status"], "ok")
+        with open(self.orch_file(), "w") as fh:
+            json.dump({"mythos_review": "on"}, fh)
+        self.assertEqual(self.check("settings.orch")["status"], "ok")
+        with open(self.orch_file(), "w") as fh:
+            fh.write('{"mythos_review": "%s",\n bad' % self.SECRET)
+        c = self.check("settings.orch")
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "manual"))
+        self.assertIn("line 2", c["detail"])
+        self.assertNotIn(self.SECRET, json.dumps(c))
+        with open(self.orch_file(), "w") as fh:
+            json.dump({"mythos_review": self.SECRET}, fh)
+        c = self.check("settings.orch")
+        self.assertEqual(c["status"], "warn")
+        self.assertIn("mythos_review", c["detail"])
+        self.assertNotIn(self.SECRET, json.dumps(c))
+
+    def test_orch_settings_that_is_not_an_object_warns(self):
+        with open(self.orch_file(), "w") as fh:
+            fh.write("[1, 2]")
+        self.assertEqual(self.check("settings.orch")["status"], "warn")
+
+    def write(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(text)
+
+    def test_claude_settings_ok_when_absent_or_valid(self):
+        self.assertEqual(self.check("settings.claude")["status"], "ok")
+        self.write(os.path.join(self.claude, "settings.json"), json.dumps({"env": {"TOKEN": self.SECRET}}))
+        c = self.check("settings.claude")
+        self.assertEqual(c["status"], "ok")
+        self.assertNotIn(self.SECRET, json.dumps(c))
+
+    def test_claude_settings_malformed_names_the_file_and_position_only(self):
+        repo = self.make_repo()
+        self.write(os.path.join(self.claude, "settings.json"), '{"env": {"TOKEN": "%s"},\n  oops}' % self.SECRET)
+        self.write(os.path.join(repo, ".claude", "settings.local.json"), '["%s"]' % self.SECRET)
+        c = self.check("settings.claude", repo)
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "manual"))
+        self.assertIn("global", c["detail"])
+        self.assertIn("line 2", c["detail"])
+        self.assertIn("project local", c["detail"])
+        self.assertIn("not a JSON object", c["detail"])
+        self.assertNotIn(self.SECRET, json.dumps(c))
+
+    def test_memory_auto_states(self):
+        self.assertEqual(self.check("memory.auto")["status"], "ok")
+        repo = self.make_repo()
+        c = self.check("memory.auto", repo)
+        self.assertEqual(c["status"], "ok")
+        self.assertTrue(c["detail"].startswith("on for"), c["detail"])
+        self.write(os.path.join(repo, ".claude", "settings.local.json"), json.dumps({"autoMemoryEnabled": False}))
+        self.assertTrue(self.check("memory.auto", repo)["detail"].startswith("off for"))
+
+    def log(self, age_seconds=None):
+        path = os.path.join(self.claude, ".statusline-usage-log")
+        if age_seconds is None:
+            return
+        t = int(time.time() - age_seconds)
+        self.write(path, "%d 10 %d 20 %d 33ed49e5-80c1-4118-97a2-6586ed30f40a\n" % (t, t + 3600, t + 86400))
+
+    def test_usage_samples_missing_stale_fresh(self):
+        c = self.check("usage.samples")
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "manual"))
+        self.assertIn("UNKNOWN", c["detail"])
+        self.log(3 * 3600)
+        c = self.check("usage.samples")
+        self.assertEqual(c["status"], "warn")
+        self.assertIn("STALE", c["detail"])
+        self.log(60)
+        self.assertEqual(self.check("usage.samples")["status"], "ok")
+
+
+class TestTasks(DoctorBase):
+    def test_parse_ok_and_fail_listing_the_folders(self):
+        self.write_task("myapp", "good")
+        self.assertEqual(self.check("tasks.parse")["status"], "ok")
+        self.write_task("myapp", "no-state", state_line=False)
+        c = self.check("tasks.parse")
+        self.assertEqual(c["status"], "fail")
+        self.assertIn("myapp/no-state", c["detail"])
+        self.assertNotIn("myapp/good", c["detail"])
+
+    @unittest.skipUnless(POSIX and hasattr(os, "geteuid") and os.geteuid() != 0, "needs a non-root POSIX user")
+    def test_parse_unreadable_status_is_a_fail(self):
+        d = self.write_task("myapp", "locked")
+        os.chmod(os.path.join(d, "status.md"), 0)
+        self.addCleanup(os.chmod, os.path.join(d, "status.md"), 0o644)
+        self.assertEqual(self.check("tasks.parse")["status"], "fail")
+
+    def test_stale_lists_only_active_tasks_idle_over_7_days(self):
+        self.write_task("myapp", "fresh", age_days=1)
+        self.write_task("myapp", "old-done", state="done", age_days=30)
+        self.assertEqual(self.check("tasks.stale")["status"], "ok")
+        self.write_task("myapp", "old-active", age_days=8)
+        c = self.check("tasks.stale")
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "manual"))
+        self.assertIn("myapp/old-active", c["detail"])
+        self.assertNotIn("old-done", c["detail"])
+        self.assertNotIn("myapp/fresh", c["detail"])
+
+    def test_stale_a_recent_log_keeps_a_task_fresh(self):
+        d = self.write_task("myapp", "logged", age_days=20)
+        with open(os.path.join(d, "log.md"), "w") as fh:
+            fh.write("- now\n")
+        self.assertEqual(self.check("tasks.stale")["status"], "ok")
+
+    def test_worktree_recorded_but_gone_warns_for_this_repo_only(self):
+        repo = self.make_repo()
+        other = self.make_repo("other")
+        here = os.path.join(self.tmp, "wt-here")
+        os.makedirs(here)
+        self.write_task("repo", "present", repo_path=repo, worktree=here)
+        self.write_task("repo", "none-yet", repo_path=repo, worktree="none (not yet created)")
+        self.write_task("repo", "finished", state="done", repo_path=repo, worktree=os.path.join(self.tmp, "wt-done"))
+        self.write_task("other", "elsewhere", repo_path=other, worktree=os.path.join(self.tmp, "wt-other"))
+        self.assertEqual(self.check("tasks.worktree", repo)["status"], "ok")
+        self.write_task("repo", "lost", repo_path=repo, worktree=os.path.join(self.tmp, "wt-lost"))
+        c = self.check("tasks.worktree", repo)
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "manual"))
+        self.assertIn("repo/lost", c["detail"])
+        self.assertNotIn("elsewhere", c["detail"])
+        self.assertNotIn("present", c["detail"])
+
+    def test_orphans_orch_worktree_with_no_task_warns_with_the_remove_command(self):
+        repo = self.make_repo()
+        wt = os.path.join(repo, ".claude", "worktrees", "orch-x")
+        git(repo, "worktree", "add", "-q", "-b", "orch/x", wt)
+        git(repo, "worktree", "add", "-q", "-b", "other", os.path.join(self.tmp, "elsewhere"))
+        c = self.check("tasks.orphans", repo)
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "manual"))
+        self.assertIn("orch-x", c["detail"])
+        self.assertIn("git worktree remove %s" % os.path.realpath(wt), c["fix"]["text"])
+        self.assertNotIn("elsewhere", c["detail"])
+
+    def test_orphans_a_task_that_records_it_clears_the_warning(self):
+        repo = self.make_repo()
+        wt = os.path.join(repo, ".claude", "worktrees", "orch-x")
+        git(repo, "worktree", "add", "-q", "-b", "orch/x", wt)
+        self.write_task("repo", "x", repo_path=repo, worktree=wt)
+        self.assertEqual(self.check("tasks.orphans", repo)["status"], "ok")
+
+    def test_orphans_seen_from_inside_a_linked_worktree(self):
+        repo = self.make_repo()
+        wt = os.path.join(repo, ".claude", "worktrees", "orch-x")
+        git(repo, "worktree", "add", "-q", "-b", "orch/x", wt)
+        self.assertEqual(self.check("tasks.orphans", wt)["status"], "warn")
+
+    def test_worktree_and_orphan_checks_outside_a_repo_are_ok(self):
+        for cid in ("tasks.worktree", "tasks.orphans"):
+            self.assertEqual(self.check(cid)["detail"], "not in a git repo")
+
+
+if __name__ == "__main__":
+    unittest.main()
