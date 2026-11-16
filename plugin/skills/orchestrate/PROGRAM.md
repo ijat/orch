@@ -78,7 +78,7 @@ reason — every time (`orch merge` reads the row, so last milestone's value mus
    ask the user. Never fast-forward. The branch continues.
 7. **If the row has a `you` entry**, park it as a question (§4) and wait for it — including `merge`; `orch merge` refuses
    where the `you` cell names merge.
-8. Journal `milestone_end` (outcome, tiers actually used, rounds, tokens if reported) and
+8. Journal `milestone_end` (outcome `done`, `blocked` or `abandoned`: `done` for every milestone that closed, merged or not; tiers actually used, rounds, tokens if reported) and
    `orch checkpoint`. Every milestone gets its own `milestone_end` before the next `milestone_start`, including one
    merged together with later ones; `orch journal milestone_start` refuses while an earlier started milestone has none.
 
