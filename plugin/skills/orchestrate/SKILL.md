@@ -248,6 +248,9 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
    tick ≤ 8 min running `orch usage` with check-in on silence, re-arming the wait once. Two exits < 60 s
    apart (not 2/10), or the re-armed wait failing again → ticks until the next resume; tell the user once.
    Never `TaskStop` the wait when a subagent returns; at task end only if `orch end` didn't end it.
+   **A task notification is a finish.** One whose summary says `Agent "…" finished` (or `failed`, `stopped`,
+   `killed`) means the subagent is done: run `orch return <role>` at once, whatever its row says. Only a summary ending
+   `is waiting on its own background work` is interim: keep waiting for its next notice.
 4. On `WARN`/`STALE`: log, tell the user, apply the slow-down rules; don't stop the subagent. `STOP`: pause.
 5. **Check-in on silence** (a CHECKIN exit, or a fallback tick): if the running role's last `log.md` line
    is older than the check-in interval — 30, 60, 120, 120 min (four) after each check-in on that
@@ -268,6 +271,15 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
    finish. Don't judge progress: run `orch return <role>` now (Checkpointing contract), then act on its outcome. It fires once per
    spawn, 5 minutes after the row went final, whatever check-ins came before; it is not one of the 4 silence check-ins;
    a `waiting` row never fires it.
+   **`final=finished` in the CHECKIN line** (`CHECKIN role=<r> silent_min=<n> interval=2 final=finished ...`): the
+   harness's own task notice says the subagent finished, 2 minutes ago, and no `orch return` followed, whatever its
+   row says. Run `orch return <role>`. If it refuses because the row is not final (`in_progress`), the role stopped
+   without a checkpoint: read its files and `git -C <worktree> log -3 --stat`, then
+   `orch return <role> --outcome done|stopped` by what landed, and go on (a `stopped` role is re-spawned from its
+   last checkpoint). It fires once per spawn and is not one of the 4 silence check-ins.
+   **`progress=hung` in the CHECKIN line:** the subagent has sent no notice and its transcript has not been written for
+   20 minutes (a role waiting on its own job is never hung). Treat it as looping: `SendMessage`, then `TaskStop`. It
+   counts as one of the 4 silence check-ins and fires once per spawn.
 
 **Index rebuild pause.** Two triggers call `orch:graph`.
 
@@ -416,7 +428,8 @@ parks, so group related ones and merge duplicates. `orch status --json` carries 
 
 **Panel questions are mandatory, and only there.** With this skill loaded, every question for the user (a role's, a skill's
 such as the `orch:init` skill's, the plan gate's or your own) is parked with `orch ask` and answered in orch-pane. Never ask it in
-text, never with `AskUserQuestion`, and never repeat a parked question's options in your reply. Write each option for
+text, never with `AskUserQuestion` (an orch hook refuses it while a subagent of this task is running: a pop-up holds
+every notification, a finish notice included, until answered), and never repeat a parked question's options in your reply. Write each option for
 someone who has not read the code: say what changes for the user, explain any technical term, and add an example when it
 is still abstract. A critical change (destructive, hard to reverse, wide blast radius; `--reversible no`) has no
 `--recommended`, and each option says what will happen, with a before and after. Add `--multi` when several options may be
