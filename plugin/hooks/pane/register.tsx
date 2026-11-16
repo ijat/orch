@@ -3,7 +3,7 @@ import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
 import type { About, AboutPart, AskState, Draft, Drafts, IndexStatus, PlainEntry, QState, Snapshot, StatusJson, StatusMilestone, StatusQuestion, StatusStep, StatusTask, Tab } from '../../types'
 import {
-  GREY, agentPalette, agentPct, agentPctTail, ago, askContext, barCells, barLayout, clip, countTail, elapsed, fold, goalLine, hhmm, idleMinutes, indexDetails, indexHeadline,
+  GREY, agentPalette, agentPct, agentPctTail, ago, askContext, barCells, barLayout, clip, countTail, elapsed, fold, goalLine, hhmm, idleMinutes, indexCandidates, indexDetails, indexHeadline, indexTarget,
   indexLook, indexNeedsAnswerWarning, isRunning, isStale, lastActivity, mdLite, overallTail, parseIndex, placeText, plainInput,
   isMine, scopeLabel, shimmer, splitScope, spawnOf, stateColor, stepsTail, stripMarks, textKey,
   HISTORY_PAGE, MEMORY_PROMPT, NO_DRAFT, WAKE_TEXT, memoryStateOf, acceptable, activeGroupOf, answerOf, answersArgv, autoPairs, confirmedOf, groupKey, hasOptions,
@@ -99,10 +99,28 @@ async function setError($: EngineInterface, error: string) {
   await update($, snapshot, s => ({ ...(s ?? EMPTY), error, fetchedAt }))
 }
 
-// Runs `orch-index status --json` for the session folder. It is a native binary in orch's data folder; a missing one
-// or a failure leaves a note and the last good index stays out of sight (an old index would mislead).
+// The orch-index binary to run, found as the bin/orch-index launcher finds it (that launcher is a bash script, which
+// Windows cannot start from here): the first of indexCandidates that exists, else the bare name for PATH. `uname -sm`
+// runs once per load (the machine does not change); a failed run leaves only the non-bundled places.
+let unameSm: Promise<string | null> | null = null
+
+async function indexBin($: EngineInterface, home: string, windows: boolean): Promise<string> {
+  if (!windows && !unameSm) {
+    unameSm = $.process.run(['uname', '-sm'], { timeoutMs: RUN_TIMEOUT_MS })
+      .then(r => (r.exitCode === 0 ? r.stdout : null), () => null)
+  }
+  const target = indexTarget(windows, windows ? null : await unameSm)
+  const [real, data] = await Promise.all([$.env.get('ORCH_INDEX_REAL'), $.env.get('ORCH_DATA')])
+  for (const path of indexCandidates({ root: $.plugin.root, home, windows, target, real, data })) {
+    if (await $.fs.exists(path).catch(() => false)) return path
+  }
+  return `orch-index${windows ? '.exe' : ''}`
+}
+
+// Runs `orch-index status --json` for the session folder. A missing binary or a failure leaves a note and the last
+// good index stays out of sight (an old index would mislead).
 async function fetchIndex($: EngineInterface, home: string, windows: boolean, cwd: string) {
-  const bin = `${home.replace(/\\/g, '/')}/.claude/orch-data/bin/orch-index${windows ? '.exe' : ''}`
+  const bin = await indexBin($, home, windows)
   const set = (index: IndexStatus | null, indexNote: string | null) =>
     update($, snapshot, s => ({ ...(s ?? EMPTY), index, indexNote }))
   let ran
@@ -143,7 +161,7 @@ async function fetchAbout($: EngineInterface, home: string, windows: boolean): P
   const root = $.plugin.root.replace(/\\/g, '/')
   const [orchV, indexV, installed] = await Promise.all([
     run([...(windows ? ['python'] : []), `${root}/bin/orch`, '--version']),
-    run([`${h}/.claude/orch-data/bin/orch-index${windows ? '.exe' : ''}`, '--version']),
+    indexBin($, home, windows).then(bin => run([bin, '--version'])),
     run([py, '-c', `${PICK}e=d['plugins'].get('orch@orch')\nif e: print(e[0].get('installPath','').replace(chr(92),'/'), e[0].get('gitCommitSha',''))`, `${h}/.claude/plugins/installed_plugins.json`]),
   ])
   // The sha is the last word; the path before it may hold spaces.
