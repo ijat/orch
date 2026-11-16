@@ -21,6 +21,7 @@ import test_core as core  # noqa: E402
 from orchlib import doctor  # noqa: E402
 
 POSIX = os.name != "nt"
+NO_WRITE = {"ORCH_DIR": "", "ORCH_DATA": ""}      # a development copy not told where to write
 PIN = "0.2.0"
 FAKE_INDEX = """#!/bin/sh
 case "$1" in
@@ -69,10 +70,16 @@ class DoctorBase(core.Base):
         self.nogit = os.path.join(self.tmp, "nogit")
         os.makedirs(self.nogit)
         self.env.update({"PATH": self.gitbin, "ORCH_INDEX_REAL": "", "FAKE_VERSION_RC": "", "FAKE_STATUS": "",
-                         "ORCH_DATA": "", "ORCH_CLAUDE_HOME": "", "ORCH_USAGE_HOME": "", "ORCH_USAGE_STATE": ""})
+                         "ORCH_DATA": self.data, "ORCH_CLAUDE_HOME": "", "ORCH_USAGE_HOME": "", "ORCH_USAGE_STATE": ""})
         saved = {k: os.environ.get(k) for k in ("CLAUDE_CODE_DISABLE_AUTO_MEMORY",)}
         os.environ.pop("CLAUDE_CODE_DISABLE_AUTO_MEMORY", None)
         self.addCleanup(lambda: [os.environ.__setitem__(k, v) for k, v in saved.items() if v is not None])
+
+    def live_copy(self):
+        """Doctor's own answer for the installed copy (the one place a fix may reach a repo's .git)."""
+        p = mock.patch.object(doctor, "is_live", return_value=True)
+        p.start()
+        self.addCleanup(p.stop)
 
     def fake_index(self, **env):
         path = make_exec(os.path.join(self.tmp, "fake", "orch-index"), FAKE_INDEX)
@@ -214,7 +221,7 @@ class TestIndex(DoctorBase):
         self.assertIn("orch-index", c["fix"]["text"])
 
     def test_binary_missing_in_a_development_copy_is_a_manual_fix(self):
-        c = self.check("index.binary", env={"ORCH_DIR": ""})
+        c = self.check("index.binary", env=NO_WRITE)
         self.assertEqual((c["status"], c["fix"]["kind"]), ("fail", "manual"))
 
     def test_lookup_order_real_then_bundled_then_data_then_path(self):
@@ -363,6 +370,7 @@ class TestIndex(DoctorBase):
         self.assertIn("running", c["detail"])
 
     def test_marker_with_a_dead_pid_warns_with_an_auto_fix(self):
+        self.live_copy()
         repo = self.make_repo()
         self.marker(repo, "pid=%d started=2026-11-16T00:00:00Z\n" % self.dead_pid())
         c = self.check("index.marker", repo)
@@ -381,7 +389,7 @@ class TestIndex(DoctorBase):
     def test_marker_fix_is_manual_in_a_development_copy(self):
         repo = self.make_repo()
         self.marker(repo, "pid=%d\n" % self.dead_pid())
-        self.assertEqual(self.check("index.marker", repo, env={"ORCH_DIR": ""})["fix"]["kind"], "manual")
+        self.assertEqual(self.check("index.marker", repo, env=NO_WRITE)["fix"]["kind"], "manual")
 
     def test_marker_is_found_through_a_linked_worktree(self):
         repo = self.make_repo()
@@ -398,7 +406,7 @@ class TestInstall(DoctorBase):
         self.assertIn("development copy", c["detail"])
 
     def test_copy_dev_copy_with_writes_refused_warns_naming_orch_dir(self):
-        c = self.check("install.copy", env={"ORCH_DIR": ""})
+        c = self.check("install.copy", env=NO_WRITE)
         self.assertEqual(c["status"], "warn")
         self.assertIn("ORCH_DIR", c["fix"]["text"])
 
@@ -473,7 +481,7 @@ class TestInstall(DoctorBase):
         self.assertEqual(self.check("install.data")["status"], "ok")
 
     def test_data_folders_missing_in_a_development_copy_is_manual(self):
-        self.assertEqual(self.check("install.data", env={"ORCH_DIR": ""})["fix"]["kind"], "manual")
+        self.assertEqual(self.check("install.data", env=NO_WRITE)["fix"]["kind"], "manual")
 
     @unittest.skipUnless(POSIX and hasattr(os, "geteuid") and os.geteuid() != 0, "needs a non-root POSIX user")
     def test_data_folder_not_writable_is_a_manual_fail(self):
@@ -490,7 +498,8 @@ class TestSettings(DoctorBase):
     SECRET = "sk-secret-value-123"
 
     def orch_file(self):
-        return os.path.join(self.root, ".orch-settings.json")
+        os.makedirs(self.data, exist_ok=True)
+        return os.path.join(self.data, "settings.json")
 
     def test_orch_settings_absent_valid_malformed_and_disallowed(self):
         self.assertEqual(self.check("settings.orch")["status"], "ok")
@@ -643,6 +652,17 @@ class TestTasks(DoctorBase):
         self.write_task("repo", "x", repo_path=repo, worktree=wt)
         self.assertEqual(self.check("tasks.orphans", repo)["status"], "ok")
 
+    def test_orphans_a_finished_task_that_kept_its_worktree_does_not_hide_it(self):
+        repo = self.make_repo()
+        wt = os.path.join(repo, ".claude", "worktrees", "orch-done")
+        git(repo, "worktree", "add", "-q", "-b", "orch/done", wt)
+        self.write_task("repo", "done-task", state="done", repo_path=repo, worktree=wt)
+        c = self.check("tasks.orphans", repo)
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "manual"))
+        self.assertIn("orch-done", c["detail"])
+        self.write_task("repo", "live-task", repo_path=repo, worktree=wt)        # an active task recording it clears the warning
+        self.assertEqual(self.check("tasks.orphans", repo)["status"], "ok")
+
     def test_orphans_seen_from_inside_a_linked_worktree(self):
         repo = self.make_repo()
         wt = os.path.join(repo, ".claude", "worktrees", "orch-x")
@@ -700,11 +720,73 @@ class TestFix(DoctorBase):
             mock.patch.object(doctor.paths, "BIN_DIR", self.bin)
 
     def test_a_development_copy_refuses_and_changes_nothing(self):
-        rc, out, err = self.run_orch("doctor", "--fix", "--repo", self.nogit, env={"ORCH_DIR": ""})
+        rc, out, err = self.run_orch("doctor", "--fix", "--repo", self.nogit, env=NO_WRITE)
         self.assertEqual(rc, 2)
         self.assertIn("development copy", err)
         self.assertEqual(out, "")
         self.assertFalse(os.path.exists(self.data))
+
+    # F3: from a development copy no fix writes outside ORCH_DATA (when set) or ORCH_DIR.
+    def scratch_tasks(self):
+        return os.path.join(self.tmp, "scratch-tasks")
+
+    def test_dev_copy_with_only_orch_dir_never_creates_the_real_data_folders(self):
+        env = {"ORCH_DATA": "", "ORCH_DIR": self.scratch_tasks()}
+        c = self.check("install.data", env=env)
+        self.assertEqual(c["status"], "warn")
+        self.assertEqual(c["fix"]["kind"], "auto")                 # the tasks folder is in ORCH_DIR's scope
+        self.assertIn("create", c["fix"]["text"])
+        self.assertIn("yourself", c["fix"]["text"])                # the data root, logs and cache are not
+        rep, _ = self.fix(env=env)
+        f = self.results(rep)["install.data"]
+        self.assertEqual(f["result"], "done")
+        self.assertIn("left alone", f["detail"])
+        self.assertTrue(os.path.isdir(self.scratch_tasks()))
+        self.assertFalse(os.path.exists(self.data), "the real data root must not be created")
+        c = next(c for c in rep["checks"] if c["id"] == "install.data")
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "manual"))
+
+    def test_dev_copy_with_only_orch_dir_does_not_install_the_binary(self):
+        ran = os.path.join(self.tmp, "installer-ran")
+        self.installer("#!/bin/sh\ntouch %s\n" % ran)
+        env = {"ORCH_DATA": "", "ORCH_DIR": self.root}
+        c = self.check("index.binary", env=env)
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("fail", "manual"))
+        rep, _ = self.fix(env=env)
+        self.assertNotIn("index.binary", self.results(rep))
+        self.assertFalse(os.path.exists(ran))
+        self.assertFalse(os.path.exists(os.path.join(self.data, "bin")))
+
+    def test_dev_copy_leaves_a_repos_marker_alone_and_the_fixers_guard_themselves(self):
+        repo = self.make_repo()
+        path = self.marker(repo, "pid=%d\n" % self.dead_pid())
+        c = self.check("index.marker", repo)                       # ORCH_DATA is set, the repo's .git is outside it
+        self.assertEqual((c["status"], c["fix"]["kind"]), ("warn", "manual"))
+        rep, _ = self.fix(repo)
+        self.assertNotIn("index.marker", self.results(rep))
+        self.assertTrue(os.path.exists(path))
+        with mock.patch.dict(os.environ, self.env):                # called directly: the fixer refuses by itself
+            self.assertEqual(doctor.fix_index_marker(doctor.Ctx(repo))[0], "skipped")
+        self.assertTrue(os.path.exists(path))
+
+    def test_the_fixers_refuse_a_path_outside_the_scope_even_when_called_directly(self):
+        with mock.patch.dict(os.environ, {"ORCH_DATA": "", "ORCH_DIR": self.scratch_tasks()}):
+            result, detail = doctor.fix_data_folders(None)
+            self.assertEqual(result, "done")                       # only ORCH_DIR's tasks folder
+            self.assertEqual(doctor.fix_index_binary(None)[0], "skipped")
+        self.assertFalse(os.path.exists(self.data))
+
+    def test_the_installed_copy_may_write_anywhere_orch_owns(self):
+        self.live_copy()
+        with mock.patch.dict(os.environ, {"ORCH_DATA": "", "ORCH_DIR": ""}):
+            self.assertTrue(doctor.fix_scope_allows(os.path.join(self.tmp, "anywhere")))
+
+    def test_scope_is_exact_not_a_prefix_match(self):
+        sibling = self.scratch_tasks() + "-other"
+        with mock.patch.dict(os.environ, {"ORCH_DATA": "", "ORCH_DIR": self.scratch_tasks()}):
+            self.assertTrue(doctor.fix_scope_allows(self.scratch_tasks()))
+            self.assertTrue(doctor.fix_scope_allows(os.path.join(self.scratch_tasks(), "sub")))
+            self.assertFalse(doctor.fix_scope_allows(sibling))
 
     def test_data_folders_are_created_then_the_check_passes(self):
         rep, _ = self.fix()
@@ -784,7 +866,8 @@ class TestFix(DoctorBase):
 
     def test_binary_on_windows_without_git_bash_is_skipped(self):
         self.installer(INSTALLER_OK)
-        with mock.patch.object(os, "name", "nt"), mock.patch.object(doctor, "windows_bash", return_value=None):
+        with mock.patch.dict(os.environ, self.env), mock.patch.object(os, "name", "nt"), \
+                mock.patch.object(doctor, "windows_bash", return_value=None):
             result, detail = doctor.fix_index_binary(None)
         self.assertEqual(result, "skipped")
         self.assertIn("Git Bash", detail)
@@ -798,6 +881,7 @@ class TestFix(DoctorBase):
             self.assertEqual(doctor.windows_bash(), os.path.realpath(bash))
 
     def test_a_dead_marker_is_removed(self):
+        self.live_copy()
         repo = self.make_repo()
         path = self.marker(repo, "pid=%d started=x\n" % self.dead_pid())
         rep, _ = self.fix(repo)
@@ -806,12 +890,14 @@ class TestFix(DoctorBase):
         self.assertEqual(next(c for c in rep["checks"] if c["id"] == "index.marker")["status"], "ok")
 
     def test_an_old_marker_is_removed_even_when_its_pid_runs(self):
+        self.live_copy()
         repo = self.make_repo()
         path = self.marker(repo, "pid=%d\n" % os.getpid(), age=31 * 60)
         self.assertEqual(self.results(self.fix(repo)[0])["index.marker"]["result"], "done")
         self.assertFalse(os.path.exists(path))
 
     def test_a_live_marker_survives(self):
+        self.live_copy()
         repo = self.make_repo()
         path = self.marker(repo, "pid=%d\n" % os.getpid())
         rep, _ = self.fix(repo)
@@ -822,6 +908,7 @@ class TestFix(DoctorBase):
         self.assertTrue(os.path.exists(path))
 
     def test_a_marker_that_changes_after_it_was_judged_survives(self):
+        self.live_copy()
         repo = self.make_repo()
         path = self.marker(repo, "pid=%d\n" % self.dead_pid())
         ctx = doctor.Ctx(repo)

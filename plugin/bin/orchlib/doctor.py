@@ -191,6 +191,23 @@ def installed_roots():
     return out
 
 
+def _within(path, root):
+    path, root = os.path.realpath(path), os.path.realpath(root)
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def fix_scope_allows(path):
+    """True when `--fix` may write at path. The installed copy writes anywhere orch owns; a development copy only inside
+    ORCH_DATA (when set) or ORCH_DIR, never the real orch data."""
+    if is_live():
+        return True
+    for var in ("ORCH_DATA", "ORCH_DIR"):
+        root = os.environ.get(var)
+        if root and _within(path, root):
+            return True
+    return False
+
+
 def own_plugin_root():
     return os.path.realpath(os.path.join(BIN_DIR, ".."))
 
@@ -296,12 +313,12 @@ def check_index_binary(ctx):
     if found:
         return ok("%s (%s)" % (tilde(found[0]), found[1]))
     script = os.path.join(BIN_DIR, "orch-install-code-index.sh")
-    if writes_allowed():
+    if fix_scope_allows(data_bin()):
         return fail("no orch-index binary found", "auto",
                     "install the pinned orch-index into %s (%s verifies its checksum and never overwrites)"
                     % (tilde(data_bin()), "orch-install-code-index.sh"))
     return fail("no orch-index binary found", "manual",
-                "run %s (development copy: set ORCH_DIR or ORCH_DATA to let doctor install it)" % tilde(script))
+                "run %s (a development copy installs only into ORCH_DATA)" % tilde(script))
 
 
 def check_index_version(ctx):
@@ -363,7 +380,7 @@ def check_index_marker(ctx):
         return ok("a rebuild is running%s" % (" (pid %d)" % pid if pid else ""))
     where = "main checkout %s" % tilde(ctx.index_repo)
     text = "remove the dead indexing marker %s" % tilde(marker)
-    if writes_allowed():
+    if fix_scope_allows(marker):
         return warn("dead indexing marker, no rebuild runs (%s)" % where, "auto", text)
     return warn("dead indexing marker, no rebuild runs (%s)" % where, "manual", text)
 
@@ -432,8 +449,13 @@ def check_install_data(ctx):
                     "give your user write access: chmod u+w %s" % " ".join(tilde(p) for _, p in locked))
     if missing:
         detail = "missing: %s" % short_list("%s (%s)" % (l, tilde(p)) for l, p in missing)
+        allowed = [p for _, p in missing if fix_scope_allows(p)]
+        blocked = [p for _, p in missing if not fix_scope_allows(p)]
         text = "create %s" % ", ".join(tilde(p) for _, p in missing)
-        return warn(detail, "auto" if writes_allowed() else "manual", text)
+        if blocked and allowed:
+            text = "create %s; create %s yourself (a development copy leaves anything outside ORCH_DATA / ORCH_DIR alone)" % (
+                ", ".join(tilde(p) for p in allowed), ", ".join(tilde(p) for p in blocked))
+        return warn(detail, "auto" if allowed else "manual", text)
     return ok("data root %s, tasks %s" % (tilde(data_root()), tilde(orch_root())))
 
 
@@ -558,7 +580,7 @@ def check_tasks_orphans(ctx):
         return warn("git worktree list failed", "manual", "run `git worktree list` in %s and read its error" % ctx.repo)
     parent = os.path.realpath(os.path.join(ctx.main_root, ".claude", "worktrees"))
     known = set()
-    for t in ctx.repo_tasks():
+    for t in active(ctx.repo_tasks()):        # a finished task's leftover worktree is an orphan too
         wt = recorded_worktree(t)
         if wt:
             known.add(os.path.realpath(wt))
@@ -604,15 +626,22 @@ def last_line(text):
 
 
 def fix_data_folders(ctx):
-    made = []
+    made, left = [], []
     try:
         for _, path in data_folders():
-            if not os.path.isdir(path):
-                os.makedirs(path, exist_ok=True)
-                made.append(tilde(path))
+            if os.path.isdir(path):
+                continue
+            if not fix_scope_allows(path):
+                left.append(tilde(path))
+                continue
+            os.makedirs(path, exist_ok=True)
+            made.append(tilde(path))
     except OSError as exc:
         return "failed", "%s: %s" % (type(exc).__name__, exc.strerror or exc)
-    return ("done", "created %s" % ", ".join(made)) if made else ("skipped", "nothing was missing")
+    note = "; left alone (outside ORCH_DATA / ORCH_DIR): %s" % ", ".join(left) if left else ""
+    if made:
+        return "done", "created %s%s" % (", ".join(made), note)
+    return "skipped", ("nothing in scope to create" + note) if left else "nothing was missing"
 
 
 def fix_pointer(ctx):
@@ -641,6 +670,8 @@ def windows_bash():
 
 
 def fix_index_binary(ctx):
+    if not fix_scope_allows(data_bin()):
+        return "skipped", "%s is outside ORCH_DATA; a development copy installs only there" % tilde(data_bin())
     script = os.path.join(BIN_DIR, "orch-install-code-index.sh")
     if not os.path.isfile(script):
         return "failed", "%s is missing" % tilde(script)
@@ -671,6 +702,8 @@ def fix_index_marker(ctx):
     if not ctx.common_dir:
         return "skipped", "not in a git repo"
     path = os.path.join(ctx.common_dir, "orch-index", "indexing")
+    if not fix_scope_allows(path):
+        return "skipped", "the marker is outside ORCH_DATA / ORCH_DIR; a development copy leaves it alone"
     try:
         with open(path, "rb") as fh:
             first = fh.read()
