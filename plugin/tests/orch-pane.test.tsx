@@ -4,7 +4,7 @@ import type { Engine, MockClock } from 'claude-code/testing'
 
 import {
   agentPalette, agentPct, agentPctTail, askContext, barCells, barLayout, countTail, fold, goalLine, hhmm, idleMinutes, isStale, lastActivity, lineText, mdLite,
-  bytesText, indexDetails, indexHeadline, indexLook, overallTail, parseIndex, placeText, plainInput, scopeLabel, shimmer,
+  bytesText, indexCandidates, indexDetails, indexHeadline, indexLook, indexTarget, overallTail, parseIndex, placeText, plainInput, scopeLabel, shimmer,
   sortByAttention, splitScope, isMine, spawnOf, sparkline, stepsTail, textKey,
   MEMORY_PROMPT, WAKE_TEXT, memoryStateOf, acceptable, answerOf, answersArgv, autoPairs, historyRows, isCritical, mergeOrder, metaText, nextInQueue, optionNote,
   pageCount, pickCurrent, pickedLabel, staleQuestion, togglePick, isChosen, isMulti, needsHoldRow, openListOf, skipFor,
@@ -88,6 +88,8 @@ type World = {
   // `orch memory` runs, the value `autoMemoryEnabled` has in the project's local settings file ('false' | 'unset'), the
   // global file's value, and whether a switch fails.
   memoryRuns: string[][]; memoryLocal: 'false' | 'unset'; memoryGlobal: 'false' | 'unset'; memoryRefuses?: boolean
+  // Paths `fs.exists` finds (the orch-index candidates), and what `uname -sm` prints (null: it fails).
+  files: Set<string>; uname: string | null
 }
 
 const INDEX: IndexStatus = {
@@ -120,8 +122,11 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
   const w: World = {
     runs: [], indexRuns: [], opens: 0, paneOpen: true, placed: true, result, index: INDEX_RAN,
     answers: [], answered: { exitCode: 0, stdout: 'Q1 answered', stderr: '' }, onAnswers: () => {}, groups: {}, groupRuns: [], toasts: [], wakes: [], notes: [], tools: [], compacts: [], compactFails: 0, order: [], settingRuns: [], mythos: 'off', memoryRuns: [], memoryLocal: 'unset', memoryGlobal: 'unset',
+    files: new Set(['/home/u/.claude/orch-data/bin/orch-index', 'C:/home/u/.claude/orch-data/bin/orch-index.exe']), uname: 'Darwin arm64\n',
   }
   mock.env(on, env)
+  // A test host that is not Windows resolves `C:/…` against the working directory: compare from the drive letter on.
+  on('fs.exists', (_, e) => ({ value: w.files.has(e.path.replace(/^.*\/(?=[A-Z]:\/)/, '')) }))
   on('session.cwd', () => ({ value: '/proj' }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('ui.open', () => {
@@ -134,6 +139,9 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
       : [],
   }))
   on('process.run', (_, e) => {
+    if (e.argv[0] === 'uname') {
+      return { value: { exitCode: w.uname === null ? 1 : 0, stdout: w.uname ?? '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     // The About probes: `--version` of orch and orch-index, and a python one-liner for installed_plugins.json
     // (it prints the installPath and the gitCommitSha of `orch@orch`; `w.installedAt` is where it says it is installed).
     if (e.argv.includes('--version') || e.argv.includes('-c')) {
@@ -184,7 +192,7 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
       const out = typeof given === 'function' ? given(skip >= 0 ? Number(e.argv[skip + 1]) : 0) : given
       return { value: { exitCode: out === undefined ? 1 : 0, stdout: out ?? '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
-    const isIndex = e.argv.some(a => /orch-index(\.exe)?$/.test(a))
+    const isIndex = e.argv.some(a => /orch-index[^/]*$/.test(a))
     ;(isIndex ? w.indexRuns : w.runs).push([...e.argv])
     const ran = isIndex ? w.index
       : w.refuseSession && e.argv.includes('--session') ? { exitCode: 1, stdout: '', stderr: "orch: unrecognized argument '--session'" }
@@ -257,6 +265,48 @@ test('on Windows it runs orch through python from USERPROFILE, not HOME', async 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /could not run/ })).toBeUndefined()
   await ui.unmount()
+})
+
+test('the bundled orch-index wins over orch-data/bin, as the launcher orders them (Windows too)', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on, undefined, { OS: 'Windows_NT', USERPROFILE: 'C:\\home\\u' })
+  // A fresh install: nothing in orch-data/bin, only the binary the plugin ships.
+  w.files = new Set([`${PLUGIN_ROOT}/bin/vendor/orch-index-x86_64-pc-windows-msvc.exe`])
+  await start($, clock)
+  expect(w.indexRuns).toEqual([[`${PLUGIN_ROOT}/bin/vendor/orch-index-x86_64-pc-windows-msvc.exe`, 'status', '--json', '--repo', '/proj']])
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'tab:more' })
+  const all = (await ui.findAll({ type: 'Text', text: /./ })).map(t => t.text).join('\n')
+  expect(all).not.toContain('not installed')
+  expect(all).toContain('v0.2.0')
+  await ui.unmount()
+})
+
+test('orch-index: ORCH_INDEX_REAL first, ORCH_DATA moves the data folder, and the bare name when nothing exists', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  const w = world(on, undefined, { HOME: '/home/u', ORCH_DATA: '/data', ORCH_INDEX_REAL: '/opt/bin/orch-index' })
+  w.files = new Set(['/data/bin/orch-index'])
+  await start($, clock)
+  expect(w.indexRuns[0]?.[0]).toBe('/data/bin/orch-index')
+  w.files.add('/opt/bin/orch-index')
+  await clock.advance(8000)
+  expect(w.indexRuns.at(-1)?.[0]).toBe('/opt/bin/orch-index')
+  w.files.clear()
+  await clock.advance(8000)
+  expect(w.indexRuns.at(-1)?.[0]).toBe('orch-index')
+})
+
+test('indexTarget and indexCandidates follow the launcher table', () => {
+  expect(indexTarget(false, 'Darwin arm64\n')).toBe('aarch64-apple-darwin')
+  expect(indexTarget(false, 'Darwin x86_64')).toBe('x86_64-apple-darwin')
+  expect(indexTarget(false, 'Linux x86_64')).toBe('x86_64-unknown-linux-musl')
+  expect(indexTarget(false, 'Linux aarch64')).toBe('aarch64-unknown-linux-musl')
+  expect(indexTarget(false, 'FreeBSD amd64')).toBe('')
+  expect(indexTarget(false, null)).toBe('')
+  expect(indexTarget(true, null)).toBe('x86_64-pc-windows-msvc')
+  expect(indexCandidates({ root: 'C:\\p', home: 'C:\\h', windows: true, target: 'x86_64-pc-windows-msvc' }))
+    .toEqual(['C:/p/bin/vendor/orch-index-x86_64-pc-windows-msvc.exe', 'C:/h/.claude/orch-data/bin/orch-index.exe'])
+  expect(indexCandidates({ root: '/p', home: '/h', windows: false, target: '' })).toEqual(['/h/.claude/orch-data/bin/orch-index'])
 })
 
 test('the scope button shows and hides the other tasks', async ($, on) => {

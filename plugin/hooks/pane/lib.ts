@@ -152,6 +152,32 @@ export function bytesText(n: number): string {
 
 export const secondsText = (s: number) => (s < 1 ? `${Math.round(s * 1000)} ms` : s < 60 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`)
 
+// The bundled orch-index target for this machine, the same table as the bin/orch-index launcher: Windows (where only
+// x86_64 is bundled) by `windows`, elsewhere by `uname -sm` ("Darwin arm64"); '' when none fits.
+export function indexTarget(windows: boolean, unameSm: string | null): string {
+  if (windows) return 'x86_64-pc-windows-msvc'
+  const [os, arch] = (unameSm ?? '').trim().split(/\s+/)
+  if (os === 'Darwin' && (arch === 'arm64' || arch === 'aarch64')) return 'aarch64-apple-darwin'
+  if (os === 'Darwin' && arch === 'x86_64') return 'x86_64-apple-darwin'
+  if (os === 'Linux' && (arch === 'x86_64' || arch === 'amd64')) return 'x86_64-unknown-linux-musl'
+  if (os === 'Linux' && (arch === 'aarch64' || arch === 'arm64')) return 'aarch64-unknown-linux-musl'
+  return ''
+}
+
+// Where to look for orch-index, in the launcher's order: $ORCH_INDEX_REAL, the binary bundled in this plugin
+// (bin/vendor/orch-index-<target>), ${ORCH_DATA:-<home>/.claude/orch-data}/bin/orch-index. `.exe` names on Windows;
+// paths with forward slashes. The caller runs the first that exists, else the bare name (PATH).
+export function indexCandidates(o: { root: string; home: string; windows: boolean; target: string; real?: string | null; data?: string | null }): string[] {
+  const slash = (p: string) => p.replace(/\\/g, '/')
+  const exe = o.windows ? '.exe' : ''
+  const data = o.data ? slash(o.data) : `${slash(o.home)}/.claude/orch-data`
+  return [
+    ...(o.real ? [slash(o.real)] : []),
+    ...(o.target ? [`${slash(o.root)}/bin/vendor/orch-index-${o.target}${exe}`] : []),
+    `${data}/bin/orch-index${exe}`,
+  ]
+}
+
 // `orch-index status --json` output → IndexStatus, or null when it is not schema 1.
 export function parseIndex(text: string): IndexStatus | null {
   try {
