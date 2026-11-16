@@ -1132,10 +1132,40 @@ def _first_record_epoch(path):
         return None
 
 
-def _find_agent(subdir, base, spawn_ts, cache):
+def _pending_tool(path, tail=256 * 1024):
+    """True when the last assistant/user record of a subagent transcript is an assistant message with a `tool_use`
+    (a tool call still waiting for its result: a long command, a permission prompt, a nested agent), False when it is
+    anything else, None when it cannot be read (no such record in the last `tail` bytes)."""
+    try:
+        with open(path, 'rb') as fh:
+            size = fh.seek(0, 2)
+            fh.seek(max(0, size - tail))
+            data = fh.read()
+        lines = data.split(b'\n')
+        if size > tail:
+            lines = lines[1:]   # the first line is cut
+        for line in reversed(lines):
+            if b'"assistant"' not in line and b'"user"' not in line:
+                continue
+            try:
+                d = json.loads(line.decode('utf-8', 'replace'))
+            except ValueError:
+                continue   # a half-written last line
+            if not isinstance(d, dict) or d.get('type') not in ('assistant', 'user'):
+                continue
+            c = (d.get('message') or {}).get('content') if isinstance(d.get('message'), dict) else None
+            return d['type'] == 'assistant' and isinstance(c, list) and \
+                any(isinstance(x, dict) and x.get('type') == 'tool_use' for x in c)
+    except OSError:
+        pass
+    return None
+
+
+def _find_agent(subdir, base, spawn_ts, cache, peers=()):
     """-> (toolUseId, transcript path) of the subagent this spawn started, else None: the agentType is orch:<base>
     (or orch-<base>) and its first record lies within [-120 s, +600 s] of the spawn; nearest wins, a tie is no
-    signal."""
+    signal. `peers` = the journal times of the task's other open spawns of the same base (parallel tracks): a
+    candidate that also lies in one of their windows cannot be told apart, so it is no signal either."""
     metas = cache.setdefault('meta', {})
     cands = []
     for meta in glob.glob(os.path.join(glob.escape(subdir), '*.meta.json')):
@@ -1151,6 +1181,8 @@ def _find_agent(subdir, base, spawn_ts, cache):
             continue
         d = t0 - spawn_ts
         if -AGENT_BEFORE <= d <= AGENT_AFTER:
+            if any(-AGENT_BEFORE <= t0 - p <= AGENT_AFTER for p in peers):
+                return None
             cands.append((abs(d), tid, jl))
     cands.sort()
     if not cands or (len(cands) > 1 and cands[0][0] == cands[1][0]):
@@ -1158,7 +1190,7 @@ def _find_agent(subdir, base, spawn_ts, cache):
     return cands[0][1], cands[0][2]
 
 
-def _harness_state(home, sid, role, spawn_ts, cache):
+def _harness_state(home, sid, role, spawn_ts, cache, peers=()):
     import re
     global SID_RE
     SID_RE = SID_RE or re.compile(r'^[A-Za-z0-9_.-]+$')
@@ -1170,7 +1202,7 @@ def _harness_state(home, sid, role, spawn_ts, cache):
         tp = cache['sid_path'] = hits[0] if len(hits) == 1 else None
     if not tp:
         return None, None
-    agent = _find_agent(os.path.join(os.path.dirname(tp), sid, 'subagents'), role.split(':')[0], spawn_ts, cache)
+    agent = _find_agent(os.path.join(os.path.dirname(tp), sid, 'subagents'), role.split(':')[0], spawn_ts, cache, peers)
     if not agent:
         return None, None
     tail = cache.setdefault('tails', {}).get(tp)
@@ -1180,19 +1212,24 @@ def _harness_state(home, sid, role, spawn_ts, cache):
     note = tail.latest.get(agent[0])
     if note and note[0] >= spawn_ts - AGENT_BEFORE:
         return note[1], note[0]
+    pending = _pending_tool(agent[1])
+    if pending is None:
+        return None, None
     try:
-        return 'running', os.path.getmtime(agent[1])
+        return ('busy' if pending else 'running'), os.path.getmtime(agent[1])
     except OSError:
         return None, None
 
 
-def harness_state(home, sid, role, spawn_ts, cache):
-    """-> ('finished'|'waiting'|'running'|None, since_ts) for the spawn of `role` journaled at `spawn_ts`: what the
-    harness's task notice for it says (since = the notice's time), 'running' when it sent none (since = the subagent
-    transcript's last write), (None, None) when it cannot tell. `cache` (a dict the caller keeps) holds the
-    incremental transcript reads. Never raises."""
+def harness_state(home, sid, role, spawn_ts, cache, peers=()):
+    """-> ('finished'|'waiting'|'running'|'busy'|None, since_ts) for the spawn of `role` journaled at `spawn_ts`: what
+    the harness's task notice for it says (since = the notice's time); with no notice 'running' (since = the subagent
+    transcript's last write) or 'busy' (the same, but its last record is a tool call still waiting for its result:
+    a long command or a permission prompt, never hung); (None, None) when it cannot tell, and when `peers` (the
+    journal times of other open spawns of the same base role) leave the subagent ambiguous. `cache` (a dict the
+    caller keeps) holds the incremental transcript reads. Never raises."""
     try:
-        return _harness_state(home, sid, role, spawn_ts, cache)
+        return _harness_state(home, sid, role, spawn_ts, cache, peers)
     except Exception:
         return None, None
 
@@ -1200,7 +1237,7 @@ def harness_state(home, sid, role, spawn_ts, cache):
 def due_checkin(task_dir, now, stamps, harness=None):
     """-> (role, silent_min, interval_min, spawn_id, n, final, hung) for the earliest overdue open spawn, else None;
     `final` is the row's state when it is done/blocked/failed (no `orch return` followed), else None.
-    `harness(role, spawn_epoch)` -> (state, since) (see harness_state), when given: an in_progress row whose spawn the
+    `harness(role, spawn_epoch, peers)` -> (state, since) (see harness_state), when given: an in_progress row whose spawn the
     harness reports `finished` FINISHED_GRACE_MIN ago with no `orch return` yields final='finished' (once per spawn,
     outside the ladder); a `running` one whose subagent transcript is HUNG_MIN old yields hung=True (once per spawn,
     one of the ladder's check-ins, ahead of its time). A `waiting` notice yields neither.
@@ -1240,7 +1277,9 @@ def due_checkin(task_dir, now, stamps, harness=None):
         final = row.get('state') if row.get('state') in FINAL_STATES else None
         if final and stamp.get('final'):
             continue
-        state, since = harness(role, t_spawn) if harness and not final else (None, None)
+        peers = [p for p in (_min_ts(journal[i].get('ts')) for r, i in open_idx.items()
+                             if r != role and r.split(':')[0] == role.split(':')[0]) if p is not None] if harness else ()
+        state, since = harness(role, t_spawn, peers) if harness and not final else (None, None)
         if state == 'finished' and not stamp.get('final'):
             due = since + FINISHED_GRACE_MIN * 60
             if now >= due and (best is None or due < best[0]):
@@ -1474,7 +1513,7 @@ class Wait:
         except (IndexError, ValueError, KeyError, AttributeError):
             return None
 
-    def _harness(self, role, t_spawn):
+    def _harness(self, role, t_spawn, peers=()):
         """harness_state for this task's spawn of `role`: the session is the wait's own, else status.md's
         `driver_session`."""
         sid = self.sid
@@ -1485,7 +1524,7 @@ class Wait:
                 sid = v.split()[0] if v else None
             except Exception:
                 sid = None
-        return harness_state(self.home or home_dir(), sid, role, t_spawn, self._hcache)
+        return harness_state(self.home or home_dir(), sid, role, t_spawn, self._hcache, peers)
 
     def _checkin(self, now):
         path = os.path.join(self.state, 'checkin-%s.json' % self.key)

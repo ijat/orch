@@ -833,6 +833,53 @@ class TestHarnessCheckin(Base):
                            journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer'}])
         self.assertIn('final=done', self.go(BASE + 1000, max_sec=600)[1])
 
+    def append_agent(self, path, rec):
+        with open(path, 'a') as fh:
+            fh.write(json.dumps(rec) + '\n')
+
+    def test_a_pending_tool_call_with_a_stale_transcript_is_busy_not_hung(self):
+        path = self.agent(mtime=BASE)
+        self.append_agent(path, {'type': 'assistant', 'timestamp': self.iso(BASE + 70),
+                                 'message': {'role': 'assistant', 'stop_reason': 'tool_use',
+                                             'content': [{'type': 'text', 'text': 'run it'},
+                                                         {'type': 'tool_use', 'id': 'toolu_x', 'name': 'Bash', 'input': {}}]}})
+        self.append_agent(path, {'type': 'api-request', 'timestamp': self.iso(BASE + 71)})
+        os.utime(path, (BASE, BASE))
+        self.assertEqual(self.go(BASE + 1500)[0], 13)
+        self.assertEqual(usage.harness_state(self.home, SID, 'implementer', BASE + 59, {}), ('busy', BASE))
+        # the tool's result came back and then nothing for 25 minutes: hung
+        self.append_agent(path, {'type': 'user', 'timestamp': self.iso(BASE + 80),
+                                 'message': {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'toolu_x'}]}})
+        os.utime(path, (BASE, BASE))
+        code, line = self.go(BASE + 1500)
+        self.assertEqual(code, 11, line)
+        self.assertIn('progress=hung', line)
+
+    def test_an_unreadable_last_record_gives_no_signal(self):
+        path = self.agent(mtime=BASE)
+        with open(path, 'w') as fh:
+            fh.write('{"type":"api-request"}\n')
+        os.utime(path, (BASE, BASE))
+        self.assertEqual(self.go(BASE + 1500)[0], 13)
+
+    def test_parallel_spawns_of_one_role_type_get_no_signal(self):
+        self.agent('a1', t0=BASE + 65)
+        self.agent('a2', tid='toolu_01Second', t0=BASE + 80)
+        self.write_driver([self.notice(self.TID, BASE + 600)])
+        self.d = self.task(rows=(('orchestrator', 'in_progress'), ('implementer:a', 'in_progress'),
+                                 ('implementer:b', 'in_progress')),
+                           journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer:a'},
+                                    {'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer:b'}])
+        peers = [BASE + 59]
+        for role in ('implementer:a', 'implementer:b'):
+            self.assertEqual(usage.harness_state(self.home, SID, role, BASE + 59, {}, peers), (None, None), role)
+        self.assertEqual(self.go(BASE + 780)[0], 13)
+        os.utime(os.path.join(self.sdir, 'agent-a1.jsonl'), (BASE, BASE))
+        self.assertEqual(self.go(BASE + 1500)[0], 13)   # nor hung
+        # one open spawn of the base: the signal is back
+        self.d = self.task(journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer'}])
+        self.assertEqual(usage.harness_state(self.home, SID, 'implementer', BASE + 59, {}, []), ('finished', BASE + 600))
+
     def test_the_transcript_is_read_from_the_last_offset(self):
         self.write_driver([self.notice(self.TID, BASE + 600, 'waiting')])
         tail = usage.TranscriptTail(self.driver)

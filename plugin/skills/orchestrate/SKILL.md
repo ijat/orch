@@ -278,8 +278,10 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
    `orch return <role> --outcome done|stopped` by what landed, and go on (a `stopped` role is re-spawned from its
    last checkpoint). It fires once per spawn and is not one of the 4 silence check-ins.
    **`progress=hung` in the CHECKIN line:** the subagent has sent no notice and its transcript has not been written for
-   20 minutes (a role waiting on its own job is never hung). Treat it as looping: `SendMessage`, then `TaskStop`. It
-   counts as one of the 4 silence check-ins and fires once per spawn.
+   20 minutes, with no tool call still waiting for its result (a role waiting on its own job, in a long command or at a
+   permission prompt is never hung). Treat it as looping: `SendMessage`, then `TaskStop`. It
+   counts as one of the 4 silence check-ins and fires once per spawn. Neither `final=finished` nor `progress=hung` exists
+   for parallel spawns of one role type (`implementer:<part>`): the harness record cannot tell them apart.
 
 **Index rebuild pause.** Two triggers call `orch:graph`.
 
