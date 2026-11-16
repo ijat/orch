@@ -19,6 +19,7 @@
 - origin: introduced | pre-existing — <blame evidence for pre-existing: commit or "on base">
 - file: /abs/path:LINE
 - class: <optional: one slug from your role file's list, or your own short slug; delete the line if none>
+- cause: <only for a finding raised in a fix-batch check: from-fix (the fix commits' own lines caused it) | other (pre-existing, or scope the orchestrator added); delete the line otherwise>
 - what: what is wrong, concretely.
 - why it matters: the consequence, not the principle.
 - suggested fix: the smallest change that resolves it.
@@ -42,7 +43,8 @@ A fix-batch check (a brief headed "fix-batch check") is not a round. Append inst
 ## Check of round N
 - reviewed at / range / verdict: ... (only the fix commits)
 - F1: fixed | not fixed — <evidence>
-- new findings continue the numbering in the same shape as above. Severity is what the defect is:
+- new findings continue the numbering in the same shape as above, each with a `- cause: from-fix | other` line (a
+  missing one reads as from-fix). Severity is what the defect is:
   never rate by whether it would start a cycle or a round (a blocker or should-fix left open starts the
   next fix-and-check cycle; after a blocker, a fresh round follows the passed check; a nit goes to the
   digest).

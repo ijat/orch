@@ -93,7 +93,7 @@ Weigh these for every non-default choice:
   set of categories), and Haiku has no fallback when it refuses. Opus 5.5 refuses in fewer
   categories than Sonnet 5.5, so it is the safer choice for security tooling. Context is 1M on every model, so it never
   decides the choice.
-- **Escalation history:** a `post-failure` escalation moves up a rung, never sideways (implementer exceptions: an exact-edit fix list, and fix rounds, which are routed fresh — § Fix rounds). Never jump
+- **Escalation history:** a `post-failure` escalation moves up a rung, never sideways (implementer exceptions: an exact-edit fix list, and fix rounds, which are routed fresh, or resumed when the cycle route says stay — § Fix rounds). Never jump
   from the default straight to Fable on the failure ladder (implementer ladder below); a non-planner Fable spawn needs one of the four reasons in § Fable outside planning, and "complex", "important" or "to be safe" is none of them.
 
 ## Tier table
@@ -308,11 +308,19 @@ When a Haiku spawn returns `done`, read its `contract-check` in `notes.md` befor
   follow the same rule; the security reviewer re-reviews the fix. One exception downward: an **exact-edit list** — at most 5 routed findings, each with `file:line` and
   a literal suggested change, none naming a class or invariant, none from the security reviewer,
   on code Haiku didn't write, with G1 and G6 holding — may go to `haiku/medium`. [judgment]
-- **Fix-and-check cycles** (up to 3 per code-review round, SKILL.md § Review loops) climb the implementer only; the
-  reviewer keeps its tier so it can be resumed. Cycle 1 is routed as above. Cycle 2 goes one rung up the ladder from
-  cycle 1's tier. Cycle 3 goes to `opus/max`, or stays there if the ladder already reached it. Cycles 2 and 3 are
-  `post-failure` fresh spawns (never resumed: SKILL.md step 7), each given the prior diff, notes and the check's
-  findings. This rule never reaches `fable/high` by itself; the ladder reaches Fable only after a failed `opus/max` pass. The cycle cap is never raised
+- **Fix-and-check cycles** (up to 3 per code-review round, SKILL.md § Review loops) move the implementer only when the
+  implementer failed; the reviewer keeps its tier so it can be resumed. Cycle 1 is routed as above. For cycle 2 and 3,
+  `orch brief fix` prints the **cycle route** from the check's findings:
+  - **climb** when any open item is a routed finding the check reports not fixed, or a new finding with
+    `cause: from-fix` (a missing or unreadable `cause:` reads as from-fix; an `S<n>` id always climbs). Cycle 2 goes one
+    rung up the ladder from cycle 1's tier; cycle 3 goes to `opus/max`, or stays there if the ladder already reached it.
+    A climb is a `post-failure` fresh spawn (the tier changed, so `--reused` refuses), given the prior diff, notes and the
+    check's findings.
+  - **stay** when every open item is a new finding with `cause: other` (a pre-existing defect, or scope the orchestrator
+    added): the same tier, and the same implementer resumed with `orch spawn implementer --reused` (SKILL.md step 7), not
+    a `post-failure` spawn and no `fix_cycle` token.
+  - An open item no implementer can act on (a live check, a user decision) is parked with `orch ask`, not re-routed.
+  This rule never reaches `fable/high` by itself; the ladder reaches Fable only after a failed `opus/max` pass. The cycle cap is never raised
   (SKILL.md § Review loops): a blocker open after cycle 3 is a parked question, and Fable follows only if the user
   picks it there. [judgment]
 - Code Haiku wrote that gets any routed finding → `sonnet/high` (`post-failure`).

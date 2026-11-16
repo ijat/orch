@@ -13,6 +13,7 @@
 - severity: critical | high | medium | low
 - file: /abs/path:LINE
 - class: <optional: one slug from your role file's list, or your own short slug; delete the line if none>
+- fix: <only on a low with no exploit path that exposes no data: `optional — <why>`; delete the line otherwise>
 - fingerprint: `severity | path | short-slug`
 - attack path: who the attacker is, what they control, what they achieve.
 - impact: what an attacker gets.

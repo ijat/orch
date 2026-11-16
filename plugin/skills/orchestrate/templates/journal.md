@@ -22,7 +22,7 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 | `security_offer` | old lines; new tasks only when `policy.md` says `security: ask` and the user was asked | `areas` (array), `answer` (accepted/declined/not_offered), `late` (bool) |
 | `mythos_offer` | each offer of a Mythos security review (SKILL.md step 5 and step 10) and the user's answer | `trigger` (severe/program_end/init_first/request), `answer` (accepted/declined), `tier`, `areas` (array) |
 | `review_round` | each reviewer return | `round`, `reviewer`, `blockers`, `should_fix`, `nits`, `verdict`, `sha` |
-| `follow_up` | `orch follow-up` parked a should-fix or nit in the repo's `follow-ups.md` | `finding`, `severity` (should-fix/nit), `file`, `text` |
+| `follow_up` | `orch follow-up` parked a should-fix, nit or optional security low in the repo's `follow-ups.md` | `finding`, `severity` (should-fix/nit; low for a security finding marked `fix: optional`), `file`, `text` |
 | `gate` | plan or merge approval | `gate` (plan/roadmap/merge/pilot), `outcome` (approved/revised/declined) |
 | `plan_revision` | a revision appended | `n`, `trigger` (blocker/user/review) |
 | `sketch` | a sketched step finishes | `step`, `followed` (full/partial/no), `sketch_wrong` (bool), `escalated` (bool) |
