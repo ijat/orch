@@ -673,6 +673,197 @@ class TestCheckinProgress(Base):
         self.assertNotIn('none_streak', line)
 
 
+class TestHarnessCheckin(Base):
+    """The harness's own record of a spawn: the driver transcript's task notice (`finished` / `waiting`) and the
+    subagent's files wake the wait (`final=finished`, `progress=hung`). Fixtures are real-shaped transcript, meta and
+    notice lines in a scratch HOME; every miss falls back to the existing behaviour."""
+
+    TID = 'toolu_01AbCdEfGhIjKlMnOpQrStUv'
+
+    def setUp(self):
+        Base.setUp(self)
+        self.home = os.path.join(self.tmp, 'home')
+        self.sdir = os.path.join(self.home, 'projects', '-proj-a', SID, 'subagents')
+        os.makedirs(self.sdir)
+        self.driver = os.path.join(self.home, 'projects', '-proj-a', SID + '.jsonl')
+        self.write_driver([])
+        self.d = self.task(journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer'}])
+
+    @staticmethod
+    def iso(t):
+        return time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime(t))
+
+    def notice(self, tid, t, how='finished', desc='orch-implementer-sonnet[high]: step "1" ] done'):
+        tail = {'finished': 'finished', 'waiting': 'is waiting on its own background work',
+                'failed': 'failed'}[how]
+        content = ('<task-notification>\n<task-id>a1b2c3</task-id>\n<tool-use-id>%s</tool-use-id>\n'
+                   '<output-file>/tmp/x/tasks/a1b2c3.output</output-file>\n<status>completed</status>\n'
+                   '<summary>Agent "%s" %s</summary>\n<result>r</result>\n</task-notification>' % (tid, desc, tail))
+        return json.dumps({'type': 'queue-operation', 'operation': 'enqueue', 'timestamp': self.iso(t),
+                           'sessionId': SID, 'content': content})
+
+    def write_driver(self, lines, tail=''):
+        with open(self.driver, 'w') as fh:
+            fh.write(json.dumps({'type': 'user', 'timestamp': self.iso(BASE - 10), 'sessionId': SID}) + '\n')
+            for line in lines:
+                fh.write(line + '\n')
+            fh.write(tail)
+
+    def agent(self, name='a1', agent_type='orch:implementer', tid=None, t0=BASE + 60, mtime=BASE + 60):
+        base = os.path.join(self.sdir, 'agent-%s' % name)
+        with open(base + '.meta.json', 'w') as fh:
+            json.dump({'agentType': agent_type, 'description': 'd', 'toolUseId': tid or self.TID, 'spawnDepth': 1}, fh)
+        with open(base + '.jsonl', 'w') as fh:
+            fh.write(json.dumps({'type': 'user', 'isSidechain': True, 'agentId': name, 'timestamp': self.iso(t0),
+                                 'sessionId': SID, 'message': {'role': 'user', 'content': 'go'}}) + '\n')
+        os.utime(base + '.jsonl', (mtime, mtime))
+        return base + '.jsonl'
+
+    def go(self, now, max_sec=30):
+        self.clock = Clock(now)
+        shutil.rmtree(self.state, True)
+        return self.run_wait(lambda: est(), task_dir=self.d, sid=SID, home=self.home, interval=30, max_sec=max_sec)
+
+    def test_a_finished_notice_3_minutes_old_with_no_return_wakes_with_final_finished(self):
+        self.agent()
+        self.write_driver([self.notice(self.TID, BASE + 600)])
+        code, line = self.go(BASE + 780)
+        self.assertEqual(code, 11, line)
+        self.assertIn('CHECKIN role=implementer silent_min=3 interval=2 final=finished ', line)
+        self.assertNotIn('progress=', line)
+
+    def test_final_finished_fires_once_per_spawn_and_is_not_a_ladder_check_in(self):
+        self.agent()
+        self.write_driver([self.notice(self.TID, BASE + 600)])
+        self.assertEqual(self.go(BASE + 780)[0], 11)
+        self.clock = Clock(BASE + 840)
+        code, _ = self.run_wait(lambda: est(), task_dir=self.d, sid=SID, home=self.home, interval=30, max_sec=30)
+        self.assertEqual(code, 13)
+        with open(os.path.join(self.state, 'checkin-%s.json' % KEY)) as fh:
+            self.assertEqual(json.load(fh)['implementer']['n'], 0)
+
+    def test_a_finished_notice_1_minute_old_wakes_nothing(self):
+        self.agent()
+        self.write_driver([self.notice(self.TID, BASE + 600)])
+        self.assertEqual(self.go(BASE + 660)[0], 13)
+
+    def test_the_notice_is_found_when_it_arrives_while_waiting(self):
+        self.agent()
+        self.clock = Clock(BASE + 600)
+        self.clock.hooks.append((BASE + 630, lambda: self.write_driver([self.notice(self.TID, BASE + 640, 'failed')])))
+        code, line = self.run_wait(lambda: est(), task_dir=self.d, sid=SID, home=self.home, interval=30,
+                                   max_sec=3600)
+        self.assertEqual((code, self.clock.t), (11, BASE + 780), line)
+        self.assertIn('final=finished', line)
+
+    def test_a_waiting_notice_with_a_stale_transcript_is_not_hung_and_not_finished(self):
+        self.agent(mtime=BASE)
+        self.write_driver([self.notice(self.TID, BASE + 600, 'waiting')])
+        self.assertEqual(self.go(BASE + 1500)[0], 13)
+
+    def test_a_later_finished_notice_beats_an_earlier_waiting_one(self):
+        self.agent()
+        self.write_driver([self.notice(self.TID, BASE + 300, 'waiting'), self.notice(self.TID, BASE + 600)])
+        self.assertIn('final=finished', self.go(BASE + 780)[1])
+
+    def test_no_notice_and_a_transcript_25_minutes_stale_is_progress_hung(self):
+        self.agent(mtime=BASE)
+        code, line = self.go(BASE + 1500)
+        self.assertEqual(code, 11, line)
+        self.assertIn('CHECKIN role=implementer silent_min=25 interval=20 progress=hung none_streak=0 ', line)
+
+    def test_no_notice_and_a_transcript_15_minutes_stale_is_quiet(self):
+        self.agent(mtime=BASE + 600)
+        self.assertEqual(self.go(BASE + 1500)[0], 13)
+
+    def test_hung_fires_once_and_counts_as_a_ladder_check_in(self):
+        self.agent(mtime=BASE)
+        self.assertEqual(self.go(BASE + 1500)[0], 11)
+        self.clock = Clock(BASE + 1560)
+        code, _ = self.run_wait(lambda: est(), task_dir=self.d, sid=SID, home=self.home, interval=30, max_sec=30)
+        self.assertEqual(code, 13)
+        with open(os.path.join(self.state, 'checkin-%s.json' % KEY)) as fh:
+            st = json.load(fh)['implementer']
+        self.assertEqual((st['n'], st['hung']), (1, True))
+
+    def test_a_spawn_matching_two_candidates_equally_gives_no_signal(self):
+        self.agent('a1')
+        self.agent('a2', tid='toolu_01ZzZzZzZzZzZzZzZzZzZzZz')
+        self.write_driver([self.notice(self.TID, BASE + 600)])
+        self.assertEqual(self.go(BASE + 780)[0], 13)
+
+    def test_the_nearest_candidate_wins_and_another_role_is_ignored(self):
+        self.agent('a1', t0=BASE + 3000)            # outside the window
+        self.agent('a2', agent_type='orch:planner', tid='toolu_01Planner')
+        self.agent('a3', tid='toolu_01Mine', t0=BASE + 90)
+        self.write_driver([self.notice('toolu_01Planner', BASE + 600), self.notice(self.TID, BASE + 600),
+                           self.notice('toolu_01Mine', BASE + 600)])
+        self.assertIn('final=finished', self.go(BASE + 780)[1])
+
+    def test_a_notice_older_than_the_spawn_is_ignored(self):
+        self.agent()
+        self.write_driver([self.notice(self.TID, BASE - 3600)])
+        self.assertEqual(self.go(BASE + 780)[0], 13)
+
+    def test_a_truncated_or_garbled_transcript_does_not_raise(self):
+        self.agent()
+        self.write_driver(['{"type":"queue-operation","operation":"enqueue","content":"<tool-use-id>x</tool-use-id>',
+                           'not json at all'], tail='{"type":"queue-oper')
+        self.assertEqual(self.go(BASE + 780)[0], 13)
+        os.unlink(self.driver)
+        self.assertEqual(self.go(BASE + 780)[0], 13)
+
+    def test_the_session_comes_from_status_md_when_the_wait_has_none(self):
+        self.agent()
+        self.write_driver([self.notice(self.TID, BASE + 600)])
+        p = os.path.join(self.d, 'status.md')
+        with open(p) as fh:
+            text = fh.read()
+        with open(p, 'w') as fh:
+            fh.write(text.replace('- mode: standard', '- mode: standard\n- driver_session: %s' % SID))
+        self.clock = Clock(BASE + 780)
+        code, line = self.run_wait(lambda: est(), task_dir=self.d, home=self.home, interval=30, max_sec=30)
+        self.assertEqual(code, 11, line)
+        self.assertIn('final=finished', line)
+
+    def test_a_row_that_is_final_keeps_its_own_report(self):
+        self.agent()
+        self.write_driver([self.notice(self.TID, BASE + 600)])
+        self.d = self.task(rows=(('orchestrator', 'in_progress'), ('implementer', 'done')), row_ts=ts(BASE + 600),
+                           journal=[{'ts': ts(BASE), 'kind': 'spawn', 'role': 'implementer'}])
+        self.assertIn('final=done', self.go(BASE + 1000, max_sec=600)[1])
+
+    def test_the_transcript_is_read_from_the_last_offset(self):
+        self.write_driver([self.notice(self.TID, BASE + 600, 'waiting')])
+        tail = usage.TranscriptTail(self.driver)
+        tail.update()
+        first = tail.off
+        self.assertEqual(tail.latest[self.TID][1], 'waiting')
+        with open(self.driver, 'a') as fh:
+            fh.write(self.notice(self.TID, BASE + 700) + '\n' + '{"half')
+        tail.update()
+        self.assertEqual((tail.latest[self.TID], tail.off > first), ((BASE + 700, 'finished'), True))
+        off = tail.off
+        tail.update()
+        self.assertEqual(tail.off, off)
+        with open(self.driver, 'w') as fh:    # rewritten shorter: starts over
+            fh.write('{}\n')
+        tail.update()
+        self.assertEqual((tail.latest, tail.off), ({}, 3))
+
+    def test_harness_state_values(self):
+        self.agent(mtime=BASE + 100)
+        cache = {}
+        t = BASE + 59
+        self.assertEqual(usage.harness_state(self.home, SID, 'implementer', t, cache), ('running', BASE + 100))
+        with open(self.driver, 'a') as fh:
+            fh.write(self.notice(self.TID, BASE + 500) + '\n')
+        self.assertEqual(usage.harness_state(self.home, SID, 'implementer', t, cache), ('finished', BASE + 500))
+        self.assertEqual(usage.harness_state(self.home, SID, 'planner', t, cache), (None, None))
+        self.assertEqual(usage.harness_state(self.home, '../x', 'implementer', t, cache), (None, None))
+        self.assertEqual(usage.harness_state(self.home, None, 'implementer', t, cache), (None, None))
+
+
 class TestRefresh(Base):
     def near(self, **kw):
         kw.setdefault('own_last', self.clock.t - 100)

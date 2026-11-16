@@ -1068,9 +1068,142 @@ def _log_activity(task_dir):
     return out
 
 
-def due_checkin(task_dir, now, stamps):
-    """-> (role, silent_min, interval_min, spawn_id, n, final) for the earliest overdue open spawn, else None;
+# -- the harness's own record of a spawn (driver transcript notices, subagent files) -------------------------------
+# Claude Code writes a `queue-operation` `enqueue` line into the driver session's transcript for every task
+# notification: `Agent "..." finished` (or failed/stopped) or `... is waiting on its own background work`, with the
+# spawn's tool-use id. The subagent's own files sit under <transcript dir>/<sid>/subagents: `agent-<id>.meta.json`
+# (agentType, toolUseId) and `agent-<id>.jsonl` (its transcript). Internal formats: every miss reads "no signal".
+
+FINISHED_GRACE_MIN = 2   # a `finished` notice with no `orch return` this long after it -> CHECKIN final=finished
+HUNG_MIN = 20            # a running subagent whose transcript was not written for this long -> CHECKIN progress=hung
+AGENT_BEFORE, AGENT_AFTER = 120, 600   # a candidate's first record lies in [spawn - 120 s, spawn + 600 s]
+SID_RE = None
+TOOL_ID_RE = None
+SUMMARY_RE = None
+
+
+class TranscriptTail(object):
+    """The task notifications of one driver transcript: {tool-use id: (epoch, 'finished'|'waiting')}, the latest
+    notice per id. Read from the last offset on (only complete lines); the file shrinking starts over."""
+
+    def __init__(self, path):
+        self.path, self.off, self.latest = path, 0, {}
+
+    def update(self):
+        import re
+        global TOOL_ID_RE, SUMMARY_RE
+        TOOL_ID_RE = TOOL_ID_RE or re.compile(r'<tool-use-id>([^<\s]+)</tool-use-id>')
+        SUMMARY_RE = SUMMARY_RE or re.compile(r'<summary>(.*?)</summary>', re.S)
+        try:
+            if os.path.getsize(self.path) < self.off:
+                self.off, self.latest = 0, {}
+            with open(self.path, 'rb') as fh:
+                fh.seek(self.off)
+                data = fh.read()
+        except OSError:
+            return
+        end = data.rfind(b'\n') + 1
+        if not end:
+            return
+        self.off += end
+        for line in data[:end].split(b'\n'):
+            if b'"queue-operation"' not in line or b'<tool-use-id>' not in line:
+                continue
+            try:
+                rec = json.loads(line.decode('utf-8', 'replace'))
+                c = rec.get('content')
+                if rec.get('type') != 'queue-operation' or rec.get('operation') != 'enqueue' or not isinstance(c, str):
+                    continue
+                tid, summ, t = TOOL_ID_RE.search(c), SUMMARY_RE.search(c), _ep(rec.get('timestamp'))
+            except (ValueError, AttributeError):
+                continue
+            if not (tid and summ and t is not None) or not summ.group(1).startswith('Agent "'):
+                continue
+            waiting = summ.group(1).endswith('is waiting on its own background work')
+            self.latest[tid.group(1)] = (t, 'waiting' if waiting else 'finished')
+
+
+def _first_record_epoch(path):
+    try:
+        with open(path, 'rb') as fh:
+            d = json.loads(fh.readline().decode('utf-8', 'replace'))
+        return _ep(d.get('timestamp'))
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _find_agent(subdir, base, spawn_ts, cache):
+    """-> (toolUseId, transcript path) of the subagent this spawn started, else None: the agentType is orch:<base>
+    (or orch-<base>) and its first record lies within [-120 s, +600 s] of the spawn; nearest wins, a tie is no
+    signal."""
+    metas = cache.setdefault('meta', {})
+    cands = []
+    for meta in glob.glob(os.path.join(glob.escape(subdir), '*.meta.json')):
+        if meta not in metas:
+            jl = meta[:-len('.meta.json')] + '.jsonl'
+            t0 = _first_record_epoch(jl)
+            if t0 is None:
+                continue
+            d = _load_json(meta)
+            metas[meta] = (d.get('agentType'), d.get('toolUseId'), t0, jl)
+        typ, tid, t0, jl = metas[meta]
+        if typ not in ('orch:' + base, 'orch-' + base) or not isinstance(tid, str) or not tid:
+            continue
+        d = t0 - spawn_ts
+        if -AGENT_BEFORE <= d <= AGENT_AFTER:
+            cands.append((abs(d), tid, jl))
+    cands.sort()
+    if not cands or (len(cands) > 1 and cands[0][0] == cands[1][0]):
+        return None
+    return cands[0][1], cands[0][2]
+
+
+def _harness_state(home, sid, role, spawn_ts, cache):
+    import re
+    global SID_RE
+    SID_RE = SID_RE or re.compile(r'^[A-Za-z0-9_.-]+$')
+    if not sid or not SID_RE.match(sid) or spawn_ts is None:
+        return None, None
+    tp = cache.get('sid_path')
+    if not tp or not os.path.exists(tp):
+        hits = glob.glob(os.path.join(glob.escape(home), 'projects', '*', sid + '.jsonl'))
+        tp = cache['sid_path'] = hits[0] if len(hits) == 1 else None
+    if not tp:
+        return None, None
+    agent = _find_agent(os.path.join(os.path.dirname(tp), sid, 'subagents'), role.split(':')[0], spawn_ts, cache)
+    if not agent:
+        return None, None
+    tail = cache.setdefault('tails', {}).get(tp)
+    if tail is None:
+        tail = cache['tails'][tp] = TranscriptTail(tp)
+    tail.update()
+    note = tail.latest.get(agent[0])
+    if note and note[0] >= spawn_ts - AGENT_BEFORE:
+        return note[1], note[0]
+    try:
+        return 'running', os.path.getmtime(agent[1])
+    except OSError:
+        return None, None
+
+
+def harness_state(home, sid, role, spawn_ts, cache):
+    """-> ('finished'|'waiting'|'running'|None, since_ts) for the spawn of `role` journaled at `spawn_ts`: what the
+    harness's task notice for it says (since = the notice's time), 'running' when it sent none (since = the subagent
+    transcript's last write), (None, None) when it cannot tell. `cache` (a dict the caller keeps) holds the
+    incremental transcript reads. Never raises."""
+    try:
+        return _harness_state(home, sid, role, spawn_ts, cache)
+    except Exception:
+        return None, None
+
+
+def due_checkin(task_dir, now, stamps, harness=None):
+    """-> (role, silent_min, interval_min, spawn_id, n, final, hung) for the earliest overdue open spawn, else None;
     `final` is the row's state when it is done/blocked/failed (no `orch return` followed), else None.
+    `harness(role, spawn_epoch)` -> (state, since) (see harness_state), when given: an in_progress row whose spawn the
+    harness reports `finished` FINISHED_GRACE_MIN ago with no `orch return` yields final='finished' (once per spawn,
+    outside the ladder); a `running` one whose subagent transcript is HUNG_MIN old yields hung=True (once per spawn,
+    one of the ladder's check-ins, ahead of its time). A `waiting` notice yields neither.
     A row is due only if `in_progress` (or final, see below) AND its role's latest journal `spawn` comes after its
     latest `return`. A final row is reported once, FINAL_FIRST_MIN minutes after it went final, whatever in_progress
     CHECKINs the spawn had before and outside their limit; the stamp's `final` flag stops a second one. A `waiting`
@@ -1114,8 +1247,20 @@ def due_checkin(task_dir, now, stamps):
         final = row.get('state') if row.get('state') in FINAL_STATES else None
         if final and stamp.get('final'):
             continue
+        state, since = harness(role, t_spawn) if harness and not final else (None, None)
+        if state == 'finished' and not stamp.get('final'):
+            due = since + FINISHED_GRACE_MIN * 60
+            if now >= due and (best is None or due < best[0]):
+                best = (due, role, int((now - since) // 60), FINISHED_GRACE_MIN, spawn_id, n, 'finished', False)
+            continue
         if not final and n >= len(CHECKIN_LADDER):
             continue
+        if state == 'running' and not stamp.get('hung'):
+            due = since + HUNG_MIN * 60
+            if now >= due and (best is None or due < best[0]):
+                best = (due, role, int((now - since) // 60), HUNG_MIN, spawn_id, n + 1, None, True)
+            if now >= due:
+                continue
         acts = [t_spawn] + jci
         if logs.get(role, 0) >= t_spawn:
             acts.append(logs[role])
@@ -1127,7 +1272,7 @@ def due_checkin(task_dir, now, stamps):
         minutes = FINAL_FIRST_MIN if final else CHECKIN_LADDER[n]
         interval = minutes * 60
         if now >= base + interval and (best is None or base + interval < best[0]):
-            best = (base + interval, role, int((now - last_act) // 60), minutes, spawn_id, n if final else n + 1, final)
+            best = (base + interval, role, int((now - last_act) // 60), minutes, spawn_id, n if final else n + 1, final, False)
     return best[1:] if best else None
 
 
@@ -1261,8 +1406,10 @@ class Wait:
     """One `usage wait`. Every collaborator is injectable (tests drive it with a fake clock and estimates)."""
 
     def __init__(self, state, key, est_fn, task_dir=None, owner=None, sid=None, interval=30.0, max_sec=21600.0,
-                 until_reset=False, refresh=False, clock=None, sleep=None, pid=None, alive=None, is_wait=None):
+                 until_reset=False, refresh=False, clock=None, sleep=None, pid=None, alive=None, is_wait=None,
+                 home=None):
         import time
+        self.home, self._hcache = home, {}
         self.state, self.key, self.est_fn, self.task_dir = state, key, est_fn, task_dir
         self.owner, self.sid = owner, sid
         self.interval, self.max_sec, self.until_reset, self.refresh = interval, max_sec, until_reset, refresh
@@ -1334,20 +1481,36 @@ class Wait:
         except (IndexError, ValueError, KeyError, AttributeError):
             return None
 
+    def _harness(self, role, t_spawn):
+        """harness_state for this task's spawn of `role`: the session is the wait's own, else status.md's
+        `driver_session`."""
+        sid = self.sid
+        if not sid:
+            try:
+                from . import status as st
+                v = st.Status.load(os.path.join(self.task_dir, 'status.md')).get(st.DRIVER_FIELD)
+                sid = v.split()[0] if v else None
+            except Exception:
+                sid = None
+        return harness_state(self.home or home_dir(), sid, role, t_spawn, self._hcache)
+
     def _checkin(self, now):
         path = os.path.join(self.state, 'checkin-%s.json' % self.key)
         stamps = _load_json(path)
-        c = due_checkin(self.task_dir, now, stamps)
+        c = due_checkin(self.task_dir, now, stamps, self._harness)
         if not c:
             return None
-        role, silent, interval, spawn_id, n, final = c
+        role, silent, interval, spawn_id, n, final, hung = c
         prev = stamps.get(role) if isinstance(stamps.get(role), dict) else {}
         if prev.get('spawn') != spawn_id:
             prev = {}
-        stamp = {'spawn': spawn_id, 'n': n, 'last': now, 'final': bool(final) or bool(prev.get('final'))}
+        stamp = {'spawn': spawn_id, 'n': n, 'last': now, 'final': bool(final) or bool(prev.get('final')),
+                 'hung': hung or bool(prev.get('hung'))}
         progress = streak = None
-        if final:       # a final row reports the row, not progress: its baseline stays as it was
+        if final or hung:       # a final row reports the row, a hung spawn the harness: the baseline stays as it was
             stamp.update((k, prev[k]) for k in ('head', 'out', 'log_n', 'none_streak') if k in prev)
+            if hung:
+                progress, streak = 'hung', prev.get('none_streak') if isinstance(prev.get('none_streak'), int) else 0
         else:
             progress, fields, streak = progress_since(self.task_dir, prev, self._spawn_head(spawn_id), role)
             stamp.update(fields, none_streak=streak)
@@ -1506,7 +1669,7 @@ def cmd_wait(ns):
         sc = Scanner()
         w = Wait(state, key, lambda: safe_estimate(home=home, state=state, line=line, session=sid, scanner=sc),
                  task_dir=task_dir, owner=owner, sid=sid, interval=interval, max_sec=max_sec,
-                 until_reset=ns.until_reset, refresh=ns.refresh)
+                 until_reset=ns.until_reset, refresh=ns.refresh, home=home)
         for name in ('SIGTERM', 'SIGINT', 'SIGHUP'):   # Windows has no SIGHUP
             if hasattr(signal, name):
                 signal.signal(getattr(signal, name), _signal_exit)
