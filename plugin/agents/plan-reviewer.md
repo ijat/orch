@@ -73,7 +73,9 @@ read the source yourself.
    and quote its verdict line. Then judge what the script can't: a risky contract reviewed late, a
    review point on low-risk work while a hard milestone goes unreviewed, a review scheduled where it can
    find nothing that matters (should be `skip`), a `skip` on work that ships, a user stop placed where a
-   decision it depends on hasn't been made yet.
+   decision it depends on hasn't been made yet. Also read every `split` cell against the work: each
+   reason must be true of that milestone (a feature list cut into one milestone per feature with
+   filler reasons is a `blocker`).
 3. **Tier and mode choices.** A tier or mode that doesn't fit the milestone or step (`opus/max` on
    wiring, `sonnet` or lite on a concurrency core, lite on anything that breaks the lite rules). Use
    `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/TIERS.md`; don't re-argue a choice whose `tradeoff` already answers it.

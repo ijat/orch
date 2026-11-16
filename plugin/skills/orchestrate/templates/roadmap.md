@@ -37,11 +37,18 @@
      you        - | <why the user is needed: mock, eye-check, sudo, decision D-n; name `merge` only when
                 the user wants to approve that merge — `orch merge` refuses where this cell names it>
      size       S | M | L            (L = several days of agent work or ≥ ~10 steps)
-     confidence high | med | low      (low needs a probe in "Premises and probes") -->
+     confidence high | med | low      (low needs a probe in "Premises and probes")
+     split      why this milestone ends here and the next starts; one of
+                premise: <what only this milestone settles>   (or `premise C<n>`, a contract this row produces)
+                see: <what the user must see before more is built>   (the `you` cell is not `-`)
+                ship: <what goes live>   (`merge` is `yes`)
+                span: <why one milestone would be too big to review>   (this row or the next is size L)
+                `-` on the last row only. Same-kind work on different items stays in one milestone;
+                review, merge and `you` cells are placed on milestones cut this way, never a reason to cut. -->
 
-| M | goal | depends on | mode | tiers | sensitive | review | merge | you | size | confidence |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | <goal> | - | standard | opus/high → sonnet/high | - | - | - | - | M | high |
+| M | goal | depends on | mode | tiers | sensitive | review | merge | you | size | confidence | split |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | <goal> | - | standard | opus/high → sonnet/high | - | - | - | - | M | high | - |
 
 ## Contracts between milestones
 

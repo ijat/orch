@@ -163,6 +163,14 @@ Copy `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/templates/roadmap.md` to the task
 each milestone at **goal and contract** level only; its step-level `plan.md` is written just before
 it runs, against what was actually built. Then:
 
+- **Cut milestones by what forces a split.** A milestone ends only where one reason holds, and
+  the row's `split` cell names it: `premise: <what only this milestone settles>` (or `premise C<n>`,
+  a contract this row produces); `see: <what the user must see before more is built>` (the row's `you`
+  is not `-`); `ship: <what goes live>` (the row's `merge` is `yes`); `span: <why one milestone would
+  be too big to review>` (this row or the next is size `L`). The last row has `-`. Same-kind work on
+  different items (pages, endpoints, ports, features) is one milestone with batched steps (`pilot:` at
+  about 20 or more), not one milestone per item. Review, merge and `you` cells go on milestones cut this
+  way; they are never a reason to cut.
 - **Place review points and merge points** where they buy the most: reviews before anything builds
   on a contract, on sensitive milestones in place, and spaced so a span stays reviewable; merges
   where reviewed code is worth shipping. A merge needs a review in the same milestone, **unless a
