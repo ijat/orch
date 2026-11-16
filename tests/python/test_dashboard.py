@@ -323,6 +323,19 @@ class TestData(Base):
             fh.write(json.dumps({"ts": "2026-03-01T09:46Z", "kind": "milestone_end", "milestone": 4, "outcome": "abandoned"}) + "\n")
         self.assertEqual(self.task(self.dash().data(NOW), "My App/fix-menu")["milestones_done"], 2)
 
+    def test_a_merge_point_covers_earlier_started_milestones_only(self):
+        d = os.path.join(self.root, "My App", "fix-menu")
+        with open(os.path.join(d, "journal.jsonl"), "a") as fh:
+            for i, (kind, m, extra) in enumerate([("milestone_start", 3, {}), ("milestone_start", 5, {}),
+                                                  ("merge_point", 5, {})]):
+                fh.write(json.dumps(dict({"ts": "2026-03-01T09:%02dZ" % (45 + i), "kind": kind, "milestone": m}, **extra)) + "\n")
+        t = self.task(self.dash().data(NOW), "My App/fix-menu")
+        self.assertEqual(t["milestones_done"], 3)   # M1 (the fixture's own end), 3 (started) and 5; never 4, M2 is blocked
+        with open(os.path.join(d, "journal.jsonl"), "a") as fh:
+            fh.write(json.dumps({"ts": "2026-03-01T09:50Z", "kind": "milestone_end", "milestone": 3, "outcome": "abandoned"}) + "\n")
+        # 3 ended abandoned: the merge_point of 5 no longer covers it; 5 itself and M1 stay done
+        self.assertEqual(self.task(self.dash().data(NOW), "My App/fix-menu")["milestones_done"], 2)
+
     def test_broken_inputs_do_not_crash(self):
         d = os.path.join(self.root, "myapp", "broken")
         os.makedirs(d)

@@ -304,6 +304,28 @@ def cmd_append(ns, extra):
     return 0
 
 
+def refuse_open_milestone(task_dir, n):
+    """A `milestone_start` N is refused (exit 2) while an earlier milestone M < N was started and has no later
+    `milestone_end`; starting N again is allowed."""
+    from . import flow  # lazy: flow imports this module
+    if isinstance(n, bool) or not isinstance(n, int):
+        return
+    open_ms = {}
+    for rec in flow.read_journal(task_dir):
+        m = rec.get("milestone")
+        if isinstance(m, bool) or not isinstance(m, int):
+            continue
+        kind = flow.kind_of(rec)
+        if kind == "milestone_start":
+            open_ms[m] = True
+        elif kind == "milestone_end":
+            open_ms.pop(m, None)
+    earlier = sorted(m for m in open_ms if m < n)
+    if earlier:
+        raise OrchError("milestone M%d is still open: journal `milestone_end milestone:=%d outcome=\u2026` first"
+                        % (earlier[0], earlier[0]), 2)
+
+
 def cmd_journal(ns, extra):
     require_write_allowed()
     task_dir = get_task(ns)
@@ -326,6 +348,8 @@ def cmd_journal(ns, extra):
         rec, missing = jr.build_record(schema, ns.kind, pairs, ts, repo, slug, program, auto_ms)
         if program and ns.kind == "auto_security" and rec.get("milestone") is None:
             raise OrchError("auto_security in a program needs milestone:=<n> (none resolvable from status.md)", 1)
+        if ns.kind == "milestone_start":
+            refuse_open_milestone(task_dir, rec.get("milestone"))
         data = jr.encode(rec)
         changed = []
         if ns.set_fields:

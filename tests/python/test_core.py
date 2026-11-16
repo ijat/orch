@@ -827,6 +827,18 @@ class TestJournal(Base):
         self.assertIsNone(self.last()["milestone"])
         self.assertIn('"milestone":null', self.last_raw())
 
+    def test_milestone_start_is_refused_while_an_earlier_milestone_is_open(self):
+        self.j("milestone_start", "milestone=3")
+        n = len(self.journal_lines(self.d))
+        err = self.refuse(2, "journal", "milestone_start", "milestone=4", "-t", "myapp/add-login")
+        self.assertIn("milestone M3 is still open: journal `milestone_end milestone:=3 outcome=", err)
+        self.assertEqual(len(self.journal_lines(self.d)), n)
+        self.j("milestone_start", "milestone=3")          # the same milestone again is allowed
+        self.j("override", "what=x", "milestone=3")        # every other kind is unchanged
+        self.j("milestone_end", "milestone=3", "outcome=done", "tiers=sonnet/high", "rounds=1")
+        self.j("milestone_start", "milestone=4")
+        self.assertEqual(self.last()["milestone"], 4)
+
     def test_only_shape_roadmap_exactly_is_a_program(self):
         for shape in ("single", "roadmap (draft)", "tbd (planner decides)", "Roadmap"):
             self.ok("set", "shape=%s" % shape, "-t", "myapp/add-login")

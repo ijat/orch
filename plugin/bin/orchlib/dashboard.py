@@ -241,6 +241,7 @@ class Journal(object):
         self.text = text
         if text is None:
             return
+        started, given_up, merged = set(), set(), set()
         for i, line in enumerate(text.split("\n")):
             line = line.strip()
             if not line:
@@ -271,11 +272,22 @@ class Journal(object):
                     or kind == "merge_point" and rec.get("milestone") is not None):
                 m = rec.get("milestone")
                 self.milestones_done.add(m if is_int(m) else str(m))
+            if is_int(rec.get("milestone")):
+                m = rec["milestone"]
+                if kind == "milestone_start":
+                    started.add(m)
+                elif kind == "milestone_end" and rec.get("outcome") in ("blocked", "abandoned"):
+                    given_up.add(m)
+                elif kind == "merge_point":
+                    merged.add(m)
             if kind == "task_end":
                 self.end = (ts, rec.get("outcome"))
             words = event_words(kind, rec)
             if words is not None and ts is not None:
                 self.events.append((ts[:32], i, {"ts": clean(ts, 32), "id": task_id, "kind": kind, "words": words}))
+        # a later merge_point covers every earlier milestone that was started and not given up (blocked/abandoned)
+        for m in merged:
+            self.milestones_done.update(x for x in started if x < m and x not in given_up)
         self.events = sorted(self.events, key=lambda e: (e[0], e[1]))[-MAX_EVENTS:]
 
 
