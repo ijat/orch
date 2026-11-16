@@ -411,6 +411,14 @@ class TestFollowUp(FlowBase):
         self.assertEqual(self.snapshot(), before)
         self.assertFalse(os.path.exists(self.path()))
 
+    def test_severity_low_is_only_for_an_optional_security_finding(self):
+        before = self.snapshot()
+        err = self.refuse(1, "follow-up", "x", "--finding", "F1", "--severity", "low", "-t", T)
+        self.assertIn("not an S<n> id", err)
+        self.assertIn("`- fix: optional`", self.refuse(1, "follow-up", "x", "--finding", "F1", "--severity", "major", "-t", T))
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse(os.path.exists(self.path()))
+
     def test_the_digest_lists_this_tasks_follow_ups_and_prints_nothing_without_any(self):
         retro = "# Retro\n\n- outcome: merged\n"
         for slug in ("quiet", "other"):

@@ -413,6 +413,7 @@ def retro_is_template(task_dir):
 # -- follow-up ------------------------------------------------------------------------------------
 
 FOLLOW_SEVERITIES = ("should-fix", "nit")
+OPTIONAL_SECURITY_SEVERITY = "low"        # only for an S<n> finding marked `- fix: optional` (D3)
 
 
 def follow_ups_path(task_dir):
@@ -421,6 +422,27 @@ def follow_ups_path(task_dir):
 
 def cell(text):
     return re.sub(r"\s+", " ", text.replace("|", "/")).strip()
+
+
+def check_optional_security(ns, finding):
+    """`--severity low` parks a security finding, and only one the security reviewer marked `- fix: optional`
+    (a low with no exploit path and no exposed data); every other low is routed. Exit 1 otherwise."""
+    from . import findings as fd       # findings imports this module
+    what = "--severity low parks a security finding marked `- fix: optional`"
+    if not re.match(r"^S\d+$", finding):
+        raise OrchError("%s; %r is not an S<n> id (a code review finding is a should-fix or a nit)" % (what, finding), 1)
+    c = fd.context(ns)
+    path = fd.review_path(c, True)
+    if not os.path.isfile(path):
+        raise OrchError("%s; no %s in %s" % (what, os.path.basename(path), c.review_dir), 1)
+    parsed = fd.parse(path, True, lenient_heads=True)
+    f = next((x for x in parsed.findings if x.id == finding), None)
+    if f is None:
+        raise OrchError("%s; %s is not in %s" % (what, finding, path), 1)
+    if not f.fix_optional:
+        raise OrchError("%s; %s is not (severity %s, fix %s): route it to a fix, or have the security reviewer mark it "
+                        "in the file if it has no exploit path and exposes no data"
+                        % (what, finding, f.sev_raw or "unknown", f.fix_raw or "not marked"), 1)
 
 
 def cmd_follow_up(ns, extra):
@@ -432,8 +454,11 @@ def cmd_follow_up(ns, extra):
     finding = st.single_line(ns.finding, "--finding")
     if not finding:
         raise OrchError("--finding is empty", 1)
-    if ns.severity not in FOLLOW_SEVERITIES:
-        raise OrchError("--severity must be one of: %s" % ", ".join(FOLLOW_SEVERITIES), 1)
+    if ns.severity == OPTIONAL_SECURITY_SEVERITY:
+        check_optional_security(ns, finding)
+    elif ns.severity not in FOLLOW_SEVERITIES:
+        raise OrchError("--severity must be one of: %s (or %s for a security finding marked `- fix: optional`)"
+                        % (", ".join(FOLLOW_SEVERITIES), OPTIONAL_SECURITY_SEVERITY), 1)
     fpath = st.single_line(ns.file, "--file") if ns.file is not None else ""
     ts = now()
     repo, slug = task_names(task_dir)
@@ -591,10 +616,10 @@ def register(add):
     sp.add_argument("--tool-uses", dest="tool_uses", type=int, default=None)
     sp.add_argument("--duration-ms", dest="duration_ms", type=int, default=None)
 
-    sp = add("follow-up", cmd_follow_up, "park a should-fix or nit in the repo's follow-ups.md (and a follow_up journal line)")
+    sp = add("follow-up", cmd_follow_up, "park a should-fix, a nit or an optional security low in the repo's follow-ups.md (and a follow_up journal line)")
     sp.add_argument("text")
     sp.add_argument("--finding", required=True)
-    sp.add_argument("--severity", required=True, help="should-fix | nit")
+    sp.add_argument("--severity", required=True, help="should-fix | nit | low (a security finding marked `- fix: optional`)")
     sp.add_argument("--file", default=None)
 
     sp = add("end", cmd_end, "task_end line, final state, digest")

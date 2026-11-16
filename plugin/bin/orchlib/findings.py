@@ -16,6 +16,7 @@ from .paths import OrchError, TaskLock, append_bytes, now, require_write_allowed
 CODE_SEVERITIES = ("blocker", "should-fix", "nit")
 SEC_SEVERITIES = ("critical", "high", "medium", "low")
 ORIGINS = ("introduced", "pre-existing")
+OPTIONAL_RE = re.compile(r"^optional(?=$|\s)")      # `- fix: optional` (then, if wanted, ` — why`)
 STATUS_PHRASES = ("resolved", "still open", "disputed", "fixed", "not fixed")    # templates/review.md:31, :41
 CLOSED_PHRASES = ("resolved", "fixed")
 OPEN_PHRASES = ("still open", "not fixed", "open")
@@ -55,6 +56,8 @@ class Finding(object):
         self.state = "open"
         self.cls_raw = None         # the `- class:` text as written, None when the field is absent
         self.cls = None             # its lower-cased slug when it is one, else None
+        self.fix_raw = None         # the `- fix:` text as written (security findings), None when the field is absent
+        self.fix_optional = False   # a security `low` marked `- fix: optional`: never starts a fix batch (D3)
 
     @property
     def number(self):
@@ -163,6 +166,9 @@ def parse_text(text, security=False, lenient_heads=False):
             f.severity = f.sev_raw.lower() if f.sev_raw.lower() in sev_set else None
             f.file = fields.get("file", "")
             f.resolution = fields.get("resolution", "")
+            f.fix_raw = fields.get("fix")
+            f.fix_optional = bool(security and f.severity == "low" and f.fix_raw is not None
+                                  and OPTIONAL_RE.match(f.fix_raw.strip().lower()))
             f.cls_raw = fields.get("class")
             if f.cls_raw is not None and CLASS_RE.match(f.cls_raw.strip().lower()):
                 f.cls = f.cls_raw.strip().lower()
@@ -224,13 +230,14 @@ def parse(path, security=False, lenient_heads=False):
 
 def mark_parked(parsed, records, milestone):
     """A `follow_up` journal record parks finding X only when its finding is X's id, its severity equals X's and its
-    milestone equals the task's (absent on both sides for a single plan). Security findings never park."""
-    if parsed.security:
-        return
+    milestone equals the task's (absent on both sides for a single plan). A security finding parks only when it is a
+    `low` marked `- fix: optional` (D3); every other security finding stays open."""
     for rec in records:
         if flow.kind_of(rec) != "follow_up":
             continue
         for f in parsed.findings:
+            if parsed.security and not f.fix_optional:
+                continue
             if (f.state != "closed" and rec.get("finding") == f.id and f.severity is not None
                     and rec.get("severity") == f.severity and rec.get("milestone") == milestone):
                 f.state = "parked"
@@ -274,7 +281,8 @@ def counts_line(parsed):
     if not parsed.security:
         parts.append("pre-existing: " + tally(groups["pre-existing"]))
     parts.append("flags: " + flags)
-    parts.append("not counted: " + ("closed %d" % closed if parsed.security else "parked %d, closed %d" % (parked, closed)))
+    parts.append("not counted: " + ("closed %d" % closed if parsed.security and not parked
+                                    else "parked %d, closed %d" % (parked, closed)))
     parts.append("unparsed %d" % len(parsed.unparsed))
     return "; ".join(parts)
 
@@ -291,6 +299,12 @@ def check_block_fields(f, security):
         problems.append("%s: `- file:` is missing (PATH:LINE)" % f.id)
     if not security and (f.origin not in ORIGINS):
         problems.append("%s: `- origin:` must be introduced or pre-existing (then ` — evidence`)" % f.id)
+    if security and f.fix_raw is not None and f.fix_raw.strip() and not PLACEHOLDER_RE.match(f.fix_raw.strip()):
+        if not OPTIONAL_RE.match(f.fix_raw.strip().lower()):
+            problems.append("%s: `- fix:` must be `optional` or left out (got %r)" % (f.id, f.fix_raw))
+        elif f.severity != "low":
+            problems.append("%s: `- fix: optional` is only for severity low (got %r): a finding with an exploit path or "
+                            "exposed data is always routed" % (f.id, f.sev_raw))
     if f.cls_raw is not None and f.cls_raw.strip() and f.cls is None:
         problems.append("%s: `- class:` must be one short slug (letters, digits, - or _), or left out (got %r)" % (f.id, f.cls_raw))
     return problems

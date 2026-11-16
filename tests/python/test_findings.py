@@ -172,7 +172,27 @@ class TestParse(unittest.TestCase):
         self.assertEqual(parked([{"kind": "other", "finding": "F3", "severity": "nit"}]), [])
         sec = fd.parse_text("### S1 — x\n- severity: low\n- file: a:1\n", security=True)
         fd.mark_parked(sec, [rec("S1", "low")], None)
-        self.assertEqual(sec.findings[0].state, "open")                         # security findings never park
+        self.assertEqual(sec.findings[0].state, "open")                         # a security finding without `fix: optional` never parks
+
+    def test_a_security_low_marked_fix_optional_parks_and_nothing_else_does(self):
+        text = ("### S1 — a\n- severity: low\n- file: a:1\n- fix: optional — hardening only\n\n"
+                "### S2 — b\n- severity: low\n- file: a:2\n\n"
+                "### S3 — c\n- severity: medium\n- file: a:3\n- fix: optional\n\n"
+                "### S4 — d\n- severity: low\n- file: a:4\n- fix: optionally\n")
+        sec = fd.parse_text(text, security=True)
+        self.assertEqual([(f.id, f.fix_optional) for f in sec.findings],
+                         [("S1", True), ("S2", False), ("S3", False), ("S4", False)])
+        recs = [{"kind": "follow_up", "finding": f, "severity": v} for f, v in (("S1", "low"), ("S2", "low"), ("S3", "medium"))]
+        fd.mark_parked(sec, recs, None)
+        self.assertEqual([(f.id, f.state) for f in sec.findings],
+                         [("S1", "parked"), ("S2", "open"), ("S3", "open"), ("S4", "open")])
+        self.assertIn("not counted: parked 1, closed 0", fd.counts_line(sec))
+        self.assertIn("open: critical 0, high 0, medium 1, low 2", fd.counts_line(sec))
+
+    def test_old_security_files_without_fix_parse_as_before(self):
+        p = fd.parse_text(fixture("security.md"), security=True)
+        self.assertTrue(all(f.fix_raw is None and not f.fix_optional for f in p.findings))
+        self.assertNotIn("parked", fd.counts_line(p))
 
 
 class ReviewBase(core.Base):
@@ -468,6 +488,52 @@ class TestFindingClass(ReviewBase):
         p = fd.parse_text(block("F1", extra="- class: x1\n") + "\n## Check of round 1\n\n- F1: fixed\n\n"
                           + block("F2", extra="- class: x1\n"))
         self.assertEqual(fd.finding_rounds(p), {"F1": 1, "F2": 1})
+
+
+class TestOptionalSecurityLow(ReviewBase):
+    SEC = ("# Security review: add-login\n\n## Findings\n\n"
+           "### S1 — hardening\n- severity: low\n- file: src/a.py:1\n- fix: optional\n- resolution:\n\n"
+           "### S2 — plain low\n- severity: low\n- file: src/a.py:2\n- resolution:\n")
+
+    def test_fix_optional_on_a_non_low_is_reported_invalid_not_honoured(self):
+        rc, out, err = self.write_review("### S1 — x\n- severity: medium\n- file: a.py:2\n- fix: optional\n", "--security")
+        self.assertEqual(rc, 1)
+        self.assertIn("S1: `- fix: optional` is only for severity low", err)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "security-review.md")))
+
+    def test_fix_must_be_optional_or_absent_and_low_optional_is_accepted(self):
+        rc, _, err = self.write_review("### S1 — x\n- severity: low\n- file: a.py:2\n- fix: maybe\n", "--security")
+        self.assertEqual(rc, 1)
+        self.assertIn("`- fix:` must be `optional` or left out", err)
+        rc, out, err = self.write_review("### S1 — x\n- severity: low\n- file: a.py:2\n- fix: optional\n", "--security")
+        self.assertEqual(rc, 0, err)
+
+    def test_a_code_review_finding_ignores_fix(self):
+        rc, _, err = self.write_review("### F1 — x\n- severity: blocker\n- origin: introduced\n- file: a.py:2\n- fix: optional\n")
+        self.assertEqual(rc, 0, err)
+        self.assertFalse(fd.parse_text(self.get(), False).findings[0].fix_optional)
+
+    def test_follow_up_low_parks_only_a_fix_optional_security_finding(self):
+        self.put(self.SEC, "security-review.md")
+        self.ok("follow-up", "harden later", "--finding", "S1", "--severity", "low", "-t", T)
+        out, _ = self.ok("findings", "--security", "-t", T)
+        self.assertIn("S1 | low | - | src/a.py:1 | parked | hardening", out)
+        self.assertIn("S2 | low | - | src/a.py:2 | open | plain low", out)
+        out, _ = self.ok("findings", "--security", "--open", "--counts", "-t", T)
+        self.assertNotIn("S1 |", out)
+        self.assertIn("low 1", out)
+        self.assertIn("parked 1", out)
+        for args, why in ((("S2", "low"), "is not (severity low, fix not marked)"), (("S9", "low"), "is not in"),
+                          (("F1", "low"), "not an S<n> id")):
+            rc, _, err = self.run_orch("follow-up", "x", "--finding", args[0], "--severity", args[1], "-t", T)
+            self.assertEqual(rc, 1)
+            self.assertIn(why, err)
+        self.assertEqual(self.ok("findings", "--security", "--counts", "-t", T)[0].count("parked 1"), 1)
+
+    def test_follow_up_low_without_a_security_file_is_refused(self):
+        rc, _, err = self.run_orch("follow-up", "x", "--finding", "S1", "--severity", "low", "-t", T)
+        self.assertEqual(rc, 1)
+        self.assertIn("no security-review.md", err)
 
 
 class TestFindingAdd(ReviewBase):

@@ -1142,11 +1142,32 @@ def cmd_brief_review(ns, c, reviewer):
 
 # -- fix -----------------------------------------------------------------------------------------
 
-def finding_blocks(path, wanted):
-    """{id: verbatim finding block} and {id: [round-note texts]} from a review file (the parser `orch findings` uses)."""
-    parsed = fd.parse(path, lenient_heads=True)     # the old reader's headings: `### F1: x` still names a finding here
-    found = dict((f.id, f.block) for f in parsed.findings if f.id in wanted)
-    return found, dict((w, list(parsed.notes.get(w, []))) for w in wanted)
+def finding_blocks(path, wanted, security=False):
+    """{id: verbatim finding block}, {id: [round-note texts]} and {id: Finding} from a review file (the parser
+    `orch findings` uses)."""
+    parsed = fd.parse(path, security, lenient_heads=True)     # the old reader's headings: `### F1: x` still names a finding here
+    objs = dict((f.id, f) for f in parsed.findings if f.id in wanted)
+    found = dict((i, f.block) for i, f in objs.items())
+    return found, dict((w, list(parsed.notes.get(w, []))) for w in wanted), objs
+
+
+def is_optional(f):
+    """A finding that never starts a fix batch by itself: a code review nit, or a security low marked `- fix: optional`
+    (D1, D3). A finding whose severity the parser cannot place is not one."""
+    return f.severity == "nit" or f.fix_optional
+
+
+def refuse_optional_only(c, wanted, objs):
+    """Exit 2 when every selected finding is a nit or an optional security low: those ride along in a batch that happens
+    anyway, else they are parked (`orch follow-up`)."""
+    if not wanted or not all(is_optional(objs[w]) for w in wanted if w in objs) or any(w not in objs for w in wanted):
+        return
+    routes = ["%s follow-up \"<text>\" --finding %s --severity %s" % (orch_head(c), w, "nit" if w.startswith("F") else "low")
+              for w in wanted]
+    raise OrchError("brief fix: every selected finding (%s) is a nit or a security low marked `- fix: optional`; those do "
+                    "not start a fix batch. Park each (%s), or add them to a fix batch that happens anyway (a blocker, a "
+                    "should-fix or another security finding). If the user asked for these fixes, give --user-asked."
+                    % (", ".join(wanted), "; ".join(routes)), 2)
 
 
 def class_repeat_lines(c, wanted):
@@ -1174,7 +1195,7 @@ def cmd_brief_fix(ns, c):
         if not FIX_ID_RE.match(w):
             raise OrchError("bad finding id %r (F<n> for review.md, S<n> for security-review.md)" % w, 1)
     wanted = list(dict.fromkeys(wanted))
-    blocks, notes = {}, {}
+    blocks, notes, objs = {}, {}, {}
     for prefix, fname in (("F", "review.md"), ("S", "security-review.md")):
         ids = [w for w in wanted if w.startswith(prefix)]
         if not ids:
@@ -1182,12 +1203,15 @@ def cmd_brief_fix(ns, c):
         path = os.path.join(c.review_dir, fname)
         if not os.path.isfile(path):
             raise OrchError("%s not found (needed for %s)" % (path, ", ".join(ids)), 1)
-        b, n = finding_blocks(path, ids)
+        b, n, o = finding_blocks(path, ids, prefix == "S")
         blocks.update(b)
         notes.update(n)
+        objs.update(o)
     missing = [w for w in wanted if w not in blocks]
     if missing:
         raise OrchError("finding(s) not found: %s" % ", ".join(missing), 1)
+    if not ns.user_asked:
+        refuse_optional_only(c, wanted, objs)
     text_blocks = []
     for w in wanted:
         text_blocks.append(blocks[w] + ("\n\n" + "\n\n".join(notes[w]) if notes[w] else ""))
@@ -1208,7 +1232,8 @@ def cmd_brief_fix(ns, c):
         raise OrchError("bad --role %r" % role, 1)
     ids = [s.id for s in steps]
     keys = step_keys(c, steps, ids)
-    out = ["# Brief: fix round %d (%s) — %s/%s" % (rnd, ", ".join(wanted), c.repo_name, c.slug)]
+    out = ["# Brief: fix round %d (%s) — %s/%s%s" % (rnd, ", ".join(wanted), c.repo_name, c.slug,
+                                                 " (user asked for these fixes)" if ns.user_asked else "")]
     if plan.legacy:
         out.append(legacy_note(c))
     out.append(section("Where you work", where_text(c, role, ns.tier, ns.escalation, steps)))
@@ -1320,6 +1345,8 @@ def cmd_brief(ns, extra):
         raise OrchError("--tier must look like sonnet/high", 1)
     if ns.escalation is not None and ns.escalation not in ("none", "proactive", "post-failure"):
         raise OrchError("--escalation must be none, proactive or post-failure", 1)
+    if ns.user_asked and ns.kind != "fix":
+        raise OrchError("--user-asked belongs to `orch brief fix` (the user asked for the nit or optional fixes)", 1)
     if ns.check and ns.kind != "review":
         raise OrchError("--check belongs to `orch brief review` (the fix-batch check of the code review)", 1)
     if ns.whole_repo and ns.kind != "security":
@@ -1356,6 +1383,8 @@ def register(add):
     sp.add_argument("--range", default=None)
     sp.add_argument("--round", type=int, default=None)
     sp.add_argument("--check", action="store_true")
+    sp.add_argument("--user-asked", action="store_true", dest="user_asked",
+                    help="fix only: the user asked for these nit or optional fixes (a list of only those is refused otherwise)")
     sp.add_argument("--whole-repo", action="store_true", dest="whole_repo",
                     help="security only: review every file at the tip (range = empty tree..tip)")
     sp.add_argument("--extra", default=None)
