@@ -5,22 +5,28 @@ Sixteen checks in four areas (index, install, settings, tasks). Each is `ok`, `w
 is created or changed, no settings value is printed (a settings file is read in-process; only key names and a parse
 position ever appear), and a check that raises is reported as a failure while the others still run.
 
-Exit codes: 0 no `fail`, 2 at least one `fail`, 1 usage error, 3 internal.
+`--fix` applies the safe `auto` fixes and nothing else (see FIXERS): create the missing data folders, repoint the plugin
+pointer (installed copy only), install the pinned orch-index, remove a dead indexing marker. It never rebuilds the index,
+removes a worktree or task folder, or edits any settings file. The checks run again afterwards and decide the exit code.
+
+Exit codes: 0 no `fail`, 2 at least one `fail` (also: `--fix` refused), 1 usage error, 3 internal.
 """
 import glob
 import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import time
 
-from . import memory, settings as orch_settings, status as st, usage
+from . import memory, paths, settings as orch_settings, status as st, usage
 from .paths import (BIN_DIR, OrchError, cache_dir, data_bin, data_root, is_live, logs_dir, orch_root, plugins_cache,
                     pointer_path, task_names, tilde, writes_allowed)
 
 SCHEMA = 1
+INSTALL_TIMEOUT = 300          # seconds for orch-install-code-index.sh
 AREAS = ("index", "install", "settings", "tasks")
 SUBPROCESS_TIMEOUT = 10        # seconds, each external command
 MARKER_MAX_AGE = 30 * 60       # an indexing marker older than this is dead whatever its pid says (roles/graph.md)
@@ -466,7 +472,7 @@ def check_settings_claude(ctx):
             present.append(label)
     if bad:
         return warn("; ".join(bad), "manual", "fix the JSON in the named file; orch never edits it for this")
-    return ok("%s readable" % (", ".join(present) if present else "no settings files present"))
+    return ok("%s readable" % ", ".join(present) if present else "no settings files present")
 
 
 def check_memory_auto(ctx):
@@ -588,6 +594,133 @@ CHECKS = [
 ]
 
 
+# ---- fixes (--fix) -------------------------------------------------------------------------------------------------
+# Each fixer takes the Ctx and returns (result, detail), result in done|skipped|failed. Only the checks named in FIXERS
+# can ever be fixed, whatever another check's `fix.kind` says.
+
+def last_line(text):
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    return lines[-1][:200] if lines else "no output"
+
+
+def fix_data_folders(ctx):
+    made = []
+    try:
+        for _, path in data_folders():
+            if not os.path.isdir(path):
+                os.makedirs(path, exist_ok=True)
+                made.append(tilde(path))
+    except OSError as exc:
+        return "failed", "%s: %s" % (type(exc).__name__, exc.strerror or exc)
+    return ("done", "created %s" % ", ".join(made)) if made else ("skipped", "nothing was missing")
+
+
+def fix_pointer(ctx):
+    if not is_live():
+        return "skipped", "only the installed copy moves the pointer (development copy)"
+    try:
+        changed = paths.update_pointer(own_plugin_root())
+    except OSError as exc:
+        return "failed", "%s: %s" % (type(exc).__name__, exc.strerror or exc)
+    if changed:
+        return "done", "%s -> %s" % (tilde(pointer_path()), tilde(own_plugin_root()))
+    return "skipped", "the pointer already names this copy"
+
+
+def windows_bash():
+    """The bash that ships with Git for Windows, found next to git; None when there is none."""
+    git_exe = shutil.which("git")
+    if not git_exe:
+        return None
+    here = os.path.dirname(os.path.realpath(git_exe))
+    for rel in (("bash.exe",), ("..", "bin", "bash.exe"), ("..", "usr", "bin", "bash.exe")):
+        cand = os.path.normpath(os.path.join(here, *rel))
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def fix_index_binary(ctx):
+    script = os.path.join(BIN_DIR, "orch-install-code-index.sh")
+    if not os.path.isfile(script):
+        return "failed", "%s is missing" % tilde(script)
+    if os.name == "nt":
+        bash = windows_bash()
+        if not bash:
+            return "skipped", "no bash next to git; run %s in Git Bash" % tilde(script)
+    else:
+        bash = shutil.which("bash") or "/bin/bash"
+    try:
+        res = subprocess.run([bash, script, "--dest", data_bin()], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL, timeout=INSTALL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return "failed", "the installer ran over %d s and was stopped" % INSTALL_TIMEOUT
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "failed", type(exc).__name__
+    line = last_line(res.stdout.decode("utf-8", "replace"))
+    if res.returncode == 0:
+        if find_index() is None:
+            return "failed", "the installer finished but no orch-index binary was found (%s)" % line
+        return "done", line
+    if res.returncode == 3:      # disabled by ORCH_INDEX_AUTOINSTALL=0, or no release for this platform
+        return "skipped", line
+    return "failed", line
+
+
+def fix_index_marker(ctx):
+    if not ctx.common_dir:
+        return "skipped", "not in a git repo"
+    path = os.path.join(ctx.common_dir, "orch-index", "indexing")
+    try:
+        with open(path, "rb") as fh:
+            first = fh.read()
+        mtime = os.stat(path).st_mtime_ns
+    except FileNotFoundError:
+        return "skipped", "the marker is already gone"
+    except OSError as exc:
+        return "failed", type(exc).__name__
+    m = re.match(rb"pid=(\d+)\b", first.strip())
+    pid = int(m.group(1)) if m else None
+    age = time.time() - mtime / 1e9
+    if marker_is_live(pid, age):
+        return "skipped", "a rebuild holds the marker (live)"
+    try:     # compare, then remove: the marker must still be the one that was judged dead
+        with open(path, "rb") as fh:
+            again = fh.read()
+        if again != first or os.stat(path).st_mtime_ns != mtime:
+            return "skipped", "the marker changed while it was being checked"
+        os.unlink(path)
+    except FileNotFoundError:
+        return "skipped", "the marker is already gone"
+    except OSError as exc:
+        return "failed", type(exc).__name__
+    return "done", "removed the dead indexing marker"
+
+
+FIXERS = [      # in this order: folders, pointer, binary, marker
+    ("install.data", fix_data_folders),
+    ("install.pointer", fix_pointer),
+    ("index.binary", fix_index_binary),
+    ("index.marker", fix_index_marker),
+]
+
+
+def apply_fixes(results, ctx):
+    """Run each fixer whose check is a problem with an `auto` fix. Returns [{"id","result","detail"}]."""
+    by_id = dict((r["id"], r) for r in results)
+    fixed = []
+    for check_id, fn in FIXERS:
+        r = by_id.get(check_id)
+        if r is None or r["status"] == "ok" or r["fix"]["kind"] != "auto":
+            continue
+        try:
+            outcome, detail = fn(ctx)
+        except Exception as exc:     # a fixer that raises is a failed fix; the next one still runs
+            outcome, detail = "failed", "internal: %s" % type(exc).__name__
+        fixed.append({"id": check_id, "result": outcome, "detail": detail})
+    return fixed
+
+
 # ---- running and printing ------------------------------------------------------------------------------------------
 
 def run_checks(ctx):
@@ -637,10 +770,24 @@ def exit_code(rep):
 
 def cmd_doctor(ns, extra):
     ctx = Ctx(ns.repo)
+    fixed = None
+    if ns.fix:
+        if not writes_allowed():
+            raise OrchError("development copy: --fix changes real orch data, so it needs the installed copy or "
+                            "ORCH_DIR / ORCH_DATA set; nothing was changed", 2)
+        fixed = apply_fixes(run_checks(ctx), ctx)
+        ctx = Ctx(ns.repo)      # the facts the checks cache are stale after a fix
     rep = report(ctx, run_checks(ctx))
+    if fixed is not None:
+        rep["fixed"] = fixed
     if ns.json:
         print(json.dumps(rep, indent=2))
     else:
+        if fixed is not None:
+            for f in fixed:
+                print("fix %s: %s (%s)" % (f["id"], f["result"], f["detail"]))
+            if not fixed:
+                print("nothing to fix automatically")
         for line in render_text(rep):
             print(line)
     return exit_code(rep)
@@ -650,3 +797,4 @@ def register(add):
     sp = add("doctor", cmd_doctor, "check orch's own setup (index, install, settings, tasks) and say how to fix each problem")
     sp.add_argument("--json", action="store_true", help="JSON report")
     sp.add_argument("--repo", default=None, help="the repo to check (default: the current directory's)")
+    sp.add_argument("--fix", action="store_true", help="apply the safe automatic fixes, then check again")

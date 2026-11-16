@@ -654,5 +654,232 @@ class TestTasks(DoctorBase):
             self.assertEqual(self.check(cid)["detail"], "not in a git repo")
 
 
+INSTALLER_OK = """#!/bin/sh
+[ "$1" = --dest ] || exit 2
+mkdir -p "$2" && printf '#!/bin/sh\\nexit 0\\n' > "$2/orch-index" && chmod +x "$2/orch-index"
+echo "installed $2/orch-index v%s"
+""" % PIN
+
+
+@unittest.skipUnless(POSIX, "fake installer and orch-index are shell scripts")
+class TestFix(DoctorBase):
+    def setUp(self):
+        DoctorBase.setUp(self)
+        self.env["PATH"] = self.gitbin + os.pathsep + "/bin" + os.pathsep + "/usr/bin"     # the installer needs mkdir
+
+    def fix(self, repo=None, env=None, *flags):
+        rc, out, err = self.run_orch("doctor", "--fix", "--json", "--repo", repo or self.nogit, *flags, env=env or {})
+        self.assertIn(rc, (0, 2), "stderr=%s" % err)
+        return json.loads(out), rc
+
+    def results(self, rep):
+        return dict((f["id"], f) for f in rep["fixed"])
+
+    def installer(self, text):
+        return make_exec(os.path.join(self.bin, "orch-install-code-index.sh"), text)
+
+    def marker(self, repo, text, age=0):
+        d = os.path.join(repo, ".git", "orch-index")
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, "indexing")
+        with open(path, "w") as fh:
+            fh.write(text)
+        if age:
+            t = time.time() - age
+            os.utime(path, (t, t))
+        return path
+
+    def dead_pid(self):
+        p = subprocess.Popen([sys.executable, "-c", "pass"])
+        p.wait()
+        return p.pid
+
+    def live(self):
+        """The installed copy: doctor's and paths' own liveness answers."""
+        return mock.patch.multiple(doctor, is_live=lambda: True), mock.patch.object(doctor.paths, "is_live", lambda: True), \
+            mock.patch.object(doctor.paths, "BIN_DIR", self.bin)
+
+    def test_a_development_copy_refuses_and_changes_nothing(self):
+        rc, out, err = self.run_orch("doctor", "--fix", "--repo", self.nogit, env={"ORCH_DIR": ""})
+        self.assertEqual(rc, 2)
+        self.assertIn("development copy", err)
+        self.assertEqual(out, "")
+        self.assertFalse(os.path.exists(self.data))
+
+    def test_data_folders_are_created_then_the_check_passes(self):
+        rep, _ = self.fix()
+        f = self.results(rep)["install.data"]
+        self.assertEqual(f["result"], "done")
+        for sub in ("logs", "cache"):
+            self.assertTrue(os.path.isdir(os.path.join(self.data, sub)))
+        self.assertTrue(os.path.isdir(self.root))
+        self.assertEqual(next(c for c in rep["checks"] if c["id"] == "install.data")["status"], "ok")
+
+    def test_data_folders_that_cannot_be_created_are_a_failed_fix(self):
+        with open(self.data, "w") as fh:            # a file where the data root should be
+            fh.write("x")
+        rep, _ = self.fix()
+        self.assertEqual(self.results(rep)["install.data"]["result"], "failed")
+        with open(self.data) as fh:
+            self.assertEqual(fh.read(), "x")
+
+    def test_pointer_is_repointed_only_from_the_installed_copy(self):
+        os.makedirs(os.path.join(self.home, ".claude", "plugins"))
+        with open(os.path.join(self.home, ".claude", "plugins", "installed_plugins.json"), "w") as fh:
+            json.dump({"plugins": {"orch@orch": [{"installPath": os.path.realpath(self.plugin)}]}}, fh)
+        rep, _ = self.fix()                                    # development copy: the fix is manual, never applied
+        self.assertNotIn("install.pointer", self.results(rep))
+        self.assertFalse(os.path.lexists(os.path.join(self.data, "plugin")))
+        a, b, c = self.live()
+        with a, b, c:
+            rep, _ = self.fix()
+        self.assertEqual(self.results(rep)["install.pointer"]["result"], "done")
+        self.assertEqual(os.path.realpath(os.path.join(self.data, "plugin")), os.path.realpath(self.plugin))
+        self.assertEqual(next(c for c in rep["checks"] if c["id"] == "install.pointer")["status"], "ok")
+
+    def test_pointer_fix_skipped_from_a_development_copy_and_failed_on_an_oserror(self):
+        self.assertEqual(doctor.fix_pointer(None)[0], "skipped")
+        a, b, c = self.live()
+        with a, b, c, mock.patch.object(doctor.paths, "update_pointer", side_effect=OSError(13, "denied")):
+            self.assertEqual(doctor.fix_pointer(None)[0], "failed")
+
+    def test_binary_is_installed_by_the_script(self):
+        self.installer(INSTALLER_OK)
+        rep, rc = self.fix()
+        f = self.results(rep)["index.binary"]
+        self.assertEqual(f["result"], "done")
+        self.assertIn("installed", f["detail"])
+        self.assertTrue(os.access(os.path.join(self.data, "bin", "orch-index"), os.X_OK))
+        self.assertEqual(next(c for c in rep["checks"] if c["id"] == "index.binary")["status"], "ok")
+        self.assertEqual(rc, 0)         # the re-check decides the exit code
+
+    def test_binary_script_failure_is_failed_with_its_last_line_and_the_exit_stays_2(self):
+        self.installer("#!/bin/sh\necho first\necho 'failed: checksum mismatch'\nexit 1\n")
+        rep, rc = self.fix()
+        f = self.results(rep)["index.binary"]
+        self.assertEqual((f["result"], f["detail"]), ("failed", "failed: checksum mismatch"))
+        self.assertEqual(rc, 2)
+
+    def test_binary_script_that_exits_0_without_installing_is_failed(self):
+        self.installer("#!/bin/sh\necho 'all good'\n")
+        f = self.results(self.fix()[0])["index.binary"]
+        self.assertEqual(f["result"], "failed")
+        self.assertIn("no orch-index binary", f["detail"])
+
+    def test_binary_script_exit_3_is_skipped(self):
+        self.installer("#!/bin/sh\necho 'disabled by ORCH_INDEX_AUTOINSTALL'\nexit 3\n")
+        f = self.results(self.fix()[0])["index.binary"]
+        self.assertEqual(f["result"], "skipped")
+
+    def test_binary_script_timeout_is_failed(self):
+        self.installer("#!/bin/sh\nexec /bin/sleep 30\n")
+        with mock.patch.object(doctor, "INSTALL_TIMEOUT", 1):
+            f = self.results(self.fix()[0])["index.binary"]
+        self.assertEqual(f["result"], "failed")
+        self.assertIn("stopped", f["detail"])
+
+    def test_binary_script_missing_is_failed(self):
+        os.unlink(os.path.join(self.bin, "orch-install-code-index.sh"))
+        self.assertEqual(self.results(self.fix()[0])["index.binary"]["result"], "failed")
+
+    def test_binary_on_windows_without_git_bash_is_skipped(self):
+        self.installer(INSTALLER_OK)
+        with mock.patch.object(os, "name", "nt"), mock.patch.object(doctor, "windows_bash", return_value=None):
+            result, detail = doctor.fix_index_binary(None)
+        self.assertEqual(result, "skipped")
+        self.assertIn("Git Bash", detail)
+        self.assertFalse(os.path.exists(os.path.join(self.data, "bin", "orch-index")))
+
+    def test_windows_bash_is_found_next_to_git(self):
+        gitdir = os.path.join(self.tmp, "Git", "cmd")
+        make_exec(os.path.join(gitdir, "git.exe"))
+        bash = make_exec(os.path.join(self.tmp, "Git", "bin", "bash.exe"))
+        with mock.patch.object(shutil, "which", return_value=os.path.join(gitdir, "git.exe")):
+            self.assertEqual(doctor.windows_bash(), os.path.realpath(bash))
+
+    def test_a_dead_marker_is_removed(self):
+        repo = self.make_repo()
+        path = self.marker(repo, "pid=%d started=x\n" % self.dead_pid())
+        rep, _ = self.fix(repo)
+        self.assertEqual(self.results(rep)["index.marker"]["result"], "done")
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(next(c for c in rep["checks"] if c["id"] == "index.marker")["status"], "ok")
+
+    def test_an_old_marker_is_removed_even_when_its_pid_runs(self):
+        repo = self.make_repo()
+        path = self.marker(repo, "pid=%d\n" % os.getpid(), age=31 * 60)
+        self.assertEqual(self.results(self.fix(repo)[0])["index.marker"]["result"], "done")
+        self.assertFalse(os.path.exists(path))
+
+    def test_a_live_marker_survives(self):
+        repo = self.make_repo()
+        path = self.marker(repo, "pid=%d\n" % os.getpid())
+        rep, _ = self.fix(repo)
+        self.assertNotIn("index.marker", self.results(rep))     # nothing wrong with it, so nothing to fix
+        self.assertTrue(os.path.exists(path))
+        ctx = doctor.Ctx(repo)
+        self.assertEqual(doctor.fix_index_marker(ctx)[0], "skipped")   # and the fixer itself refuses it
+        self.assertTrue(os.path.exists(path))
+
+    def test_a_marker_that_changes_after_it_was_judged_survives(self):
+        repo = self.make_repo()
+        path = self.marker(repo, "pid=%d\n" % self.dead_pid())
+        ctx = doctor.Ctx(repo)
+
+        def judged_dead_then_rewritten(pid, age):
+            with open(path, "w") as fh:                 # another rebuild starts between the read and the unlink
+                fh.write("pid=%d started=new\n" % os.getpid())
+            return False
+        with mock.patch.object(doctor, "marker_is_live", judged_dead_then_rewritten):
+            result, detail = doctor.fix_index_marker(ctx)
+        self.assertEqual(result, "skipped")
+        self.assertIn("changed", detail)
+        self.assertTrue(os.path.exists(path))
+
+    def test_marker_fix_without_a_repo_is_skipped(self):
+        self.assertEqual(doctor.fix_index_marker(doctor.Ctx(self.nogit))[0], "skipped")
+
+    def test_fixes_run_in_order_folders_pointer_binary_marker(self):
+        repo = self.make_repo()
+        self.installer(INSTALLER_OK)
+        self.marker(repo, "pid=%d\n" % self.dead_pid())
+        os.makedirs(os.path.join(self.home, ".claude", "plugins"))
+        with open(os.path.join(self.home, ".claude", "plugins", "installed_plugins.json"), "w") as fh:
+            json.dump({"plugins": {"orch@orch": [{"installPath": os.path.realpath(self.plugin)}]}}, fh)
+        a, b, c = self.live()
+        with a, b, c:
+            rep, _ = self.fix(repo)
+        self.assertEqual([f["id"] for f in rep["fixed"]], ["install.data", "install.pointer", "index.binary", "index.marker"])
+        self.assertEqual([f["result"] for f in rep["fixed"]], ["done"] * 4)
+
+    def test_only_the_fixers_of_decision_d5_ever_run(self):
+        other = doctor.result("tasks.orphans", "tasks", "t", "warn", "d", "auto", "remove it")
+        self.assertEqual(doctor.apply_fixes([other], None), [])
+        self.assertEqual([i for i, _ in doctor.FIXERS], ["install.data", "install.pointer", "index.binary", "index.marker"])
+
+    def test_a_fixer_that_raises_is_failed_and_the_next_one_still_runs(self):
+        results = [doctor.result("install.data", "install", "t", "warn", "d", "auto", "x"),
+                   doctor.result("index.marker", "index", "t", "warn", "d", "auto", "x")]
+        fixers = [("install.data", lambda ctx: 1 / 0), ("index.marker", lambda ctx: ("done", "ok"))]
+        with mock.patch.object(doctor, "FIXERS", fixers):
+            fixed = doctor.apply_fixes(results, None)
+        self.assertEqual([(f["id"], f["result"]) for f in fixed], [("install.data", "failed"), ("index.marker", "done")])
+        self.assertEqual(fixed[0]["detail"], "internal: ZeroDivisionError")
+
+    def test_nothing_to_fix_and_the_text_form(self):
+        os.makedirs(os.path.join(self.data, "logs"))
+        os.makedirs(os.path.join(self.data, "cache"))
+        self.fake_index(fake_status='{"state":"current"}')
+        rep, rc = self.fix()
+        self.assertEqual(rep["fixed"], [])
+        self.assertEqual(rc, 0)
+        rc, out, _ = self.run_orch("doctor", "--fix", "--repo", self.nogit)
+        self.assertIn("nothing to fix automatically", out)
+        self.installer(INSTALLER_OK)
+        os.unlink(self.env["ORCH_INDEX_REAL"])
+        rc, out, _ = self.run_orch("doctor", "--fix", "--repo", self.nogit)
+        self.assertIn("fix index.binary: done (installed", out)
+
+
 if __name__ == "__main__":
     unittest.main()
