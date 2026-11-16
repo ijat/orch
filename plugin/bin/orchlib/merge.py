@@ -413,17 +413,34 @@ def brief_problem(ctx, r):
     return None
 
 
-def review_problems(r, tip, strict_nits, ctx=None):
+def docs_since(ctx, sha):
+    """(True, note) when `sha` is an ancestor of the tip and only docs-only paths changed since (policy.md `docs-only`),
+    else (False, why-or-empty). A pass at such a sha stands at the tip (the gate and the security pass; D4, D5)."""
+    if not ctx.policy.docs_only:
+        return False, ""
+    ok, res = docs_only_since(ctx.repo, sha, ctx.tip, ctx.policy.docs_only)
+    if ok:
+        return True, "docs-only since %s (%d path(s))" % (sha[:9], len(res))
+    return False, res
+
+
+def review_problems(r, tip, strict_nits, ctx=None, docs_ok=False):
+    """Why a review line does not satisfy the merge. `docs_ok`: a line at an ancestor of the tip stands when only
+    docs-only paths changed since (the security pass, D5)."""
     sha = r.get("sha")
     out = []
     if not isinstance(sha, str) or not HEX_RE.match(sha.lower()):
         out.append("review line has no full sha (old line or hand-written)")
-    elif sha.lower() != tip:
-        out.append("reviewed %s but the tip is %s" % (sha[:9], tip[:9]))
-    elif ctx is not None:
-        why = brief_problem(ctx, r)
-        if why:
-            out.append(why)
+    else:
+        stands = sha.lower() == tip
+        if not stands and docs_ok and ctx is not None:
+            stands = docs_since(ctx, sha.lower())[0]
+        if not stands:
+            out.append("reviewed %s but the tip is %s" % (sha[:9], tip[:9]))
+        elif ctx is not None:
+            why = brief_problem(ctx, r)
+            if why:
+                out.append(why)
     if r.get("verdict") != "pass":
         out.append("verdict is %r" % (r.get("verdict"),))
     fields = ("blockers", "should_fix") + (("nits",) if strict_nits else ())
@@ -453,9 +470,15 @@ def cond_gate(ctx):
     bad = []
     if g.get("verdict") != "pass":
         bad.append("verdict is %r" % (g.get("verdict"),))
+    note = None
     if not isinstance(sha, str) or sha.lower() != ctx.tip:
-        bad.append("gate ran on %s, the tip is %s" % (str(sha)[:9], ctx.tip[:9]))
-    return Cond(3, "final gate", not bad, "; ".join(bad) or "pass at %s" % ctx.tip[:9])
+        ok, res = docs_since(ctx, sha.lower()) if isinstance(sha, str) and HEX_RE.match(sha.lower()) else (False, "")
+        if ok:
+            note = "pass at %s; %s" % (sha[:9], res)
+        else:
+            bad.append("gate ran on %s, the tip is %s%s" % (str(sha)[:9], ctx.tip[:9],
+                                                             " (docs-only route: %s)" % res if res else ""))
+    return Cond(3, "final gate", not bad, "; ".join(bad) or note or "pass at %s" % ctx.tip[:9])
 
 
 def code_rows_skipped(ctx):
@@ -523,9 +546,11 @@ def cond_security(ctx):
     rounds = [r for r in scoped(ctx, "review_round") if r.get("reviewer") == "security"]
     if not rounds:
         return Cond(5, "security", False, "review due (%s) but no security review_round line" % ", ".join(sorted(set(sig))))
-    problems = review_problems(rounds[-1], ctx.tip, True, ctx)
+    problems = review_problems(rounds[-1], ctx.tip, True, ctx, docs_ok=True)
+    sha = str(rounds[-1].get("sha"))
+    at = ctx.tip[:9] if sha.lower() == ctx.tip else "%s; %s" % (sha[:9], docs_since(ctx, sha.lower())[1])
     return Cond(5, "security", not problems, "; ".join(problems) or "due (%s); round %s passed at %s"
-                % (", ".join(sorted(set(sig))), rounds[-1].get("round"), ctx.tip[:9]))
+                % (", ".join(sorted(set(sig))), rounds[-1].get("round"), at))
 
 
 def cond_you(ctx):

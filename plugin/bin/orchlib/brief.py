@@ -16,6 +16,7 @@ from . import infer
 from . import lessons as ls
 from . import merge
 from . import plan as pl
+from . import policy as pol
 from . import questions as qs
 from . import status as st
 from . import tiers
@@ -918,12 +919,28 @@ def cap_text(rnd, last):
             "with `orch follow-up ... --severity should-fix`, then %s; the review then passes." % (rnd, CHECK_CYCLES, cycle, open_count(last), CHECK_CYCLES + 1, fixed))
 
 
+def docs_only_route(c, checks, line):
+    """(True, note) when the next check may follow a review or check that left nothing open: the round and its checks
+    held no blocker (else a fresh round is owed), a cycle is left, and only docs-only paths changed since the last
+    code review line (policy.md `docs-only`). Else (False, why-or-empty); empty when the policy is off."""
+    globs = pol.read_policy(c.task_dir).docs_only
+    if not globs:
+        return False, ""
+    if any(type(r.get("blockers")) is int and r["blockers"] > 0 for r in line[-1:] + checks):
+        return False, "the round or one of its checks had a blocker, so a fresh round is owed"
+    if cycles_used(checks) >= CHECK_CYCLES:
+        return False, "the round's %d check cycles are used" % CHECK_CYCLES
+    ok, res = merge.docs_only_since(c.repo_path, code_lines(c)[-1].get("sha"), branch_sha(c), globs)
+    return (True, "%d docs-only path(s)" % len(res)) if ok else (False, res)
+
+
 def check_round(c, ns):
-    """(round, cycle) of the next fix-batch check: --round, else the latest journaled code round that is not itself
+    """(round, cycle, docs) of the next fix-batch check: --round, else the latest journaled code round that is not itself
     a check. A round allows CHECK_CYCLES checks; check K needs check K-1 journaled with something open, and check 1
-    needs the round itself to have something open (a blocker or a should-fix). Exit 2 when that round is not
-    journaled, or when --round names a round that is not the latest real one (an older round's clean line would let a
-    check follow a later round's open blocker)."""
+    needs the round itself to have something open (a blocker or a should-fix); the exception is `docs`: after a
+    review or check that left nothing open, only docs-only commits since it (policy.md) may take a check, as a cycle
+    (no new round). Exit 2 when that round is not journaled, or when --round names a round that is not the latest
+    real one (an older round's clean line would let a check follow a later round's open blocker)."""
     real = [r for r in code_lines(c) if not is_check(r) and type(r.get("round")) is int]
     if ns.round is not None:
         rnd = ns.round
@@ -943,16 +960,21 @@ def check_round(c, ns):
     last = checks[-1] if checks else line[-1]
     blockers, should_fix = last.get("blockers"), last.get("should_fix")
     if not (type(blockers) is int and blockers > 0) and type(should_fix) is int and should_fix == 0:
+        ok, why = docs_only_route(c, checks, line)
+        if ok:
+            return rnd, cycles_used(checks) + 1, True
+        route = (" Docs-only commits since a passed review take a check instead of a round, but this range does not "
+                 "qualify (%s)." % why) if why else ""
         if checks:
             raise OrchError("--check: check %d of round %d left nothing open, so there is nothing more to check; the "
-                            "commit after a passed check takes round %d (`orch brief review`)."
-                            % (len(checks), rnd, rnd + 1), 2)
+                            "commit after a passed check takes round %d (`orch brief review`).%s"
+                            % (len(checks), rnd, rnd + 1, route), 2)
         raise OrchError("--check: round %d routed no should-fix, so there is no fix batch to check; a commit after a "
-                        "passed review is re-reviewed as a round. Brief round %d (`orch brief review`)."
-                        % (rnd, rnd + 1), 2)
+                        "passed review is re-reviewed as a round. Brief round %d (`orch brief review`).%s"
+                        % (rnd, rnd + 1, route), 2)
     if cycles_used(checks) >= CHECK_CYCLES:
         raise OrchError(cap_text(rnd, last), 2)
-    return rnd, cycles_used(checks) + 1
+    return rnd, cycles_used(checks) + 1, False
 
 
 def refuse_dirty(c):
@@ -979,7 +1001,7 @@ def check_not_repinned(c, reviewer, rnd, path, sha):
                         "Brief the next round (--round %d), not this one." % (rnd, reviewer, old[:9], sha[:9], rnd + 1), 2)
 
 
-def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fresh=False):
+def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fresh=False, docs=False):
     whole = bool(getattr(ns, "whole_repo", False))
     plan = c.plan
     steps = plan.steps
@@ -1020,6 +1042,10 @@ def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fre
         out.append("This is check %d of the fix commits for round %d, not a new round. Judge whether the fixes are "
                    "right and whether they introduced a defect. Append your findings to the review file under a "
                    "`%s` heading; leave earlier text as it is." % (cycle, rnd, heading))
+        if docs:
+            out.append("These are docs-only commits since a passed review: check them for accuracy against the code, and "
+                       "for secrets and private data (tokens, keys, credentials, personal paths and names) that must not "
+                       "be committed. A defect here is a finding like any other.")
     elif fresh:
         out.append("This is the fresh round after a blocker. The range runs from the last real round's reviewed sha, "
                    "so it holds every fix and check commit of that round. Read the code around the fixes, not only "
@@ -1089,9 +1115,9 @@ def cmd_brief_review(ns, c, reviewer):
     check = bool(ns.check)
     if check and reviewer != "code":
         raise OrchError("--check belongs to the code review (orch brief review --check)", 1)
-    cycle = 1
+    cycle, docs = 1, False
     if check:
-        rnd, cycle = check_round(c, ns)
+        rnd, cycle, docs = check_round(c, ns)
     else:
         rnd = ns.round if ns.round is not None else next_round(c)
     if rnd < 1:
@@ -1104,7 +1130,7 @@ def cmd_brief_review(ns, c, reviewer):
     check_not_journaled(c, reviewer, rnd, check, cycle)
     start = fresh_round_start(c) if reviewer == "code" and not check else None
     rng, sha = review_range(c, ns, tip, reviewer, rnd, check, start)
-    text = build_review_brief(c, ns, reviewer, rnd, rng, sha, check, cycle, start is not None and not ns.range)
+    text = build_review_brief(c, ns, reviewer, rnd, rng, sha, check, cycle, start is not None and not ns.range, docs)
     path = merge.brief_path(c.task_dir, reviewer, rnd, c.program, c.ms, check, cycle)
     with TaskLock(c.task_dir):
         check_not_repinned(c, reviewer, rnd, path, sha)

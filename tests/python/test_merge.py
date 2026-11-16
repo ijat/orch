@@ -557,6 +557,65 @@ class TestReviewAndGate(GitBase):
         self.assertTrue(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check.md")))
         self.merge_ok("--check", "--recheck-ok")
 
+    def docs_commit(self, name="docs/guide.md"):
+        os.makedirs(os.path.dirname(os.path.join(self.wt, name)), exist_ok=True)
+        return self.commit(self.wt, name, "text %d\n" % len(self.calls))
+
+    def set_policy(self, text):
+        wr(os.path.join(self.root, "myapp", "policy.md"), text)
+
+    def test_docs_only_check_at_the_tip_carries_the_gate_and_the_security_pass(self):
+        self.setup_task()
+        self.set_policy("- security: always\n")
+        self.gate()
+        self.review(rnd=1)
+        self.review("security", rnd=1)
+        old = self.tip()
+        self.docs_commit()
+        self.docs_commit("STATE.md")
+        self.refuse_merge("code review")                           # nothing journaled at the tip yet
+        self.review(rnd=1, check=True)                             # the docs-only check, at the tip
+        out, _ = self.merge_ok("--check", "--recheck-ok")
+        self.assertIn(old[:9], out)
+        self.assertIn("docs-only since %s" % old[:9], out)
+
+    def test_a_code_change_after_the_gate_refuses_even_with_a_docs_only_check(self):
+        self.setup_task()
+        self.gate()
+        self.review(rnd=1)
+        self.commit(self.wt, "src.txt", "x\n")
+        self.docs_commit()
+        self.review(rnd=1, check=True)
+        err = self.refuse_merge("final gate", "gate ran on")
+        self.assertIn("src.txt", err)                              # the docs-only route says which path misses
+
+    def test_a_code_change_after_the_security_pass_refuses(self):
+        self.setup_task()
+        self.set_policy("- security: always\n")
+        self.review(rnd=1)
+        self.review("security", rnd=1)
+        self.commit(self.wt, "src.txt", "x\n")
+        self.gate()
+        self.review(rnd=1, check=True)
+        self.refuse_merge("security", "reviewed")
+
+    def test_docs_only_none_keeps_the_gate_at_the_tip(self):
+        self.setup_task()
+        self.set_policy("- docs-only: none\n")
+        self.gate()
+        self.review(rnd=1)
+        self.docs_commit()
+        self.review(rnd=1, check=True)
+        self.refuse_merge("final gate", "gate ran on")
+
+    def test_a_failing_gate_at_an_ancestor_is_never_carried(self):
+        self.setup_task()
+        self.gate(verdict="fail")
+        self.review(rnd=1)
+        self.docs_commit()
+        self.review(rnd=1, check=True)
+        self.refuse_merge("final gate", "verdict is 'fail'")
+
     def test_a_blocker_chain_that_ends_on_a_passed_check_refuses_and_names_the_fresh_round(self):
         self.setup_task()
         self.review(rnd=1, blockers=1, should_fix=1, verdict="findings")

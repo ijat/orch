@@ -1239,6 +1239,71 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.assertIn("round 2", err)
         self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check-2.md")))
 
+    def docs_commit(self, name="docs/guide.md"):
+        os.makedirs(os.path.dirname(os.path.join(self.wt, name)), exist_ok=True)
+        return self.commit(self.wt, name, "text %s\n" % self.git(self.wt, "rev-parse", "HEAD"))
+
+    def clean_round_one(self):
+        self.brief("review")
+        sha = self.tip()
+        self.cmd_ok(*(self.CLEAN + ("round:=1",)))
+        return sha
+
+    def test_a_docs_only_commit_after_a_clean_round_takes_a_check_not_a_round(self):
+        one = self.clean_round_one()
+        self.docs_commit()
+        self.docs_commit("STATE.md")
+        path, text = self.brief("review", "--check")
+        self.assertEqual(os.path.basename(path), "review-code-r1-check.md")
+        self.assertIn("- range: %s..%s" % (one, self.tip()), text)
+        self.assertIn("docs-only commits since a passed review", text)
+        self.assertIn("secrets and private data", text)
+        self.journal_check(1)
+        checked = self.tip()
+        self.docs_commit("CHANGELOG.md")                           # a clean check, then docs again: cycle 2
+        path2, text2 = self.brief("review", "--check")
+        self.assertEqual(os.path.basename(path2), "review-code-r1-check-2.md")
+        self.assertIn("- range: %s..%s" % (checked, self.tip()), text2)
+        self.assertIn("- cycle: 2", text2)
+
+    def test_the_docs_only_route_has_the_same_three_cycles(self):
+        self.clean_round_one()
+        for cycle in (1, 2, 3):
+            self.docs_commit("docs/d%d.md" % cycle)
+            self.brief("review", "--check")
+            self.journal_check(1)
+        self.docs_commit("docs/d4.md")
+        err = self.refused(2, "review", "--check")
+        self.assertIn("left nothing open", err)
+        self.assertIn("round 2", err)
+
+    def test_a_code_commit_after_a_clean_round_still_takes_a_round_and_says_why(self):
+        self.clean_round_one()
+        self.docs_commit()
+        self.commit(self.wt, "src.txt", "x\n")
+        err = self.refused(2, "review", "--check")
+        self.assertIn("Brief round 2", err)
+        self.assertIn("take a check instead of a round", err)
+        self.assertIn("src.txt", err)
+
+    def test_a_docs_only_commit_after_a_blocker_chain_still_takes_the_fresh_round(self):
+        self.blocker_round()
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.brief("review", "--check")
+        self.journal_check(1)                                      # the chain ends on a passed check
+        self.docs_commit()
+        err = self.refused(2, "review", "--check")
+        self.assertIn("left nothing open", err)
+        self.assertIn("had a blocker", err)
+
+    def test_docs_only_none_in_the_policy_turns_the_route_off(self):
+        self.clean_round_one()
+        wr(os.path.join(self.root, "myapp", "policy.md"), "- docs-only: none\n")
+        self.docs_commit()
+        err = self.refused(2, "review", "--check")
+        self.assertIn("Brief round 2", err)
+        self.assertNotIn("take a check instead of a round", err)
+
     def test_a_fourth_check_of_a_round_is_refused_and_names_the_stop_rule(self):
         self.round_one()
         for cycle in (1, 2, 3):
