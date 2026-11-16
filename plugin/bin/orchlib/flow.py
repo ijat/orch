@@ -49,6 +49,18 @@ def kind_of(rec):
     return rec.get("kind") or rec.get("event")
 
 
+def open_spawns(journal):
+    """{role: index} of each role's latest journal `spawn` that no later `return` of that role has closed."""
+    last_spawn, last_return = {}, {}
+    for i, rec in enumerate(journal):
+        k = kind_of(rec)
+        if k == "spawn":
+            last_spawn[rec.get("role")] = i
+        elif k == "return":
+            last_return[rec.get("role")] = i
+    return {r: i for r, i in last_spawn.items() if r is not None and last_return.get(r, -1) < i}
+
+
 def clock():
     """The current time as epoch seconds; ORCH_NOW (tests) fixes it."""
     return ts_epoch(now()) if os.environ.get("ORCH_NOW") else time.time()

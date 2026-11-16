@@ -27,7 +27,7 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 | `plan_revision` | a revision appended | `n`, `trigger` (blocker/user/review) |
 | `sketch` | a sketched step finishes | `step`, `followed` (full/partial/no), `sketch_wrong` (bool), `escalated` (bool) |
 | `pause` / `resume` | usage pause and resume | `usage_5h` |
-| `checkin` | each check-in on a silent role (dispatch step 5) | `role`, `silent_min`, `verdict` (ok/looping), `action` (continue/messaged/stopped) |
+| `checkin` | each check-in on a silent role (dispatch step 5) | `role`, `silent_min`, `verdict` (ok/looping), `action` (continue/messaged/stopped); the CHECKIN line may carry `final=finished` (harness notice, no return) or `progress=hung` |
 | `pilot` | a pilot batch returns | `step`, `items`, `tokens`, `rounds`, `est_rest_tokens`, `answer` (continue/retier/hold) |
 | `override` | the user overrides a default | `what` |
 | `direct_edit` | direct-edit allowance used | `what` |

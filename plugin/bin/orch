@@ -27,6 +27,10 @@ if sys.argv[1:3] == ["hook", "tier"]:  # PreToolUse hook on the Agent tool: same
     from orchlib.tierguard import run  # noqa: E402
     sys.exit(run())
 
+if sys.argv[1:3] == ["hook", "ask"]:  # PreToolUse hook on the AskUserQuestion tool: same early path
+    from orchlib.askguard import run  # noqa: E402
+    sys.exit(run())
+
 from orchlib.cli import main  # noqa: E402
 
 if __name__ == "__main__":
