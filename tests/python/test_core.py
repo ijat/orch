@@ -641,7 +641,9 @@ class TestJournal(Base):
         self.assertFalse(sch.kinds["spawn"]["choice"])
         self.assertIn("pause", sch.kinds)
         self.assertIn("resume", sch.kinds)
-        self.assertEqual(sch.kinds["pause"]["fields"], ["usage_5h"])
+        self.assertEqual(sch.kinds["pause"]["fields"], ["usage_5h", "reason"])
+        self.j("pause", "reason=user", "--set", "task_state=paused_user")
+        self.assertEqual(self.last()["reason"], "user")
         # backticked values inside parentheses are not fields
         self.assertNotIn("done", sch.kinds["return"]["fields"])
         self.assertEqual(sch.kinds["security_offer"]["fields"], ["areas", "answer", "late"])

@@ -210,6 +210,9 @@ class TestData(Base):
         self.assertEqual(w("gate", {"gate": "merge", "outcome": "declined"}), "merge gate: declined")
         self.assertEqual(w("pause", {"usage_5h": 95}), "Paused for usage (5h 95%)")
         self.assertEqual(w("pause", {"usage_5h": "95"}), "Paused for usage")
+        self.assertEqual(w("pause", {"reason": "user"}), "Paused (you asked)")        # PROGRAM.md's user pause
+        self.assertEqual(w("pause", {"reason": "user", "usage_5h": 40}), "Paused (you asked)")
+        self.assertEqual(w("pause", {"reason": "other"}), "Paused for usage")         # only `user` changes the label
         self.assertEqual(w("resume", {}), "Resumed")
         self.assertEqual(w("checkpoint", {"asked": True, "questions": 1}), "Asked you 1 question")
         self.assertEqual(w("checkpoint", {"asked": True, "questions": 3}), "Asked you 3 questions")

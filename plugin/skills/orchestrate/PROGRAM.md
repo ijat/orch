@@ -83,7 +83,7 @@ reason — every time (`orch merge` reads the row, so last milestone's value mus
    merged together with later ones; `orch journal milestone_start` refuses while an earlier started milestone has none.
 
 **A pause the user asks for between milestones.** Close the milestone first (`milestone_end outcome=done`; the outcome is
-`done`, `blocked` or `abandoned`), then `orch checkpoint`, then `orch journal pause --set task_state=paused_user --log "paused at the
+`done`, `blocked` or `abandoned`), then `orch checkpoint`, then `orch journal pause reason=user --set task_state=paused_user --log "paused at the
 user's request after M<n>"`. The state is not a usage pause: nothing arms `usage wait` for it and nothing resumes it by
 itself, and `orch current` asks instead of resuming it. Resume only on the user's word: journal `resume` (restoring
 `task_state`) and start the next milestone.

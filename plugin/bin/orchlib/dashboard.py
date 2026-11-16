@@ -214,6 +214,8 @@ def event_words(kind, rec):
     if kind == "gate":
         return "%s gate: %s" % (clean(rec.get("gate")), clean(rec.get("outcome")))
     if kind == "pause":
+        if rec.get("reason") == "user":       # a pause the user asked for (PROGRAM.md § 2); old lines carry no reason
+            return "Paused (you asked)"
         n = rec.get("usage_5h")
         return "Paused for usage (5h %d%%)" % n if is_int(n) else "Paused for usage"
     if kind == "resume":
