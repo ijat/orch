@@ -16,6 +16,7 @@ from . import infer
 from . import lessons as ls
 from . import merge
 from . import plan as pl
+from . import policy as pol
 from . import questions as qs
 from . import status as st
 from . import tiers
@@ -918,12 +919,28 @@ def cap_text(rnd, last):
             "with `orch follow-up ... --severity should-fix`, then %s; the review then passes." % (rnd, CHECK_CYCLES, cycle, open_count(last), CHECK_CYCLES + 1, fixed))
 
 
+def docs_only_route(c, checks, line):
+    """(True, note) when the next check may follow a review or check that left nothing open: the round and its checks
+    held no blocker (else a fresh round is owed), a cycle is left, and only docs-only paths changed since the last
+    code review line (policy.md `docs-only`). Else (False, why-or-empty); empty when the policy is off."""
+    globs = pol.read_policy(c.task_dir).docs_only
+    if not globs:
+        return False, ""
+    if any(type(r.get("blockers")) is int and r["blockers"] > 0 for r in line[-1:] + checks):
+        return False, "the round or one of its checks had a blocker, so a fresh round is owed"
+    if cycles_used(checks) >= CHECK_CYCLES:
+        return False, "the round's %d check cycles are used" % CHECK_CYCLES
+    ok, res = merge.docs_only_since(c.repo_path, code_lines(c)[-1].get("sha"), branch_sha(c), globs)
+    return (True, "%d docs-only path(s)" % len(res)) if ok else (False, res)
+
+
 def check_round(c, ns):
-    """(round, cycle) of the next fix-batch check: --round, else the latest journaled code round that is not itself
+    """(round, cycle, docs) of the next fix-batch check: --round, else the latest journaled code round that is not itself
     a check. A round allows CHECK_CYCLES checks; check K needs check K-1 journaled with something open, and check 1
-    needs the round itself to have something open (a blocker or a should-fix). Exit 2 when that round is not
-    journaled, or when --round names a round that is not the latest real one (an older round's clean line would let a
-    check follow a later round's open blocker)."""
+    needs the round itself to have something open (a blocker or a should-fix); the exception is `docs`: after a
+    review or check that left nothing open, only docs-only commits since it (policy.md) may take a check, as a cycle
+    (no new round). Exit 2 when that round is not journaled, or when --round names a round that is not the latest
+    real one (an older round's clean line would let a check follow a later round's open blocker)."""
     real = [r for r in code_lines(c) if not is_check(r) and type(r.get("round")) is int]
     if ns.round is not None:
         rnd = ns.round
@@ -943,16 +960,21 @@ def check_round(c, ns):
     last = checks[-1] if checks else line[-1]
     blockers, should_fix = last.get("blockers"), last.get("should_fix")
     if not (type(blockers) is int and blockers > 0) and type(should_fix) is int and should_fix == 0:
+        ok, why = docs_only_route(c, checks, line)
+        if ok:
+            return rnd, cycles_used(checks) + 1, True
+        route = (" Docs-only commits since a passed review take a check instead of a round, but this range does not "
+                 "qualify (%s)." % why) if why else ""
         if checks:
             raise OrchError("--check: check %d of round %d left nothing open, so there is nothing more to check; the "
-                            "commit after a passed check takes round %d (`orch brief review`)."
-                            % (len(checks), rnd, rnd + 1), 2)
+                            "commit after a passed check takes round %d (`orch brief review`).%s"
+                            % (len(checks), rnd, rnd + 1, route), 2)
         raise OrchError("--check: round %d routed no should-fix, so there is no fix batch to check; a commit after a "
-                        "passed review is re-reviewed as a round. Brief round %d (`orch brief review`)."
-                        % (rnd, rnd + 1), 2)
+                        "passed review is re-reviewed as a round. Brief round %d (`orch brief review`).%s"
+                        % (rnd, rnd + 1, route), 2)
     if cycles_used(checks) >= CHECK_CYCLES:
         raise OrchError(cap_text(rnd, last), 2)
-    return rnd, cycles_used(checks) + 1
+    return rnd, cycles_used(checks) + 1, False
 
 
 def refuse_dirty(c):
@@ -979,7 +1001,7 @@ def check_not_repinned(c, reviewer, rnd, path, sha):
                         "Brief the next round (--round %d), not this one." % (rnd, reviewer, old[:9], sha[:9], rnd + 1), 2)
 
 
-def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fresh=False):
+def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fresh=False, docs=False):
     whole = bool(getattr(ns, "whole_repo", False))
     plan = c.plan
     steps = plan.steps
@@ -1020,6 +1042,10 @@ def build_review_brief(c, ns, reviewer, rnd, rng, sha, check=False, cycle=1, fre
         out.append("This is check %d of the fix commits for round %d, not a new round. Judge whether the fixes are "
                    "right and whether they introduced a defect. Append your findings to the review file under a "
                    "`%s` heading; leave earlier text as it is." % (cycle, rnd, heading))
+        if docs:
+            out.append("These are docs-only commits since a passed review: check them for accuracy against the code, and "
+                       "for secrets and private data (tokens, keys, credentials, personal paths and names) that must not "
+                       "be committed. A defect here is a finding like any other.")
     elif fresh:
         out.append("This is the fresh round after a blocker. The range runs from the last real round's reviewed sha, "
                    "so it holds every fix and check commit of that round. Read the code around the fixes, not only "
@@ -1089,9 +1115,9 @@ def cmd_brief_review(ns, c, reviewer):
     check = bool(ns.check)
     if check and reviewer != "code":
         raise OrchError("--check belongs to the code review (orch brief review --check)", 1)
-    cycle = 1
+    cycle, docs = 1, False
     if check:
-        rnd, cycle = check_round(c, ns)
+        rnd, cycle, docs = check_round(c, ns)
     else:
         rnd = ns.round if ns.round is not None else next_round(c)
     if rnd < 1:
@@ -1104,7 +1130,7 @@ def cmd_brief_review(ns, c, reviewer):
     check_not_journaled(c, reviewer, rnd, check, cycle)
     start = fresh_round_start(c) if reviewer == "code" and not check else None
     rng, sha = review_range(c, ns, tip, reviewer, rnd, check, start)
-    text = build_review_brief(c, ns, reviewer, rnd, rng, sha, check, cycle, start is not None and not ns.range)
+    text = build_review_brief(c, ns, reviewer, rnd, rng, sha, check, cycle, start is not None and not ns.range, docs)
     path = merge.brief_path(c.task_dir, reviewer, rnd, c.program, c.ms, check, cycle)
     with TaskLock(c.task_dir):
         check_not_repinned(c, reviewer, rnd, path, sha)
@@ -1116,11 +1142,32 @@ def cmd_brief_review(ns, c, reviewer):
 
 # -- fix -----------------------------------------------------------------------------------------
 
-def finding_blocks(path, wanted):
-    """{id: verbatim finding block} and {id: [round-note texts]} from a review file (the parser `orch findings` uses)."""
-    parsed = fd.parse(path, lenient_heads=True)     # the old reader's headings: `### F1: x` still names a finding here
-    found = dict((f.id, f.block) for f in parsed.findings if f.id in wanted)
-    return found, dict((w, list(parsed.notes.get(w, []))) for w in wanted)
+def finding_blocks(path, wanted, security=False):
+    """{id: verbatim finding block}, {id: [round-note texts]}, {id: Finding} and the parsed file, from a review file (the
+    parser `orch findings` uses)."""
+    parsed = fd.parse(path, security, lenient_heads=True)     # the old reader's headings: `### F1: x` still names a finding here
+    objs = dict((f.id, f) for f in parsed.findings if f.id in wanted)
+    found = dict((i, f.block) for i, f in objs.items())
+    return found, dict((w, list(parsed.notes.get(w, []))) for w in wanted), objs, parsed
+
+
+def is_optional(f):
+    """A finding that never starts a fix batch by itself: a code review nit, or a security low marked `- fix: optional`
+    (D1, D3). A finding whose severity the parser cannot place is not one."""
+    return f.severity == "nit" or f.fix_optional
+
+
+def refuse_optional_only(c, wanted, objs):
+    """Exit 2 when every selected finding is a nit or an optional security low: those ride along in a batch that happens
+    anyway, else they are parked (`orch follow-up`)."""
+    if not wanted or not all(is_optional(objs[w]) for w in wanted if w in objs) or any(w not in objs for w in wanted):
+        return
+    routes = ["%s follow-up \"<text>\" --finding %s --severity %s" % (orch_head(c), w, "nit" if w.startswith("F") else "low")
+              for w in wanted]
+    raise OrchError("brief fix: every selected finding (%s) is a nit or a security low marked `- fix: optional`; those do "
+                    "not start a fix batch. Park each (%s), or add them to a fix batch that happens anyway (a blocker, a "
+                    "should-fix or another security finding). If the user asked for these fixes, give --user-asked."
+                    % (", ".join(wanted), "; ".join(routes)), 2)
 
 
 def class_repeat_lines(c, wanted):
@@ -1148,7 +1195,7 @@ def cmd_brief_fix(ns, c):
         if not FIX_ID_RE.match(w):
             raise OrchError("bad finding id %r (F<n> for review.md, S<n> for security-review.md)" % w, 1)
     wanted = list(dict.fromkeys(wanted))
-    blocks, notes = {}, {}
+    blocks, notes, objs, code_parsed = {}, {}, {}, None
     for prefix, fname in (("F", "review.md"), ("S", "security-review.md")):
         ids = [w for w in wanted if w.startswith(prefix)]
         if not ids:
@@ -1156,17 +1203,24 @@ def cmd_brief_fix(ns, c):
         path = os.path.join(c.review_dir, fname)
         if not os.path.isfile(path):
             raise OrchError("%s not found (needed for %s)" % (path, ", ".join(ids)), 1)
-        b, n = finding_blocks(path, ids)
+        b, n, o, parsed = finding_blocks(path, ids, prefix == "S")
+        if prefix == "F":
+            code_parsed = parsed
         blocks.update(b)
         notes.update(n)
+        objs.update(o)
     missing = [w for w in wanted if w not in blocks]
     if missing:
         raise OrchError("finding(s) not found: %s" % ", ".join(missing), 1)
+    if not ns.user_asked:
+        refuse_optional_only(c, wanted, objs)
     text_blocks = []
     for w in wanted:
         text_blocks.append(blocks[w] + ("\n\n" + "\n\n".join(notes[w]) if notes[w] else ""))
     findings_text = "\n\n".join(text_blocks)
     repeats = class_repeat_lines(c, wanted)
+    route = fd.cycle_route(code_parsed, wanted) if code_parsed is not None else None
+    route_line = "cycle route: %s" % fd.cycle_route_text(route) if route else None
     plan = c.plan
     steps = []
     repo = c.repo_path if c.repo_path != "unknown" else None
@@ -1182,13 +1236,16 @@ def cmd_brief_fix(ns, c):
         raise OrchError("bad --role %r" % role, 1)
     ids = [s.id for s in steps]
     keys = step_keys(c, steps, ids)
-    out = ["# Brief: fix round %d (%s) — %s/%s" % (rnd, ", ".join(wanted), c.repo_name, c.slug)]
+    out = ["# Brief: fix round %d (%s) — %s/%s%s" % (rnd, ", ".join(wanted), c.repo_name, c.slug,
+                                                 " (user asked for these fixes)" if ns.user_asked else "")]
     if plan.legacy:
         out.append(legacy_note(c))
     out.append(section("Where you work", where_text(c, role, ns.tier, ns.escalation, steps)))
     out.append(section("Checkpoint commands", checkpoint_text(c, role, "fix round %d" % rnd, "fix round %d" % rnd)))
     if repeats:
         out.append(section("Class repeat (a recommendation; TIERS.md § Fix rounds)", "\n".join(repeats)))
+    if route_line:
+        out.append(section("Cycle route (TIERS.md \u00a7 Fix rounds)", route_line[len("cycle route: "):]))
     out.append(section("Findings to fix (verbatim; record each resolution with %s finding resolve <id>)" % orch_head(c), findings_text))
     out.append(section("Steps whose files the findings cite", rel_fields(c, "\n\n".join(s.text() for s in steps)) if steps else
                        ("(legacy plan: read the Steps section of %s)" % c.plan_path if plan.legacy else "")))
@@ -1202,6 +1259,8 @@ def cmd_brief_fix(ns, c):
         emit(path, text, c.plan_size, ns, "fix")
     for line in repeats:
         print(line)
+    if route_line:
+        print(route_line)
     return 0
 
 
@@ -1294,6 +1353,8 @@ def cmd_brief(ns, extra):
         raise OrchError("--tier must look like sonnet/high", 1)
     if ns.escalation is not None and ns.escalation not in ("none", "proactive", "post-failure"):
         raise OrchError("--escalation must be none, proactive or post-failure", 1)
+    if ns.user_asked and ns.kind != "fix":
+        raise OrchError("--user-asked belongs to `orch brief fix` (the user asked for the nit or optional fixes)", 1)
     if ns.check and ns.kind != "review":
         raise OrchError("--check belongs to `orch brief review` (the fix-batch check of the code review)", 1)
     if ns.whole_repo and ns.kind != "security":
@@ -1330,6 +1391,8 @@ def register(add):
     sp.add_argument("--range", default=None)
     sp.add_argument("--round", type=int, default=None)
     sp.add_argument("--check", action="store_true")
+    sp.add_argument("--user-asked", action="store_true", dest="user_asked",
+                    help="fix only: the user asked for these nit or optional fixes (a list of only those is refused otherwise)")
     sp.add_argument("--whole-repo", action="store_true", dest="whole_repo",
                     help="security only: review every file at the tip (range = empty tree..tip)")
     sp.add_argument("--extra", default=None)

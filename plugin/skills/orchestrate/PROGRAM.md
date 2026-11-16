@@ -78,9 +78,15 @@ reason — every time (`orch merge` reads the row, so last milestone's value mus
    ask the user. Never fast-forward. The branch continues.
 7. **If the row has a `you` entry**, park it as a question (§4) and wait for it — including `merge`; `orch merge` refuses
    where the `you` cell names merge.
-8. Journal `milestone_end` (outcome, tiers actually used, rounds, tokens if reported) and
+8. Journal `milestone_end` (outcome `done`, `blocked` or `abandoned`: `done` for every milestone that closed, merged or not; tiers actually used, rounds, tokens if reported) and
    `orch checkpoint`. Every milestone gets its own `milestone_end` before the next `milestone_start`, including one
    merged together with later ones; `orch journal milestone_start` refuses while an earlier started milestone has none.
+
+**A pause the user asks for between milestones.** Close the milestone first (`milestone_end outcome=done`; the outcome is
+`done`, `blocked` or `abandoned`), then `orch checkpoint`, then `orch journal pause reason=user --set task_state=paused_user --log "paused at the
+user's request after M<n>"`. The state is not a usage pause: nothing arms `usage wait` for it and nothing resumes it by
+itself, and `orch current` asks instead of resuming it. Resume only on the user's word: journal `resume` (restoring
+`task_state`) and start the next milestone.
 
 A lite milestone that returns `scope_exceeded` switches to standard as a lite task does.
 Sequential only: no two milestones run at once.

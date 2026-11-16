@@ -14,7 +14,7 @@ generate() {
   body=$("$py" -I - "$root" <<'PY'
 import sys, os, re, glob, time, datetime
 root = sys.argv[1]
-ENUM = {"planning","awaiting_approval","implementing","reviewing","awaiting_merge","paused_usage_limit","done","abandoned"}
+ENUM = {"planning","awaiting_approval","implementing","reviewing","awaiting_merge","paused_usage_limit","paused_user","done","abandoned"}
 TERMINAL = {"done","abandoned","merged"}
 rows = []
 for sf in sorted(glob.glob(os.path.join(root, "*", "*", "status.md"))):

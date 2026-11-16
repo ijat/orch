@@ -589,7 +589,7 @@ class TestLessons(BriefBase):
         les = sec(text, "Lessons")
         self.assertIn("always ask first.", les)
         self.assertNotIn("implementer rule", les)      # a director gets entries naming director, not implementer
-        wr(os.path.join(self.d, "review.md"), "# Code review\n\n## Findings\n\n### F1 — x\n- severity: nit\n- file: %s/src/auth.py:3\n- what: y\n" % self.repo)
+        wr(os.path.join(self.d, "review.md"), "# Code review\n\n## Findings\n\n### F1 — x\n- severity: should-fix\n- file: %s/src/auth.py:3\n- what: y\n" % self.repo)
         _, text = self.brief("fix", "1", "--findings", "F1")
         les = sec(text, "Lessons")
         self.assertIn("always ask first.", les)
@@ -1239,6 +1239,71 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.assertIn("round 2", err)
         self.assertFalse(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check-2.md")))
 
+    def docs_commit(self, name="docs/guide.md"):
+        os.makedirs(os.path.dirname(os.path.join(self.wt, name)), exist_ok=True)
+        return self.commit(self.wt, name, "text %s\n" % self.git(self.wt, "rev-parse", "HEAD"))
+
+    def clean_round_one(self):
+        self.brief("review")
+        sha = self.tip()
+        self.cmd_ok(*(self.CLEAN + ("round:=1",)))
+        return sha
+
+    def test_a_docs_only_commit_after_a_clean_round_takes_a_check_not_a_round(self):
+        one = self.clean_round_one()
+        self.docs_commit()
+        self.docs_commit("STATE.md")
+        path, text = self.brief("review", "--check")
+        self.assertEqual(os.path.basename(path), "review-code-r1-check.md")
+        self.assertIn("- range: %s..%s" % (one, self.tip()), text)
+        self.assertIn("docs-only commits since a passed review", text)
+        self.assertIn("secrets and private data", text)
+        self.journal_check(1)
+        checked = self.tip()
+        self.docs_commit("CHANGELOG.md")                           # a clean check, then docs again: cycle 2
+        path2, text2 = self.brief("review", "--check")
+        self.assertEqual(os.path.basename(path2), "review-code-r1-check-2.md")
+        self.assertIn("- range: %s..%s" % (checked, self.tip()), text2)
+        self.assertIn("- cycle: 2", text2)
+
+    def test_the_docs_only_route_has_the_same_three_cycles(self):
+        self.clean_round_one()
+        for cycle in (1, 2, 3):
+            self.docs_commit("docs/d%d.md" % cycle)
+            self.brief("review", "--check")
+            self.journal_check(1)
+        self.docs_commit("docs/d4.md")
+        err = self.refused(2, "review", "--check")
+        self.assertIn("left nothing open", err)
+        self.assertIn("round 2", err)
+
+    def test_a_code_commit_after_a_clean_round_still_takes_a_round_and_says_why(self):
+        self.clean_round_one()
+        self.docs_commit()
+        self.commit(self.wt, "src.txt", "x\n")
+        err = self.refused(2, "review", "--check")
+        self.assertIn("Brief round 2", err)
+        self.assertIn("take a check instead of a round", err)
+        self.assertIn("src.txt", err)
+
+    def test_a_docs_only_commit_after_a_blocker_chain_still_takes_the_fresh_round(self):
+        self.blocker_round()
+        self.commit(self.wt, "fix.txt", "x\n")
+        self.brief("review", "--check")
+        self.journal_check(1)                                      # the chain ends on a passed check
+        self.docs_commit()
+        err = self.refused(2, "review", "--check")
+        self.assertIn("left nothing open", err)
+        self.assertIn("had a blocker", err)
+
+    def test_docs_only_none_in_the_policy_turns_the_route_off(self):
+        self.clean_round_one()
+        wr(os.path.join(self.root, "myapp", "policy.md"), "- docs-only: none\n")
+        self.docs_commit()
+        err = self.refused(2, "review", "--check")
+        self.assertIn("Brief round 2", err)
+        self.assertNotIn("take a check instead of a round", err)
+
     def test_a_fourth_check_of_a_round_is_refused_and_names_the_stop_rule(self):
         self.round_one()
         for cycle in (1, 2, 3):
@@ -1586,13 +1651,13 @@ class TestClassRepeatInFixBrief(BriefBase):
     REVIEW = ("# Code review: add-login\n\n- round: 1\n\n## Findings\n\n"
               "### F1 — unvalidated input\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/auth.py:12\n"
               "- class: validation\n- what: a.\n- resolution:\n\n"
-              "### F2 — also unvalidated\n- severity: nit\n- origin: introduced\n- file: @R@/src/auth.py:20\n"
+              "### F2 — also unvalidated\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/auth.py:20\n"
               "- class: validation\n- what: b.\n- resolution:\n\n"
-              "### F3 — no class\n- severity: nit\n- origin: introduced\n- file: @R@/src/auth.py:30\n- what: c.\n\n"
+              "### F3 — no class\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/auth.py:30\n- what: c.\n\n"
               "## Round 2\n\n- F1: resolved\n- F2: resolved\n\n"
               "### F4 — unvalidated again\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/views.py:5\n"
               "- class: Validation\n- what: d.\n- resolution:\n\n"
-              "### F5 — a new class\n- severity: nit\n- origin: introduced\n- file: @R@/src/views.py:6\n"
+              "### F5 — a new class\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/views.py:6\n"
               "- class: config\n- what: e.\n- resolution:\n")
     SECURITY = ("# Security review: add-login\n\n## Findings\n\n"
                 "### S1 — config leak\n- severity: high\n- file: @R@/src/views.py:77\n- class: config\n- attack path: x.\n- resolution:\n")
@@ -1665,6 +1730,116 @@ class TestFixBrief(BriefBase):
         self.assertIn("role 'implementer' in_progress --note 'working on step(s) fix round 1'", sec(text, "Checkpoint commands"))
         self.assertIn("role 'implementer' done --step 'fix round 1'", sec(text, "Checkpoint commands"))
 
+    SECURITY_OPT = ("# Security review: add-login\n\n- round: 1\n\n## Findings\n\n"
+                    "### S1 — open redirect\n- severity: high\n- file: @R@/src/views.py:77\n- attack path: next= parameter.\n\n"
+                    "### S2 — header hardening\n- severity: low\n- file: @R@/src/views.py:90\n- fix: optional\n- impact: none.\n\n"
+                    "### S3 — plain low\n- severity: low\n- file: @R@/src/views.py:91\n- impact: leaks a path.\n\n"
+                    "### S4 — not low\n- severity: medium\n- file: @R@/src/views.py:92\n- fix: optional\n")
+
+    def put_optional_security(self):
+        wr(os.path.join(self.d, "security-review.md"), self.SECURITY_OPT.replace("@R@", self.repo))
+
+    CHECKED = ("# Code review: add-login\n\n## Findings\n\n"
+               "### F1 — hashing is unsalted\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/auth.py:12\n\n"
+               "### F3 — redirect loop\n- severity: blocker\n- origin: introduced\n- file: @R@/src/views.py:40\n\n"
+               "## Check of round 1\n\n- F1: not fixed — the salt is a constant.\n- F3: resolved\n\n"
+               "### F4 — log line misspelt\n- severity: should-fix\n- origin: introduced\n- cause: other\n- file: @R@/src/auth.py:30\n\n"
+               "### F5 — fix broke the import\n- severity: should-fix\n- origin: introduced\n- cause: from-fix\n- file: @R@/src/auth.py:31\n\n"
+               "### F6 — second old problem\n- severity: should-fix\n- origin: introduced\n- cause: other\n- file: @R@/src/views.py:50\n\n"
+               "### F7 — no label\n- severity: should-fix\n- origin: introduced\n- file: @R@/src/views.py:51\n")
+
+    def put_checked(self):
+        wr(os.path.join(self.d, "review.md"), self.CHECKED.replace("@R@", self.repo))
+
+    def route(self, *ids):
+        _, text = self.brief("fix", "2", "--findings", ",".join(ids))
+        return text, self.last_out
+
+    def test_every_open_item_cause_other_stays_and_resumes_the_implementer(self):
+        self.put_checked()
+        text, out = self.route("F4", "F6")
+        route = sec(text, "Cycle route")
+        self.assertTrue(route.startswith("stay: every open item is cause: other (F4, F6)"), route)
+        self.assertIn("orch spawn implementer --reused", route)
+        self.assertIn("cycle route: stay:", out)
+
+    def test_a_from_fix_finding_climbs(self):
+        self.put_checked()
+        text, out = self.route("F4", "F5")
+        route = sec(text, "Cycle route")
+        self.assertTrue(route.startswith("climb: raise one rung"), route)
+        self.assertIn("F5 cause: from-fix", route)
+        self.assertNotIn("F4", route)
+        self.assertIn("cycle route: climb:", out)
+
+    def test_a_routed_finding_still_open_after_a_check_climbs(self):
+        self.put_checked()
+        route = sec(self.route("F1", "F4")[0], "Cycle route")
+        self.assertIn("F1 is a routed finding still open after a check", route)
+        self.assertTrue(route.startswith("climb"), route)
+
+    def test_a_missing_cause_reads_as_from_fix(self):
+        self.put_checked()
+        route = sec(self.route("F6", "F7")[0], "Cycle route")
+        self.assertTrue(route.startswith("climb"), route)
+        self.assertIn("F7 has no cause: (reads from-fix)", route)
+
+    def test_a_security_id_beside_check_findings_climbs(self):
+        self.put_checked()
+        route = sec(self.route("F4", "S1")[0], "Cycle route")
+        self.assertIn("S1 is a security finding", route)
+
+    def test_findings_of_a_full_round_get_no_cycle_route(self):
+        # cycle 1: the round's findings, no check raised or judged any of them
+        text, out = self.brief("fix", "1", "--findings", "F1,F3")
+        self.assertNotIn("Cycle route", text)
+        self.assertNotIn("cycle route", out)
+        self.put_checked()
+        text, out = self.brief("fix", "1", "--findings", "F3")        # F3 is closed by the check: nothing open to weigh
+        self.assertNotIn("cycle route", out)
+
+    def test_class_repeat_lines_are_unchanged_beside_a_route(self):
+        self.put_checked()
+        text, out = self.route("F4", "F6")
+        self.assertNotIn("class repeat", out)
+
+    def test_a_list_of_only_nits_is_refused_and_names_the_follow_up_route(self):
+        err = self.refused(2, "fix", "1", "--findings", "F2")
+        self.assertIn("every selected finding (F2) is a nit", err)
+        self.assertIn("follow-up \"<text>\" --finding F2 --severity nit", err)
+        self.assertIn("--user-asked", err)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "briefs")))
+
+    def test_only_optional_security_lows_are_refused_with_the_low_route(self):
+        self.put_optional_security()
+        err = self.refused(2, "fix", "1", "--findings", "S2")
+        self.assertIn("--finding S2 --severity low", err)
+        err = self.refused(2, "fix", "1", "--findings", "F2,S2")
+        self.assertIn("every selected finding (F2, S2)", err)
+
+    def test_a_plain_low_and_a_fix_optional_on_a_non_low_are_routed_as_before(self):
+        self.put_optional_security()
+        _, text = self.brief("fix", "1", "--findings", "S3")
+        self.assertIn("### S3 — plain low", text)
+        _, text = self.brief("fix", "1", "--findings", "S4")
+        self.assertIn("### S4 — not low", text)
+
+    def test_a_mixed_list_carries_the_nits_along(self):
+        self.put_optional_security()
+        _, text = self.brief("fix", "1", "--findings", "F2,F3,S2")
+        self.assertEqual(text.split("\n")[0], "# Brief: fix round 1 (F2, F3, S2) — myapp/add-login")
+        findings = sec(text, "Findings to fix")
+        for want in ("### F2 — typo in a log line", "### F3 — redirect loop", "### S2 — header hardening"):
+            self.assertIn(want, findings)
+
+    def test_user_asked_lets_a_nit_only_list_through_and_is_printed_in_the_header(self):
+        _, text = self.brief("fix", "1", "--findings", "F2", "--user-asked")
+        self.assertEqual(text.split("\n")[0], "# Brief: fix round 1 (F2) — myapp/add-login (user asked for these fixes)")
+        self.assertIn("### F2 — typo in a log line", sec(text, "Findings to fix"))
+
+    def test_user_asked_belongs_to_brief_fix(self):
+        self.assertIn("belongs to `orch brief fix`", self.refused(1, "review", "--user-asked"))
+
     def test_notes_under_a_check_of_round_section_are_carried(self):
         wr(os.path.join(self.d, "review.md"), self.REVIEW.replace("@R@", self.repo)
            + "\n## Check of round 2\n\n- F3: not fixed — the loop is still there.\n- F2: resolved\n")
@@ -1733,7 +1908,7 @@ class TestBriefCommands(BriefBase):
         self.ok("set", "driver_session=%s" % SESSION, "--add", "-t", T)
         for args in (("implement", "1"), ("fix", "1", "--findings", "F1"), ("review",)):
             if args[0] == "fix":
-                wr(os.path.join(self.d, "review.md"), "### F1 \u2014 x\n- severity: nit\n- file: %s/src/auth.py:1\n" % self.repo)
+                wr(os.path.join(self.d, "review.md"), "### F1 \u2014 x\n- severity: should-fix\n- file: %s/src/auth.py:1\n" % self.repo)
             _, text = self.brief(*args)
             c = sec(text, "Checkpoint commands")
             self.assertIn("\norch role '", c, args)
@@ -1829,7 +2004,7 @@ class TestBriefPaths(BriefBase):
         self.assertIn("- files: %s/src/auth.py" % self.repo, sec(text, "Your steps"))     # nothing rewritten, nothing anchored
 
     def test_fix_brief_steps_are_rewritten_too(self):
-        wr(os.path.join(self.d, "review.md"), "### F1 \u2014 x\n- severity: nit\n- file: %s/src/views.py:5\n" % self.repo)
+        wr(os.path.join(self.d, "review.md"), "### F1 \u2014 x\n- severity: should-fix\n- file: %s/src/views.py:5\n" % self.repo)
         _, text = self.brief("fix", "1", "--findings", "F1")
         self.assertIn("- files: src/views.py", sec(text, "Steps whose files"))
         self.assertIn("relative to the worktree root above", sec(text, "Where you work"))
@@ -1920,28 +2095,28 @@ class TestFixSteps(BriefBase):
         self.assertNotIn("### Step 1 \u2014 Auth module", steps)     # named only in the finding's prose
 
     def test_a_wrapped_status_line_is_carried_whole(self):
-        self.review("### F1 \u2014 x\n- severity: nit\n- file: src/session.py:5\n\n## Round 2\n\n- F1: still open \u2014 the fix\n  wraps onto a second line\n")
+        self.review("### F1 \u2014 x\n- severity: should-fix\n- file: src/session.py:5\n\n## Round 2\n\n- F1: still open \u2014 the fix\n  wraps onto a second line\n")
         _, text = self.brief("fix", "1", "--findings", "F1")
         self.assertIn("(Round 2) - F1: still open \u2014 the fix\n  wraps onto a second line", sec(text, "Findings to fix"))
 
     def test_a_colon_heading_still_names_the_finding(self):
-        self.review("### F1: colon style\n- severity: nit\n- file: src/session.py:5\n")
+        self.review("### F1: colon style\n- severity: should-fix\n- file: src/session.py:5\n")
         _, text = self.brief("fix", "1", "--findings", "F1")
         self.assertIn("### F1: colon style", sec(text, "Findings to fix"))
 
     def test_a_relative_file_line_and_the_header(self):
-        self.review("### F1 \u2014 x\n- severity: nit\n- file: src/session.py:5\n")
+        self.review("### F1 \u2014 x\n- severity: should-fix\n- file: src/session.py:5\n")
         _, text = self.brief("fix", "1", "--findings", "F1")
         self.assertIn("### Step 2", sec(text, "Steps whose files"))
         self.assertIn("## Findings to fix (verbatim; record each resolution with %s -t 'myapp/add-login' finding resolve <id>)" % CLI, text)
 
     def test_without_a_file_line_the_old_rule_applies(self):
-        self.review("### F1 \u2014 x\n- severity: nit\n- what: see src/auth.py.\n")
+        self.review("### F1 \u2014 x\n- severity: should-fix\n- what: see src/auth.py.\n")
         _, text = self.brief("fix", "1", "--findings", "F1")
         self.assertIn("### Step 1 \u2014 Auth module", sec(text, "Steps whose files"))
 
     def test_a_missing_file_line_on_one_finding_still_uses_the_others(self):
-        self.review("### F1 \u2014 x\n- severity: nit\n- what: see src/auth.py.\n\n### F2 \u2014 y\n- severity: nit\n- file: %s/src/views.py:2\n" % self.repo)
+        self.review("### F1 \u2014 x\n- severity: should-fix\n- what: see src/auth.py.\n\n### F2 \u2014 y\n- severity: should-fix\n- file: %s/src/views.py:2\n" % self.repo)
         _, text = self.brief("fix", "1", "--findings", "F1,F2")
         steps = sec(text, "Steps whose files")
         self.assertIn("### Step 3 - Views", steps)

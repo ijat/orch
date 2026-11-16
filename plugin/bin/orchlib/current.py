@@ -72,7 +72,8 @@ def decide(hits):
     best = [h for h in hits if h["match"] == "worktree"] or hits
     if any(h["busy"] for h in best):  # two orchestrators on one task is worse than one question
         return "ask", None
-    sure = [h for h in best if not h["stale"] and h["match"] != "name" and h["state"] != "unknown"]
+    # a task the user paused is never taken over: the user's word resumes it
+    sure = [h for h in best if not h["stale"] and h["match"] != "name" and h["state"] not in ("unknown", "paused_user")]
     return ("resume", sure[0]["task"]) if len(sure) == 1 else ("ask", None)
 
 
@@ -108,7 +109,9 @@ def cmd_current(ns, extra):
     if task:
         print("next: `orch resume %s`, then continue from it" % task)
     elif action == "ask":
-        print("next: ask the user which task; none of these is certain enough to take over")
+        held = [h["task"] for h in hits if h["state"] == "paused_user"]
+        print("next: ask the user which task; none of these is certain enough to take over"
+              + ("; %s was paused by the user: ask before going on" % ", ".join(held) if held else ""))
     else:
         print("no active task for this directory")
         fresh = sorted((h for h in others if not h["stale"]), key=lambda h: h["updated"], reverse=True)

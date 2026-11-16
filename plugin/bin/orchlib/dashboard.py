@@ -52,6 +52,7 @@ STATE_WORDS = {
     "reviewing": "Reviewing",
     "awaiting_merge": "Ready to merge",
     "paused_usage_limit": "Paused: usage limit",
+    "paused_user": "Paused (you asked)",
     "done": "Done",
     "abandoned": "Abandoned",
 }
@@ -213,6 +214,8 @@ def event_words(kind, rec):
     if kind == "gate":
         return "%s gate: %s" % (clean(rec.get("gate")), clean(rec.get("outcome")))
     if kind == "pause":
+        if rec.get("reason") == "user":       # a pause the user asked for (PROGRAM.md § 2); old lines carry no reason
+            return "Paused (you asked)"
         n = rec.get("usage_5h")
         return "Paused for usage (5h %d%%)" % n if is_int(n) else "Paused for usage"
     if kind == "resume":
@@ -268,7 +271,8 @@ class Journal(object):
                         self.usage_first = pair
                     self.usage_last = pair
             # a merge_point (a mid-program merge of the milestone) means it is done, with or without a milestone_end
-            if (kind == "milestone_end" and rec.get("outcome") in ("done", "merged")   # old programs wrote `merged`
+            # any outcome but blocked/abandoned closes it (old programs wrote merged, reviewed, complete, …)
+            if (kind == "milestone_end" and rec.get("outcome") not in ("blocked", "abandoned")
                     or kind == "merge_point" and rec.get("milestone") is not None):
                 m = rec.get("milestone")
                 self.milestones_done.add(m if is_int(m) else str(m))
@@ -444,7 +448,7 @@ def build_task(repo, slug, d, status_text, state, journal):
     wt = status.get("worktree")
     wt = re.sub(r"\s*\(.*$", "", wt).strip() if wt else None
     ms_total = roadmap_rows(read_text(os.path.join(d, "roadmap.md"))) if program else None
-    paused = state == "paused_usage_limit"
+    paused = state in ("paused_usage_limit", "paused_user")
     task = {
         "id": "%s/%s" % (repo, slug), "repo": repo, "slug": slug, "state": state,
         "state_words": STATE_WORDS.get(state, "Unknown state: %s" % clean(raw_state(status_text, state), 40)),

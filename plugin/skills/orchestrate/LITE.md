@@ -27,7 +27,8 @@ earn `fable/high` as planner). The user may force lite anyway — journal it as 
   resumed session), spawn a fresh one at the same tier on phase 2; `plan.md` carries everything.
 - **Step 9:** cycle 1 fixes go to the same agent the same way, under SKILL.md § Review loops (blockers and should-fix in
   one batch; open findings get fix-and-check cycles, and a blocker chain then a fresh round). Cycles 2 and 3 of a round
-  are fresh spawns at higher tiers (`TIERS.md` § Fix rounds), as in standard. **Max 2 rounds**; a blocker still open after
+  follow the cycle route `orch brief fix` prints (`TIERS.md` § Fix rounds), as in standard: climb is a fresh spawn at a
+  higher tier, stay resumes the same agent. **Max 2 rounds**; a blocker still open after
   round 2, a commit awaiting review after round 2, or a fresh round due after round 2 → switch to standard and continue under the standard rules. A blocker
   still open after cycle 3 of a round is the cycle stop in § Review loops (a parked question), in either mode.
 

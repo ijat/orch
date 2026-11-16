@@ -411,6 +411,14 @@ class TestFollowUp(FlowBase):
         self.assertEqual(self.snapshot(), before)
         self.assertFalse(os.path.exists(self.path()))
 
+    def test_severity_low_is_only_for_an_optional_security_finding(self):
+        before = self.snapshot()
+        err = self.refuse(1, "follow-up", "x", "--finding", "F1", "--severity", "low", "-t", T)
+        self.assertIn("not an S<n> id", err)
+        self.assertIn("`- fix: optional`", self.refuse(1, "follow-up", "x", "--finding", "F1", "--severity", "major", "-t", T))
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse(os.path.exists(self.path()))
+
     def test_the_digest_lists_this_tasks_follow_ups_and_prints_nothing_without_any(self):
         retro = "# Retro\n\n- outcome: merged\n"
         for slug in ("quiet", "other"):
@@ -924,7 +932,7 @@ class TestResume(FlowBase):
     def test_every_state_has_a_suggestion_and_unknown_falls_back(self):
         want = {"planning": "spawn planner", "awaiting_approval": "plan gate", "implementing": "orch brief implement",
                 "reviewing": "review", "awaiting_merge": "orch merge", "paused_usage_limit": "usage wait --until-reset",
-                "done": "nothing to resume", "abandoned": "nothing to resume"}
+                "paused_user": "ask before going on", "done": "nothing to resume", "abandoned": "nothing to resume"}
         for state, text in want.items():
             self.ok("set", "task_state=%s" % state, "-t", T)
             out, _ = self.ok("resume", T)

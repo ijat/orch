@@ -16,6 +16,9 @@ from .paths import OrchError, TaskLock, append_bytes, now, require_write_allowed
 CODE_SEVERITIES = ("blocker", "should-fix", "nit")
 SEC_SEVERITIES = ("critical", "high", "medium", "low")
 ORIGINS = ("introduced", "pre-existing")
+CAUSES = ("from-fix", "other")         # `- cause:` of a finding a check raised (D6); a missing or unreadable one reads as from-fix
+CHECK_TITLE_RE = re.compile(r"^check(\s+\d+)? of round\s+\d+")      # a normalised `## Check of round N` / `## Check K of round N`
+OPTIONAL_RE = re.compile(r"^optional(?=$|\s)")      # `- fix: optional` (then, if wanted, ` — why`)
 STATUS_PHRASES = ("resolved", "still open", "disputed", "fixed", "not fixed")    # templates/review.md:31, :41
 CLOSED_PHRASES = ("resolved", "fixed")
 OPEN_PHRASES = ("still open", "not fixed", "open")
@@ -55,6 +58,12 @@ class Finding(object):
         self.state = "open"
         self.cls_raw = None         # the `- class:` text as written, None when the field is absent
         self.cls = None             # its lower-cased slug when it is one, else None
+        self.fix_raw = None         # the `- fix:` text as written (security findings), None when the field is absent
+        self.fix_optional = False   # a security `low` marked `- fix: optional`: never starts a fix batch (D3)
+        self.cause_raw = None       # the `- cause:` text as written, None when the field is absent
+        self.cause = None           # from-fix | other when the text says so, else None (reads as from-fix)
+        self.in_check = False       # the block sits under a `## Check of round N` heading: a check raised it
+        self.phrase_in_check = False    # its latest status line sits under a check heading
 
     @property
     def number(self):
@@ -163,6 +172,12 @@ def parse_text(text, security=False, lenient_heads=False):
             f.severity = f.sev_raw.lower() if f.sev_raw.lower() in sev_set else None
             f.file = fields.get("file", "")
             f.resolution = fields.get("resolution", "")
+            f.fix_raw = fields.get("fix")
+            f.fix_optional = bool(security and f.severity == "low" and f.fix_raw is not None
+                                  and OPTIONAL_RE.match(f.fix_raw.strip().lower()))
+            f.cause_raw = fields.get("cause")
+            if f.cause_raw is not None and f.cause_raw.strip().lower() in CAUSES:
+                f.cause = f.cause_raw.strip().lower()
             f.cls_raw = fields.get("class")
             if f.cls_raw is not None and CLASS_RE.match(f.cls_raw.strip().lower()):
                 f.cls = f.cls_raw.strip().lower()
@@ -181,6 +196,9 @@ def parse_text(text, security=False, lenient_heads=False):
     for k, (i, title) in enumerate(heads2):
         end = heads2[k + 1][0] if k + 1 < len(heads2) else len(lines)
         sections.append((i, end, title))
+    for f in p.findings:
+        above = [t for i, t in heads2 if i < f.head]
+        f.in_check = bool(above) and bool(CHECK_TITLE_RE.match(pl.norm_title(above[-1])))
     in_round = [False] * len(lines)
     for i, end, title in sections:
         if not ROUND_RE.match(pl.norm_title(title)):
@@ -204,7 +222,9 @@ def parse_text(text, security=False, lenient_heads=False):
     for f in p.findings:
         later = [s for s in p.status_lines if s[0] == f.id and s[1] > f.head]
         if later:
-            f.phrase = max(later, key=lambda s: s[1])[2]
+            last = max(later, key=lambda s: s[1])
+            f.phrase = last[2]
+            f.phrase_in_check = bool(CHECK_TITLE_RE.match(pl.norm_title(re.sub(r"^#+\s*", "", last[3]))))
             f.state = phrase_state(f.phrase)
     for fid, s, _, _, unit in p.status_lines:
         if fid not in seen:
@@ -224,13 +244,14 @@ def parse(path, security=False, lenient_heads=False):
 
 def mark_parked(parsed, records, milestone):
     """A `follow_up` journal record parks finding X only when its finding is X's id, its severity equals X's and its
-    milestone equals the task's (absent on both sides for a single plan). Security findings never park."""
-    if parsed.security:
-        return
+    milestone equals the task's (absent on both sides for a single plan). A security finding parks only when it is a
+    `low` marked `- fix: optional` (D3); every other security finding stays open."""
     for rec in records:
         if flow.kind_of(rec) != "follow_up":
             continue
         for f in parsed.findings:
+            if parsed.security and not f.fix_optional:
+                continue
             if (f.state != "closed" and rec.get("finding") == f.id and f.severity is not None
                     and rec.get("severity") == f.severity and rec.get("milestone") == milestone):
                 f.state = "parked"
@@ -274,7 +295,8 @@ def counts_line(parsed):
     if not parsed.security:
         parts.append("pre-existing: " + tally(groups["pre-existing"]))
     parts.append("flags: " + flags)
-    parts.append("not counted: " + ("closed %d" % closed if parsed.security else "parked %d, closed %d" % (parked, closed)))
+    parts.append("not counted: " + ("closed %d" % closed if parsed.security and not parked
+                                    else "parked %d, closed %d" % (parked, closed)))
     parts.append("unparsed %d" % len(parsed.unparsed))
     return "; ".join(parts)
 
@@ -291,6 +313,15 @@ def check_block_fields(f, security):
         problems.append("%s: `- file:` is missing (PATH:LINE)" % f.id)
     if not security and (f.origin not in ORIGINS):
         problems.append("%s: `- origin:` must be introduced or pre-existing (then ` — evidence`)" % f.id)
+    if (not security and f.cause_raw is not None and f.cause_raw.strip() and not PLACEHOLDER_RE.match(f.cause_raw.strip())
+            and f.cause is None):
+        problems.append("%s: `- cause:` must be from-fix or other, or left out (got %r)" % (f.id, f.cause_raw))
+    if security and f.fix_raw is not None and f.fix_raw.strip() and not PLACEHOLDER_RE.match(f.fix_raw.strip()):
+        if not OPTIONAL_RE.match(f.fix_raw.strip().lower()):
+            problems.append("%s: `- fix:` must be `optional` or left out (got %r)" % (f.id, f.fix_raw))
+        elif f.severity != "low":
+            problems.append("%s: `- fix: optional` is only for severity low (got %r): a finding with an exploit path or "
+                            "exposed data is always routed" % (f.id, f.sev_raw))
     if f.cls_raw is not None and f.cls_raw.strip() and f.cls is None:
         problems.append("%s: `- class:` must be one short slug (letters, digits, - or _), or left out (got %r)" % (f.id, f.cls_raw))
     return problems
@@ -375,6 +406,45 @@ def class_repeats(parsed_files, routed):
             r, _, fid = max(earlier)
             out.append((cls, fid, r))
     return out
+
+
+def cycle_route(parsed, routed):
+    """(verdict, reasons) for a fix batch that follows a check (D6), or None when no routed finding comes from a check
+    (a fix batch of the full round's findings is routed as always). `climb` when a routed finding is still open after a
+    check, or a finding a check raised has `cause: from-fix` (a missing or unreadable cause reads as from-fix); `stay`
+    when every open item is a finding a check raised with `cause: other`. Closed findings and security ids (not labelled)
+    are not weighed beyond: a security id climbs. `parsed` is the parsed review.md."""
+    items = []
+    for fid in routed:
+        if fid.startswith("S"):
+            items.append((fid, "climb", "%s is a security finding (no cause label)" % fid))
+            continue
+        f = parsed.get(fid)
+        if f is None or f.state == "closed":
+            continue
+        if f.phrase_in_check:       # routed and judged by a later check (whatever raised it, whatever its cause): still open, so climb
+            items.append((fid, "climb", "%s is a routed finding still open after a check" % fid))
+        elif f.in_check:
+            if f.cause == "other":
+                items.append((fid, "other", "%s cause: other" % fid))
+            else:
+                items.append((fid, "climb", "%s %s" % (fid, "cause: from-fix" if f.cause else "has no cause: (reads from-fix)")))
+        else:
+            items.append((fid, "climb", "%s is a routed finding no check has judged yet" % fid))
+    if not any(f is not None and f.state != "closed" and (f.in_check or f.phrase_in_check)
+               for f in (parsed.get(i) for i in routed if i.startswith("F"))):
+        return None
+    if items and all(kind == "other" for _, kind, _ in items):
+        return "stay", ["every open item is cause: other (%s)" % ", ".join(fid for fid, _, _ in items)]
+    return "climb", [why for _, kind, why in items if kind == "climb"]
+
+
+def cycle_route_text(route):
+    verdict, reasons = route
+    if verdict == "stay":
+        return ("stay: %s \u2014 resume the same implementer at its tier (`orch spawn implementer --reused`); do not raise "
+                "the tier." % reasons[0])
+    return "climb: raise one rung (TIERS.md \u00a7 Fix rounds); %s." % "; ".join(reasons)
 
 
 def class_repeat_line(cls, fid, rnd):

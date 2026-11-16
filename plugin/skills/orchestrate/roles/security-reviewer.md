@@ -117,7 +117,14 @@ concretely: who the attacker is, what they control, and what they get.
 
 Do **not** report: theoretical issues with no reachable path, defense-in-depth suggestions dressed
 up as vulnerabilities, or generic hardening advice unrelated to this diff. A security review that
-cries wolf gets ignored, and it burns fix rounds (the cap is in `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/SKILL.md`, § Review loops). Security findings stay on rounds: every routed finding is fixed and re-reviewed as the next round, with no check lane and no follow-up lane.
+cries wolf gets ignored, and it burns fix rounds (the cap is in `${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/SKILL.md`, § Review loops). Security findings stay on rounds: every routed finding is fixed and re-reviewed as the next round, with no check lane. The only follow-up lane is `- fix: optional`.
+
+**`- fix: optional`** goes on a finding only when it is severity `low`, has no exploit path (no attacker gains anything
+through it) and exposes no data: pure hardening or style, the kind of finding that would otherwise be a nit. Give the
+reason in the line (`- fix: optional — <why there is no exploit path and no exposure>`). A reason you cannot state means
+the line is left out and the finding is routed as always; never mark a `medium` or higher, and never mark one to spare a
+round (`orch write review --security` rejects it on any other severity). The orchestrator parks an optional low
+in follow-ups and the merge does not wait for it.
 
 Put a **`class:`** on every finding: the bug class, one short slug, so the orchestrator can see the same class
 return in a later round. Pick from `concurrency`, `state-reset`, `validation`, `error-handling`, `resource-cleanup`,

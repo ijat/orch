@@ -279,12 +279,31 @@ class TestPolicy(GitBase):
         os.makedirs(os.path.join(self.root, "myapp", "policy.md"))   # a directory where the file should be
         self.assertEqual(policy.read_policy(self.d).merge, "ask")
 
+    def test_docs_only_default_none_globs_and_fail_closed_values(self):
+        self.setup_task()
+        D = policy.DOCS_ONLY_DEFAULT
+        self.assertEqual(policy.read_policy(self.d).docs_only, D)                 # no file
+        cases = [("- merge: auto\n", D), ("- docs-only: default\n", D), ("- docs-only: none\n", ()),
+                 ("- docs-only: docs/**/*.md, NOTES.md\n", ("docs/**/*.md", "NOTES.md")),
+                 ("- docs-only: default\n- docs-only: none\n", ()),                  # any none wins
+                 ("- docs-only: default | none | <comma-separated globs>\n", ()),     # unedited template text
+                 ("- docs-only:\n", ()), ("- docs-only: docs/*.md,\n", ()),
+                 ("- docs-only: /etc/*.md\n", ()), ("- docs-only: ../x.md\n", ()),
+                 ("<!-- - docs-only: none -->\n", D)]
+        for text, want in cases:
+            self.policy_file(text)
+            self.assertEqual(policy.read_policy(self.d).docs_only, want, text)
+        os.remove(os.path.join(self.root, "myapp", "policy.md"))
+        os.makedirs(os.path.join(self.root, "myapp", "policy.md"))                   # unreadable: merge asks, docs-only off
+        self.assertEqual(policy.read_policy(self.d).docs_only, ())
+
     def test_template_matches_the_contract(self):
         path = os.path.join(core.BIN, "..", "skills", "orchestrate", "templates", "policy.md")
         text = rd(path)
         self.assertTrue(text.startswith("# Policy: <repo-name>\n"))
         self.assertIn("- merge: auto | ask\n", text)
         self.assertIn("- security: rule | always | ask\n", text)
+        self.assertIn("- docs-only: default | none | <comma-separated globs>\n", text)
         self.assertEqual(text.count("<!--"), 1)
         self.assertIn("absent file means `merge: auto` and `security: rule`", text)
 
@@ -305,6 +324,67 @@ class TestPolicy(GitBase):
         with open(os.path.join(other, "policy.md"), "w") as fh:
             fh.write("- merge: ask\n")
         self.merge_ok("--check", "--recheck-ok")
+
+
+class TestDocsOnlySince(GitBase):
+    def setUp(self):
+        GitBase.setUp(self)
+        self.init_repo(self.repo)
+        self.base = self.git(self.repo, "rev-parse", "HEAD")
+
+    def sub(self, name, text="x\n"):
+        os.makedirs(os.path.dirname(os.path.join(self.repo, name)) or self.repo, exist_ok=True)
+        return self.commit(self.repo, name, text)
+
+    def since(self, globs=policy.DOCS_ONLY_DEFAULT, a=None, b=None):
+        return merge.docs_only_since(self.repo, a or self.base, b or self.git(self.repo, "rev-parse", "HEAD"), globs)
+
+    def test_default_globs_accept_docs_and_root_state_files(self):
+        self.sub("docs/a/b.md")
+        self.sub("STATE.md")
+        self.sub("docs/c.md")
+        ok, paths = self.since()
+        self.assertTrue(ok, paths)
+        self.assertEqual(sorted(paths), ["STATE.md", "docs/a/b.md", "docs/c.md"])
+
+    def test_a_path_outside_the_globs_rejects_the_range(self):
+        for name in ("README.md", "src/x.rs", "sub/STATE.md", "docs/x.txt", "docs-extra/a.md"):
+            base = self.git(self.repo, "rev-parse", "HEAD")
+            self.sub("docs/ok-%s.md" % name.replace("/", "-"))
+            tip = self.sub(name)
+            ok, why = self.since(a=base, b=tip)
+            self.assertFalse(ok, name)
+            self.assertIn(name, why)
+
+    def test_a_rename_into_docs_is_rejected_for_the_old_path(self):
+        self.sub("src/a.md")
+        base = self.git(self.repo, "rev-parse", "HEAD")
+        os.makedirs(os.path.join(self.repo, "docs"))
+        self.git(self.repo, "mv", "src/a.md", "docs/a.md")
+        self.git(self.repo, "commit", "-q", "-m", "move")
+        ok, why = self.since(a=base)
+        self.assertFalse(ok)
+        self.assertIn("src/a.md", why)
+
+    def test_off_non_ancestor_empty_and_git_failure_are_false(self):
+        tip = self.sub("docs/a.md")
+        self.assertEqual(merge.docs_only_since(self.repo, self.base, tip, ())[0], False)      # none
+        self.assertFalse(self.since(a=tip, b=tip)[0])                                         # empty range
+        self.assertFalse(self.since(a=tip, b=self.base)[0])                                   # backwards: not an ancestor
+        self.git(self.repo, "checkout", "-q", "-b", "side", self.base)
+        side = self.sub("docs/side.md")
+        self.assertFalse(self.since(a=side, b=tip)[0])                                        # diverged
+        self.assertFalse(self.since(a="0" * 40, b=tip)[0])                                    # unknown commit
+        self.assertFalse(self.since(a="abc", b=tip)[0])                                       # not a full sha
+        self.assertFalse(merge.docs_only_since(self.repo, None, tip, policy.DOCS_ONLY_DEFAULT)[0])
+        self.assertFalse(merge.docs_only_since(os.path.join(self.tmp, "nope"), self.base, tip,
+                                               policy.DOCS_ONLY_DEFAULT)[0])                  # git fails
+
+    def test_custom_globs_and_double_star_nesting(self):
+        self.sub("notes/a/b/c.txt")
+        self.assertTrue(self.since(("notes/**",))[0])
+        self.assertTrue(self.since(("notes/**/*.txt",))[0])
+        self.assertFalse(self.since(("notes/*.txt",))[0])                                      # one level only
 
 
 class TestMergeAndCleanup(GitBase):
@@ -476,6 +556,65 @@ class TestReviewAndGate(GitBase):
         self.assertEqual((rec["check"], rec["round"], rec["sha"]), (True, 1, self.tip()))
         self.assertTrue(os.path.exists(os.path.join(self.d, "briefs", "review-code-r1-check.md")))
         self.merge_ok("--check", "--recheck-ok")
+
+    def docs_commit(self, name="docs/guide.md"):
+        os.makedirs(os.path.dirname(os.path.join(self.wt, name)), exist_ok=True)
+        return self.commit(self.wt, name, "text %d\n" % len(self.calls))
+
+    def set_policy(self, text):
+        wr(os.path.join(self.root, "myapp", "policy.md"), text)
+
+    def test_docs_only_check_at_the_tip_carries_the_gate_and_the_security_pass(self):
+        self.setup_task()
+        self.set_policy("- security: always\n")
+        self.gate()
+        self.review(rnd=1)
+        self.review("security", rnd=1)
+        old = self.tip()
+        self.docs_commit()
+        self.docs_commit("STATE.md")
+        self.refuse_merge("code review")                           # nothing journaled at the tip yet
+        self.review(rnd=1, check=True)                             # the docs-only check, at the tip
+        out, _ = self.merge_ok("--check", "--recheck-ok")
+        self.assertIn(old[:9], out)
+        self.assertIn("docs-only since %s" % old[:9], out)
+
+    def test_a_code_change_after_the_gate_refuses_even_with_a_docs_only_check(self):
+        self.setup_task()
+        self.gate()
+        self.review(rnd=1)
+        self.commit(self.wt, "src.txt", "x\n")
+        self.docs_commit()
+        self.review(rnd=1, check=True)
+        err = self.refuse_merge("final gate", "gate ran on")
+        self.assertIn("src.txt", err)                              # the docs-only route says which path misses
+
+    def test_a_code_change_after_the_security_pass_refuses(self):
+        self.setup_task()
+        self.set_policy("- security: always\n")
+        self.review(rnd=1)
+        self.review("security", rnd=1)
+        self.commit(self.wt, "src.txt", "x\n")
+        self.gate()
+        self.review(rnd=1, check=True)
+        self.refuse_merge("security", "reviewed")
+
+    def test_docs_only_none_keeps_the_gate_at_the_tip(self):
+        self.setup_task()
+        self.set_policy("- docs-only: none\n")
+        self.gate()
+        self.review(rnd=1)
+        self.docs_commit()
+        self.review(rnd=1, check=True)
+        self.refuse_merge("final gate", "gate ran on")
+
+    def test_a_failing_gate_at_an_ancestor_is_never_carried(self):
+        self.setup_task()
+        self.gate(verdict="fail")
+        self.review(rnd=1)
+        self.docs_commit()
+        self.review(rnd=1, check=True)
+        self.refuse_merge("final gate", "verdict is 'fail'")
 
     def test_a_blocker_chain_that_ends_on_a_passed_check_refuses_and_names_the_fresh_round(self):
         self.setup_task()

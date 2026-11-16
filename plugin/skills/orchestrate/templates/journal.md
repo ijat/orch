@@ -22,11 +22,11 @@ else was considered; may be `[]`). Unknown values are `null` — never omitted, 
 | `security_offer` | old lines; new tasks only when `policy.md` says `security: ask` and the user was asked | `areas` (array), `answer` (accepted/declined/not_offered), `late` (bool) |
 | `mythos_offer` | each offer of a Mythos security review (SKILL.md step 5 and step 10) and the user's answer | `trigger` (severe/program_end/init_first/request), `answer` (accepted/declined), `tier`, `areas` (array) |
 | `review_round` | each reviewer return | `round`, `reviewer`, `blockers`, `should_fix`, `nits`, `verdict`, `sha` |
-| `follow_up` | `orch follow-up` parked a should-fix or nit in the repo's `follow-ups.md` | `finding`, `severity` (should-fix/nit), `file`, `text` |
+| `follow_up` | `orch follow-up` parked a should-fix, nit or optional security low in the repo's `follow-ups.md` | `finding`, `severity` (should-fix/nit; low for a security finding marked `fix: optional`), `file`, `text` |
 | `gate` | plan or merge approval | `gate` (plan/roadmap/merge/pilot), `outcome` (approved/revised/declined) |
 | `plan_revision` | a revision appended | `n`, `trigger` (blocker/user/review) |
 | `sketch` | a sketched step finishes | `step`, `followed` (full/partial/no), `sketch_wrong` (bool), `escalated` (bool) |
-| `pause` / `resume` | usage pause and resume | `usage_5h` |
+| `pause` / `resume` | usage pause and resume; a pause the user asked for is `pause reason=user` | `usage_5h`, `reason` (user; absent = a usage pause) |
 | `checkin` | each check-in on a silent role (dispatch step 5) | `role`, `silent_min`, `verdict` (ok/looping), `action` (continue/messaged/stopped); the CHECKIN line may carry `final=finished` (harness notice, no return) or `progress=hung` |
 | `pilot` | a pilot batch returns | `step`, `items`, `tokens`, `rounds`, `est_rest_tokens`, `answer` (continue/retier/hold) |
 | `override` | the user overrides a default | `what` |
@@ -60,7 +60,7 @@ A field not listed is a string, or free JSON when written with `:=`:
 - boolean: `security_offer.late`, `sketch.{sketch_wrong,escalated}`, `plan_shape.overridden`, `checkpoint.asked`, `auto_security.ran`, `assumed_decision.reversible`, `merge_point.tree_equal`
 - array: `*.alternatives`, `spawn.steps`, `security_offer.areas`, `mythos_offer.areas`, `auto_security.areas`, `plan_shape.criteria`, `replan.changed`, `review_point.span`, `milestone_end.tiers`, `milestone_plan.rows`, `continue_gate.{steps,routed,reasons}`
 
-- enum: `mythos_offer.trigger={severe,program_end,init_first,request}`, `mythos_offer.answer={accepted,declined}` (any other value is refused; null stays allowed)
+- enum: `mythos_offer.trigger={severe,program_end,init_first,request}`, `mythos_offer.answer={accepted,declined}`, `milestone_end.outcome={done,blocked,abandoned}` (any other value is refused; null stays allowed)
 
 In a program, every other line also carries `milestone` (number, or null before the first one).
 

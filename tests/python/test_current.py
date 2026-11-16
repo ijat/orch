@@ -95,6 +95,14 @@ class Current(Base):
         self.assertEqual(action, "ask")
         self.assertIn("another session may be active", out)
 
+    def test_a_task_the_user_paused_is_never_resumed(self):
+        self.task("proj", "a", self.repo, state="paused_user")
+        action, out = self.action(self.repo)
+        self.assertEqual(action, "ask")
+        self.assertIn("proj/a was paused by the user: ask before going on", out)
+        self.task("proj", "b", self.repo)                         # another live task: that one is taken, never the paused one
+        self.assertEqual(self.action(self.repo)[0], "resume proj/b")
+
     def test_finished_task_is_not_pending(self):
         self.task("proj", "a", self.repo, state="done")
         self.assertEqual(self.action(self.repo)[0], "none")

@@ -103,7 +103,8 @@ the findings of round N; judge whether each fix is right and whether the fix com
 defect, and append a `## Check of round N` section to `review.md` (`## Check K of round N` for check K; never rewrite
 earlier text). Rate what you find as usual: a blocker or should-fix that is still open or newly found is routed
 to the implementer and you are asked for the next check (up to three cycles per round; the last one's should-fix
-is parked in the repo's follow-ups file); a nit goes to the digest. Honour the
+is parked in the repo's follow-ups file); a nit rides along in a batch that happens anyway, else it is parked or
+goes to the digest, never a batch of its own. Honour the
 range. If while reviewing you find something that genuinely requires looking wider, say so explicitly and
 name the wider scope; the orchestrator will expand it. Do not silently review the whole diff.
 
@@ -126,6 +127,13 @@ Put a **`class:`** on every blocker and should-fix: the bug class, one short slu
 the same class return in a later round. Pick from `concurrency`, `state-reset`, `validation`, `error-handling`,
 `resource-cleanup`, `api-contract`, `algorithm`, `config`, `test-gap`, `docs`, or write your own slug (letters, digits,
 `-`, `_`); the match is exact, so reuse the slug an earlier finding of the same class used.
+
+Put a **`cause:`** on every new finding you raise in a check: `from-fix` when the defect is in the lines the fix commits
+changed or added (the fix made it), `other` when it is not (a defect the base already had, or scope the orchestrator
+added beyond the findings). When unsure, `from-fix`: a missing or unreadable label reads as from-fix, and that is the
+side that climbs the implementer's tier. A routed finding that is still open is reported `not fixed` and needs no label.
+A check whose brief says the commits are **docs-only** reads them for accuracy against the code, and for secrets and
+private data (tokens, keys, credentials, personal paths and names) that must not be committed.
 
 Tag every finding's **origin**. Run `git blame` on its lines: if the defect is already on the base
 branch and the diff neither changed those lines nor newly reaches them (a new caller of old broken
