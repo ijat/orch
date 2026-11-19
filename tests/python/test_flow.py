@@ -24,6 +24,12 @@ class FlowBase(core.Base):
 
     def setUp(self):
         core.Base.setUp(self)
+        # In-process calls (tierguard.decide) write their log under ORCH_DATA: keep it in the temp dir, never the live orch-data.
+        # Only here: test_core.Base must leave ORCH_DATA unset, other suites assert the ORCH_DIR-only paths.
+        self.data = os.path.join(self.tmp, "orch-data")
+        patch = mock.patch.dict(os.environ, {"ORCH_DATA": self.data})
+        patch.start()
+        self.addCleanup(patch.stop)
         self.usage_n = 0
         self.d = self.init()
 
