@@ -23,7 +23,7 @@ extra, never the medium.
 
 Bookkeeping is one call per state transition: `orch [-t <task>] <command>` (`orch --help`;
 `<task>` is `<repo>/<slug>` or an absolute task dir). Exit 0 ok; 1 usage or validation error and 2 refused
-by a guard or policy (usage STOP, a merge condition, `orch brief implement|fix|review|security|director` with no worktree recorded, `orch spawn` of an implementer, code-reviewer, security-reviewer or director with no brief newer than its last spawn) write nothing; 3 internal error (for `merge`: the merge
+by a guard or policy (usage STOP, a merge condition, `orch brief implement|fix|review|security|director` with no worktree recorded, `orch spawn` of an implementer, code-reviewer, security-reviewer or director with no fresh brief) write nothing; 3 internal error (for `merge`: the merge
 commit exists): read the message.
 
 The orchestrator's own commands keep `-t`. The roles' verbs — `orch role`, `orch log`, `orch plan` (outline,
@@ -239,8 +239,10 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
    --reason "<why>" --alt "<alternative>" --tradeoff "<one line>" [--basis "<text>"]` (the basis is required for a tier above the role's default) runs the estimator, then writes the
    `tier_choice`, `escalation` (when raised: add `--escalation proactive|post-failure --from <tier>
    --trigger <trigger>`) and `spawn` lines. `STOP` → exit 2, nothing written: don't spawn, pause. An implementer,
-   code-reviewer, security-reviewer or director (also `--reused`) is refused (exit 2) unless `orch brief` wrote a brief of its
-   kind at or after its previous spawn: brief first, then spawn; `--no-brief "<why>"` is only for when `orch brief` cannot be used
+   code-reviewer, security-reviewer or director (also `--reused`) is refused (exit 2) unless a brief of its kind exists, and a new one
+   (`orch brief` again) when its previous run returned `done`: brief first, then spawn. A re-spawn after a run that did not end
+   `done` (a failed `--reused` send, a `stopped` or `failed` role, a replacement, a usage re-spawn) goes on the brief it already had,
+   and a lite task's implementer is not checked (LITE.md). `--no-brief "<why>"` is only for when `orch brief` cannot be used
    (§ The `orch` CLI, old-format tasks).
    `WARN`/`STALE`/`UNKNOWN` warn once: act on it. It also prints `usage wait: armed (pid N)` or `not armed`.
 2. **Spawn** the subagent in the background.

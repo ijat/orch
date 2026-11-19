@@ -142,33 +142,53 @@ BRIEF_PREFIXES = {"implementer": ("implement-", "fix-"), "code-reviewer": ("revi
 BRIEF_KINDS = {"implementer": "implement|fix", "code-reviewer": "review", "security-reviewer": "security", "director": "director"}
 
 
-def brief_refusal(task_dir, journal, role):
-    """Why a spawn of `role` has no fresh brief, or None when it has one: some brief of the role's kinds is no older
-    than the end of the minute of the role's previous spawn line (journal times have minute precision, so a brief
-    written in that minute counts as the one that spawn used). With no earlier spawn, any such brief will do."""
-    prefixes = BRIEF_PREFIXES.get(role)
-    if prefixes is None:
-        return None
-    mtimes = []
+def brief_mtimes(task_dir, role):
+    """mtimes of the briefs in TASK/briefs/ of the kinds `role` is spawned on."""
+    prefixes = BRIEF_PREFIXES[role]
+    out = []
     bdir = os.path.join(task_dir, "briefs")
     try:
         for name in os.listdir(bdir):
             if name.endswith(".md") and name.startswith(prefixes):
                 try:
-                    mtimes.append(os.path.getmtime(os.path.join(bdir, name)))
+                    out.append(os.path.getmtime(os.path.join(bdir, name)))
                 except OSError:
                     pass
     except OSError:
         pass
-    prev = None
+    return out
+
+
+def brief_check(task_dir, journal, role, mode):
+    """-> (why or None, newest matching brief mtime or None). `why` is the refusal text of a spawn of `role` that has no
+    fresh brief. A brief is needed at all (any brief of the role's kinds); a *new* one is needed only when the role's
+    previous spawn ended `done`: the brief that spawn used is spent, and a spawn that failed, stopped, was cut off or
+    never ran (a failed `--reused` send, a replacement, a usage re-spawn) is repeated on the brief it already has.
+    "New" means newer than the brief mtime the previous spawn line recorded (`brief_mtime`); a line without one
+    (older line, `--no-brief` spawn) is compared with its own minute, journal times being minute-precise.
+    A lite task's implementer is never checked: phase 1 has no plan to brief, phase 2 goes by message (LITE.md)."""
+    if role not in BRIEF_PREFIXES or (role == "implementer" and mode == "lite"):
+        return None, None
+    mtimes = brief_mtimes(task_dir, role)
+    newest = max(mtimes) if mtimes else None
+    spawn = ret = None
     for rec in journal:
         if rec.get("role") == role and kind_of(rec) == "spawn":
-            prev = ts_epoch(rec.get("ts"))
-    floor = prev + 60 if prev is not None else None
-    if mtimes and (floor is None or max(mtimes) >= floor):
-        return None
-    return ("no fresh brief for %s: no briefs/%s*.md is newer than its last spawn — run `orch brief %s` first, or pass "
-            "--no-brief \"<why>\" when `orch brief` cannot be used" % (role, "|".join(prefixes), BRIEF_KINDS[role]))
+            spawn, ret = rec, None
+        elif rec.get("role") == role and kind_of(rec) == "return":
+            ret = rec
+    need = "no briefs/%s*.md" % "|".join(BRIEF_PREFIXES[role])
+    hint = ("run `orch brief %s` first, or pass --no-brief \"<why>\" when `orch brief` cannot be used"
+            % BRIEF_KINDS[role])
+    if newest is None:
+        return "no fresh brief for %s: %s exists — %s" % (role, need, hint), None
+    if spawn is None or ret is None or ret.get("outcome") != "done":
+        return None, newest
+    seen = spawn.get("brief_mtime")
+    floor = seen if isinstance(seen, (int, float)) else ts_epoch(spawn.get("ts"))
+    if floor is None or (newest > floor if isinstance(seen, (int, float)) else newest >= floor):
+        return None, newest
+    return "no fresh brief for %s: its last run returned done and no brief of its kinds is newer — %s" % (role, hint), None
 
 
 def cmd_spawn(ns, extra):
@@ -221,8 +241,9 @@ def cmd_spawn(ns, extra):
             cli.append_log(task_dir, cli.log_line(ts, "orchestrator", refused))
             raise OrchError("%s — %s" % (refused, usage_line), 2)
 
+        brief_seen = None
         if ns.no_brief is None:
-            why = brief_refusal(task_dir, read_journal(task_dir), role)
+            why, brief_seen = brief_check(task_dir, read_journal(task_dir), role, (status.get("mode") if status else None) or "")
             if why:
                 raise OrchError("spawn refused: %s" % why, 2)
 
@@ -255,6 +276,7 @@ def cmd_spawn(ns, extra):
                                  ("steps", ":=", json.dumps(steps)), ("usage_5h", ":=", json.dumps(u5)),
                                  ("usage_7d", ":=", json.dumps(u7))] + ([("head", "=", head)] if head else [])
                                  + ([("reused", ":=", "true")] if ns.reused else [])
+                                 + ([("brief_mtime", ":=", json.dumps(brief_seen))] if brief_seen is not None else [])
                                  + ([("no_brief", "=", ns.no_brief.strip()[:200])] if ns.no_brief is not None and role in BRIEF_PREFIXES else [])
                                  + ([("basis", "=", basis[:tiers.BASIS_CLIP])] if basis else [])))
         text = "spawned %s (%s, %s)%s%s" % (role, ns.agent, ns.tier, " steps %s" % ",".join(str(s) for s in steps) if steps else "",
