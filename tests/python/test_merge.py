@@ -347,8 +347,16 @@ class TestDocsOnlySince(GitBase):
         self.assertTrue(ok, paths)
         self.assertEqual(sorted(paths), ["STATE.md", "docs/a/b.md", "docs/c.md"])
 
+    def test_default_globs_accept_a_root_readme_and_agents_file(self):
+        self.sub("README.md")
+        self.sub("AGENTS.md")
+        ok, paths = self.since()
+        self.assertTrue(ok, paths)
+        self.assertEqual(sorted(paths), ["AGENTS.md", "README.md"])
+        self.assertFalse(merge.docs_only_since(self.repo, self.base, self.git(self.repo, "rev-parse", "HEAD"), ())[0])   # docs-only: none
+
     def test_a_path_outside_the_globs_rejects_the_range(self):
-        for name in ("README.md", "src/x.rs", "sub/STATE.md", "docs/x.txt", "docs-extra/a.md"):
+        for name in ("sub/README.md", "CLAUDE.md", "src/x.rs", "sub/STATE.md", "sub/AGENTS.md", "docs/x.txt", "docs-extra/a.md"):
             base = self.git(self.repo, "rev-parse", "HEAD")
             self.sub("docs/ok-%s.md" % name.replace("/", "-"))
             tip = self.sub(name)

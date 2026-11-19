@@ -1289,6 +1289,20 @@ class TestNarrowReviewAndCheck(BriefBase):
         self.assertIn("- range: %s..%s" % (checked, self.tip()), text2)
         self.assertIn("- cycle: 2", text2)
 
+    def test_a_root_readme_and_agents_commit_take_the_docs_only_route(self):
+        self.clean_round_one()
+        self.docs_commit("README.md")
+        self.docs_commit("AGENTS.md")
+        path, text = self.brief("review", "--check")
+        self.assertEqual(os.path.basename(path), "review-code-r1-check.md")
+        self.assertIn("docs-only commits since a passed review", text)
+
+    def test_a_root_readme_commit_is_code_again_when_docs_only_is_none(self):
+        self.clean_round_one()
+        wr(os.path.join(self.root, "myapp", "policy.md"), "- docs-only: none\n")
+        self.docs_commit("README.md")
+        self.assertIn("Brief round 2", self.refused(2, "review", "--check"))
+
     def test_the_docs_only_route_has_the_same_three_cycles(self):
         self.clean_round_one()
         for cycle in (1, 2, 3):

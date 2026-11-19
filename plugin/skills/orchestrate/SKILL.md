@@ -177,7 +177,7 @@ task dirs: `~/.claude/orch-data/tasks/lessons/` (global lesson files) and
 (`~/.claude/orch-data/tasks/LESSONS.md`, `~/.claude/orch-data/tasks/<repo-name>/LESSONS.md`; a scope not yet migrated has only the old hand-kept file),
 `~/.claude/orch-data/tasks/<repo-name>/security-ledger.md`, and optionally `<repo-name>/policy.md`
 (`- merge: auto | ask`, `- security: rule | always | ask`, `- docs-only: default | none | <comma-separated globs>`; absent = `auto`, `rule`,
-`default`: `docs/**/*.md` and root `STATE.md`, `DECISIONS.md`, `CHANGELOG.md`; `none`, a bad value or an unreadable file turns docs-only off). Never use
+`default`: `docs/**/*.md` and root `STATE.md`, `DECISIONS.md`, `CHANGELOG.md`, `README.md`, `AGENTS.md`; `none`, a bad value or an unreadable file turns docs-only off). Never use
 `~/.claude/tasks/` or `~/.claude/plans/` — Claude Code owns those.
 
 The `orch:init` skill (step 3a) also keeps `<repo-name>/init.md` (its record), `<repo-name>/init-proposal.md` (the proposal) and `<repo-name>/audit.md` (an audit's findings) beside the task dirs.
