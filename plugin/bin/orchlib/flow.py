@@ -672,8 +672,9 @@ def register(add):
                          'signal | <token>, rule | <token>, failure | <token>, lesson | <scope>/<name>, claude-md | <path> | "<quote>"; '
                          'required above the default (form and token table are checked here, a user quote by the hook)')
     sp.add_argument("--no-brief", dest="no_brief", default=None, metavar="WHY",
-                    help="implementer, code-reviewer, security-reviewer and director are refused without a brief newer than "
-                         "their last spawn; this skips that check and journals WHY (the fallback when `orch brief` cannot be used)")
+                    help="implementer, code-reviewer, security-reviewer and director are refused without a brief of their kind "
+                         "(a newer one after a run that returned done; a lite task's implementer is not checked); this skips that "
+                         "check and journals WHY (the fallback when `orch brief` cannot be used)")
     sp.add_argument("--reused", action="store_true",
                     help="next work goes to the last implementer, code-reviewer or security-reviewer by SendMessage; refused unless its cache is still warm")
 

@@ -1283,12 +1283,14 @@ class TestSpawnBrief(FlowBase):
         self.spawn_ok("implementer", now="2026-03-01T10:20Z")
 
     def test_a_brief_rewritten_in_the_minute_of_the_previous_spawn_counts(self):
-        """Journal times are minute-precise; the recorded mtime is not: a brief written seconds after the spawn is fresh."""
-        old = time.time() - 3600
-        path = self.put_brief("implementer", mtime=old)
+        """Journal times are minute-precise; the recorded mtime is not. Everything here sits inside the spawn's minute
+        (ORCH_NOW 10:00Z), so a minute-based floor would refuse the rewrite (or, comparing the other way, pass the spent brief)."""
+        at = flow.ts_epoch(self.AT)
+        path = self.put_brief("implementer", mtime=at + 10)
         self.spawn_ok("implementer")
         self.done("implementer")
-        os.utime(path, (old + 30, old + 30))
+        self.assertIn("no fresh brief", self.spawn_refused("implementer", now="2026-03-01T10:20Z"))   # the spent brief, in its minute
+        os.utime(path, (at + 30, at + 30))                                                            # rewritten 20 s later, same minute
         self.spawn_ok("implementer", now="2026-03-01T10:20Z")
 
     def test_a_respawn_after_a_run_that_did_not_end_done_goes_on_the_brief_it_has(self):
