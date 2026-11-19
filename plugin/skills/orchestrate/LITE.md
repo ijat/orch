@@ -17,7 +17,8 @@ earn `fable/high` as planner). The user may force lite anyway — journal it as 
 **Flow** — the standard procedure with these differences:
 
 - **Step 3:** `orch init … --mode lite` (`mode: lite`, planner row `n/a (lite)`, `task_start` mode `"lite"`).
-- **Step 4:** after the pre-plan `orch:graph` call, spawn the lite agent (`description`: `orch-implementer-<model>[<effort>] lite: <task>`)
+- **Step 4:** after the pre-plan `orch:graph` call, spawn the lite agent (`orch spawn` does not look for a brief on a lite task's
+  implementer: phase 1 has no plan to brief, phase 2 and its fix rounds are sent by message) (`description`: `orch-implementer-<model>[<effort>] lite: <task>`)
   in **phase 1**: read-only on the repo, writes a lite `plan.md` (see the role file) and returns; you
   `orch plan-check --lite` it and set `task_state: awaiting_approval`. Gate it exactly as a standard
   plan. Revisions go back to the same agent via `SendMessage`.

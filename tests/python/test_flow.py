@@ -20,14 +20,38 @@ T = "myapp/add-login"
 
 
 class FlowBase(core.Base):
+    auto_brief = True       # a spawn of a briefed role finds a fresh brief; the TestSpawnBrief cases turn this off
+
     def setUp(self):
         core.Base.setUp(self)
+        # In-process calls (tierguard.decide) write their log under ORCH_DATA: keep it in the temp dir, never the live orch-data.
+        # Only here: test_core.Base must leave ORCH_DATA unset, other suites assert the ORCH_DIR-only paths.
+        self.data = os.path.join(self.tmp, "orch-data")
+        patch = mock.patch.dict(os.environ, {"ORCH_DATA": self.data})
+        patch.start()
+        self.addCleanup(patch.stop)
         self.usage_n = 0
         self.d = self.init()
+
+    def put_brief(self, role, mtime=None):
+        """A brief file of the kind `orch brief` writes for `role` (the spawn guard reads only names and mtimes)."""
+        name = {"implementer": "implement-s1.md", "code-reviewer": "review-code-r1.md",
+                "security-reviewer": "review-security-r1.md", "director": "director-s1.md"}[role]
+        path = os.path.join(self.d, "briefs", name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write("# Brief\n")
+        self.brief_n = getattr(self, "brief_n", 0) + 1
+        if mtime is None:
+            mtime = time.time() + self.brief_n          # each call newer than the one before, whatever the clock resolution
+        os.utime(path, (mtime, mtime))
+        return path
 
     def run_orch(self, *argv, **kw):
         """Task commands default to -t T."""
         argv = list(argv)
+        if self.auto_brief and argv[:1] == ["spawn"] and len(argv) > 1 and argv[1] in flow.BRIEF_PREFIXES:
+            self.put_brief(argv[1])
         if "-t" not in argv and argv and argv[0] in ("spawn", "return", "end", "ask", "answer", "answers", "checkpoint"):
             argv += ["-t", T]
         return core.Base.run_orch(self, *argv, **kw)
@@ -158,6 +182,7 @@ class TestSpawn(FlowBase):
         self.assertEqual(self.journal()[-1]["steps"], ["M1 phase 1"])
 
     def test_validation_errors_write_nothing(self):
+        self.put_brief("implementer")
         before = self.snapshot()
         base = ["spawn", "implementer", "--agent", "orch:implementer", "--tier", "sonnet/high"]
         env = self.ok_usage
@@ -1145,6 +1170,7 @@ class TestReuse(FlowBase):
 
     def test_a_reviewer_refusal_names_the_role_and_writes_nothing(self):
         self.reviewer_first("code-reviewer", "orch:code-reviewer")
+        self.put_brief("security-reviewer")
         before = self.snapshot()
         err = self.refuse(1, "spawn", "code-reviewer", "--agent", "orch:code-reviewer", "--tier", "opus/high", "--reused",
                           env=self.at("2026-03-01T11:06Z"))
@@ -1190,6 +1216,157 @@ class TestReuse(FlowBase):
                    {"kind": "return", "role": "implementer", "outcome": "done", "ts": "2026-03-01T10:10Z", "milestone": 1}]
         self.assertIn("another milestone", flow.reuse_refusal(journal, "implementer", "sonnet/high", "2026-03-01T10:20Z", 2))
         self.assertIsNone(flow.reuse_refusal(journal, "implementer", "sonnet/high", "2026-03-01T10:20Z", 1))
+
+
+class TestSpawnBrief(FlowBase):
+    """`orch spawn` of an implementer, code-reviewer, security-reviewer or director needs a brief newer than its last spawn."""
+    auto_brief = False
+    AT = "2026-03-01T10:00Z"
+    AGENTS = {"implementer": "orch:implementer", "code-reviewer": "orch:code-reviewer",
+              "security-reviewer": "orch:security-reviewer", "director": "orch:director"}
+
+    def sp(self, role, *extra, **kw):
+        kw.setdefault("env", dict(self.ok_usage, ORCH_NOW=kw.pop("now", self.AT)))
+        return ("spawn", role, "--agent", self.AGENTS.get(role, "orch:" + role), "--tier", "opus/high", "--basis",
+                "user | \"opus\"") + extra, kw
+
+    def spawn_ok(self, role, *extra, **kw):
+        argv, kw = self.sp(role, *extra, **kw)
+        return self.ok(*argv, **kw)
+
+    def spawn_refused(self, role, *extra, **kw):
+        argv, kw = self.sp(role, *extra, **kw)
+        return self.refuse(2, *argv, **kw)
+
+    def test_each_briefed_role_is_refused_without_a_brief_and_nothing_is_written(self):
+        before = self.snapshot()
+        for role in self.AGENTS:
+            err = self.spawn_refused(role)
+            self.assertIn("no fresh brief for %s" % role, err)
+            self.assertIn("--no-brief", err)
+            self.assertIn("orch brief", err)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.kinds(), ["task_start"])
+
+    def test_a_brief_of_the_roles_own_kind_lets_it_spawn_and_another_roles_does_not(self):
+        self.put_brief("code-reviewer")
+        self.spawn_refused("implementer")
+        self.spawn_refused("security-reviewer")
+        self.spawn_ok("code-reviewer")
+        self.put_brief("implementer")
+        self.spawn_ok("implementer")
+        self.assertEqual(self.kinds()[-2:], ["spawn", "spawn"])
+
+    def test_a_fix_brief_counts_for_the_implementer(self):
+        os.makedirs(os.path.join(self.d, "briefs"), exist_ok=True)
+        with open(os.path.join(self.d, "briefs", "fix-r1.md"), "w") as fh:
+            fh.write("# Brief\n")
+        self.spawn_ok("implementer")
+
+    def done(self, role, now="2026-03-01T10:10Z"):
+        self.ok("return", role, "--outcome", "done", env=dict(self.ok_usage, ORCH_NOW=now))
+
+    def test_the_spawn_line_records_the_brief_it_used(self):
+        path = self.put_brief("implementer", mtime=1000.5)
+        self.spawn_ok("implementer")
+        self.assertEqual([r for r in self.journal() if r["kind"] == "spawn"][-1]["brief_mtime"], os.path.getmtime(path))
+
+    def test_a_spawn_after_a_done_run_needs_a_brief_newer_than_the_one_it_used(self):
+        self.put_brief("implementer")
+        self.spawn_ok("implementer")
+        self.done("implementer")
+        err = self.spawn_refused("implementer", now="2026-03-01T10:20Z")
+        self.assertIn("no fresh brief for implementer", err)
+        self.assertIn("returned done", err)
+        self.assertEqual(self.kinds().count("spawn"), 1)
+        self.put_brief("implementer")
+        self.spawn_ok("implementer", now="2026-03-01T10:20Z")
+
+    def test_a_brief_rewritten_in_the_minute_of_the_previous_spawn_counts(self):
+        """Journal times are minute-precise; the recorded mtime is not. Everything here sits inside the spawn's minute
+        (ORCH_NOW 10:00Z), so a minute-based floor would refuse the rewrite (or, comparing the other way, pass the spent brief)."""
+        at = flow.ts_epoch(self.AT)
+        path = self.put_brief("implementer", mtime=at + 10)
+        self.spawn_ok("implementer")
+        self.done("implementer")
+        self.assertIn("no fresh brief", self.spawn_refused("implementer", now="2026-03-01T10:20Z"))   # the spent brief, in its minute
+        os.utime(path, (at + 30, at + 30))                                                            # rewritten 20 s later, same minute
+        self.spawn_ok("implementer", now="2026-03-01T10:20Z")
+
+    def test_a_respawn_after_a_run_that_did_not_end_done_goes_on_the_brief_it_has(self):
+        self.put_brief("implementer")
+        self.spawn_ok("implementer")
+        self.spawn_ok("implementer")                                  # no return at all: the spawn was cut off
+        for outcome in ("failed", "stopped", "blocked"):
+            self.ok("return", "implementer", "--outcome", outcome, env=dict(self.ok_usage, ORCH_NOW="2026-03-01T10:10Z"))
+            self.spawn_ok("implementer", now="2026-03-01T10:20Z")
+        self.assertEqual(self.kinds().count("spawn"), 5)
+
+    def test_a_respawn_with_no_brief_at_all_is_still_refused_after_a_failed_run(self):
+        self.spawn_ok("implementer", "--no-brief", "fallback")
+        self.ok("return", "implementer", "--outcome", "failed", env=dict(self.ok_usage, ORCH_NOW="2026-03-01T10:10Z"))
+        self.assertIn("no fresh brief", self.spawn_refused("implementer", now="2026-03-01T10:20Z"))
+
+    def test_a_previous_spawn_without_a_recorded_brief_is_compared_by_its_minute(self):
+        self.spawn_ok("implementer", "--no-brief", "fallback")        # 10:00Z, nothing recorded
+        self.done("implementer")
+        at = flow.ts_epoch(self.AT)
+        self.put_brief("implementer", mtime=at - 5)
+        self.assertIn("no fresh brief", self.spawn_refused("implementer", now="2026-03-01T10:20Z"))
+        self.put_brief("implementer", mtime=at + 30)                  # inside the spawn's minute: at or after it
+        self.spawn_ok("implementer", now="2026-03-01T10:20Z")
+
+    def test_reused_spawn_needs_a_fresh_brief_too(self):
+        self.put_brief("implementer")
+        self.spawn_ok("implementer")
+        self.done("implementer")
+        late = {"now": "2026-03-01T10:20Z"}
+        err = self.spawn_refused("implementer", "--reused", **late)
+        self.assertIn("no fresh brief", err)
+        self.assertEqual(self.kinds().count("spawn"), 1)
+        self.put_brief("implementer")
+        self.spawn_ok("implementer", "--reused", **late)
+        self.assertTrue([r for r in self.journal() if r["kind"] == "spawn"][-1]["reused"])
+
+    def test_a_failed_reused_send_then_a_fresh_spawn_needs_no_new_brief(self):
+        self.put_brief("code-reviewer")
+        self.spawn_ok("code-reviewer")
+        self.done("code-reviewer")
+        self.put_brief("code-reviewer")
+        self.spawn_ok("code-reviewer", "--reused", now="2026-03-01T10:20Z")      # the send then failed
+        self.ok("return", "code-reviewer", "--outcome", "failed", env=dict(self.ok_usage, ORCH_NOW="2026-03-01T10:25Z"))
+        self.spawn_ok("code-reviewer", now="2026-03-01T10:30Z")
+
+    def test_a_lite_tasks_implementer_is_not_checked_but_other_roles_and_standard_mode_are(self):
+        self.ok("set", "mode=lite", "-t", T)
+        self.spawn_ok("implementer")                                  # phase 1 has no plan to brief
+        self.done("implementer")
+        self.spawn_ok("implementer", now="2026-03-01T10:20Z")         # a fresh phase-2 spawn
+        self.spawn_refused("code-reviewer")
+        self.ok("set", "mode=standard", "-t", T)
+        self.spawn_refused("implementer", now="2026-03-01T10:30Z")
+
+    def test_no_brief_skips_the_check_and_journals_the_reason(self):
+        self.spawn_ok("implementer", "--no-brief", "orch brief failed: old-format task")
+        line = [r for r in self.journal() if r["kind"] == "spawn"][-1]
+        self.assertEqual(line["no_brief"], "orch brief failed: old-format task")
+
+    def test_no_brief_needs_a_reason(self):
+        argv, kw = self.sp("implementer", "--no-brief", "  ")
+        self.refuse(1, *argv, **kw)
+        self.assertEqual(self.kinds(), ["task_start"])
+
+    def test_other_roles_are_never_checked(self):
+        for role, agent in (("planner", "orch:planner"), ("plan-reviewer", "orch:plan-reviewer"), ("init", "orch:init"),
+                            ("lookup", "orch:explorer"), ("run", "orch:executor"), ("graph", "orch:graph")):
+            self.ok("spawn", role, "--agent", agent, "--tier", "sonnet/high", env=dict(self.ok_usage))
+            self.assertNotIn("no_brief", self.journal()[-1])
+
+    def test_a_usage_stop_still_refuses_first_with_nothing_but_its_log_line(self):
+        err = self.refuse(2, "spawn", "implementer", "--agent", "orch:implementer", "--tier", "sonnet/high",
+                          env=self.fake_usage(2, "state=STOP 5h=96 5h_age=4 7d=60 7d_age=4"))
+        self.assertIn("usage STOP", err)
+        self.assertEqual(self.kinds(), ["task_start"])
 
 
 class TestSpawnBasis(FlowBase):

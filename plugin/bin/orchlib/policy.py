@@ -9,7 +9,7 @@ COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 LINE_RE = re.compile(r"^\s*[-*]\s*(merge|security|docs-only)\s*:[ \t]*(.*?)\s*$", re.I | re.M)
 # Paths whose change alone needs no code review round (a check instead) and no new gate or security pass.
 # Root names match only at the repo root; `**` matches nested directories.
-DOCS_ONLY_DEFAULT = ("docs/**/*.md", "STATE.md", "DECISIONS.md", "CHANGELOG.md")
+DOCS_ONLY_DEFAULT = ("docs/**/*.md", "STATE.md", "DECISIONS.md", "CHANGELOG.md", "README.md", "AGENTS.md")
 GLOB_RE = re.compile(r"^[A-Za-z0-9_.*?/+@ -]+$")
 
 Policy = namedtuple("Policy", "merge security path exists docs_only", defaults=(DOCS_ONLY_DEFAULT,))

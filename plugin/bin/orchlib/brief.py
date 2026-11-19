@@ -345,10 +345,8 @@ def where_text(c, role, tier, escalation, steps, extra_lines=()):
         out.append("- worktree: %s  <- this is the worktree, not the main repo. Edit and commit here." % c.wt)
         if c.repo_path != "unknown":
             out.append("- main repo (do not edit): %s" % c.repo_path)
-    elif c.no_wt_mode:
+    else:       # `cmd_brief` refuses a missing worktree before any brief with a Where section, so this is `worktree: none`
         out.append("- no worktree (the user chose to work in the repo itself): %s" % c.repo_path)
-    else:
-        out.append("- worktree: none exists yet (status.md says %r). Do not edit anything; set `blocked` with `need: worktree`." % c.wt_value)
     out.append("- branch: %s" % c.branch)
     out.append("- base: %s" % c.base)
     out.append("- plan: %s" % c.plan_path)
@@ -1362,6 +1360,9 @@ def cmd_brief(ns, extra):
     if ns.whole_repo and ns.range:
         raise OrchError("--whole-repo and --range both set the range; give one", 1)
     c = load_ctx(ns, target=ns.kind in ("revise", "plan-review"))
+    if ns.kind not in ("revise", "plan-review") and not c.wt and not c.no_wt_mode:
+        raise OrchError("no worktree to brief: status.md worktree is %r, not an existing directory or `none` — "
+                        "run `orch set worktree=<path>` (or `worktree=none`), then `orch brief %s` again" % (c.wt_value, ns.kind), 2)
     if ns.kind == "revise":
         return cmd_brief_revise(ns, c)
     if ns.kind == "plan-review":

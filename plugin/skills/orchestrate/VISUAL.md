@@ -10,7 +10,7 @@ while it waits for the other, so completion notices arrive mid-loop. **A return 
 reads `waiting` is not a finish:** no `orch return` (it refuses a non-final row), don't advance, keep the
 wait armed. The pair is done when the implementer's row is `done` for the step; then read the batch
 files' verdict lines, not the crops. **Whenever you replace the implementer** (after the pilot, three
-strikes, a check-in stop, an escalation, a usage re-spawn), first `SendMessage` the director
+strikes, a check-in stop, an escalation, a usage re-spawn; `orch brief implement` again first when the old one returned `done`), first `SendMessage` the director
 `implementer is now <new id>` and give the new implementer the director's ID. A step not marked
 `visual:` that needs visual judgement may get a director mid-step (journal an `override`). The
 director's accepts are final; its escalations arrive as `blocked` — one about a recorded user decision
