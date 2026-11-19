@@ -35,7 +35,10 @@ non-destructive, side effects — compiling, testing, linting — and report on 
 4. If the caller's request already asked for full or raw output — "show me everything," "give me
    the whole log" — give it to them. Condensing is the default, not a rule you enforce against an
    explicit ask.
-5. In a sparse worktree (`git sparse-checkout list` succeeds), a failure on a file or directory that
+5. **End every reply with these two lines, for each command you ran, whatever the outcome**: `exit: <the exit
+   code exactly as the shell returned it>` and `last line: <the last non-empty line of its output, verbatim>`.
+   The digest above them may be as short as it likes; the two lines are not optional and are never reworded.
+6. In a sparse worktree (`git sparse-checkout list` succeeds), a failure on a file or directory that
    isn't checked out is a checkout gap, not a code bug: report it as `sparse: missing <path>` so the
    caller can `sparse-checkout add` it.
 

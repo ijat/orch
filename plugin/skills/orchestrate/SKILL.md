@@ -23,7 +23,7 @@ extra, never the medium.
 
 Bookkeeping is one call per state transition: `orch [-t <task>] <command>` (`orch --help`;
 `<task>` is `<repo>/<slug>` or an absolute task dir). Exit 0 ok; 1 usage or validation error and 2 refused
-by a guard or policy (usage STOP, a merge condition) write nothing; 3 internal error (for `merge`: the merge
+by a guard or policy (usage STOP, a merge condition, `orch brief implement|fix|review|security|director` with no worktree recorded, `orch spawn` of an implementer, code-reviewer, security-reviewer or director with no brief newer than its last spawn) write nothing; 3 internal error (for `merge`: the merge
 commit exists): read the message.
 
 The orchestrator's own commands keep `-t`. The roles' verbs — `orch role`, `orch log`, `orch plan` (outline,
@@ -39,7 +39,7 @@ per their templates (then `orch-index.sh` refreshes `ACTIVE.md`) and say so in t
 
 **Old-format tasks** (no `briefs/` or `questions.md`, journal lines keyed `event`, status.md missing
 newer fields) work as they are. A row `orch` can't parse (exit 1) is fixed by hand per the template; if
-`orch brief` fails, give the role the worktree path (step 6), the plan path, its step text, each step's sketch
+`orch brief` fails (spawn with `orch spawn … --no-brief "<why>"`, which journals the reason; without it a briefed role's spawn is refused), give the role the worktree path (step 6), the plan path, its step text, each step's sketch
 and guide path, the checkpointing contract and the lessons (step 4); a reviewer the base (`git diff <base>...orch/<task-slug>`),
 the plan path and the review-file path. Reviews or a gate recorded
 without a sha can't satisfy `orch merge`: it refuses and the merge goes to the user (step 10). Never
@@ -238,7 +238,10 @@ the reading before each spawn (`orch spawn` has no override flag: for a `STOP` t
 1. **Pre-flight and journal, one call:** `orch spawn <role> --agent <agent> --tier <tier> --steps <steps>
    --reason "<why>" --alt "<alternative>" --tradeoff "<one line>" [--basis "<text>"]` (the basis is required for a tier above the role's default) runs the estimator, then writes the
    `tier_choice`, `escalation` (when raised: add `--escalation proactive|post-failure --from <tier>
-   --trigger <trigger>`) and `spawn` lines. `STOP` → exit 2, nothing written: don't spawn, pause.
+   --trigger <trigger>`) and `spawn` lines. `STOP` → exit 2, nothing written: don't spawn, pause. An implementer,
+   code-reviewer, security-reviewer or director (also `--reused`) is refused (exit 2) unless `orch brief` wrote a brief of its
+   kind at or after its previous spawn: brief first, then spawn; `--no-brief "<why>"` is only for when `orch brief` cannot be used
+   (§ The `orch` CLI, old-format tasks).
    `WARN`/`STALE`/`UNKNOWN` warn once: act on it. It also prints `usage wait: armed (pid N)` or `not armed`.
 2. **Spawn** the subagent in the background.
 3. **Notify, don't poll.** If `not armed`, start `orch -t <task> usage wait` with Bash `run_in_background`
@@ -429,7 +432,8 @@ is written**, and the other files point here.
   rating would start a round. The definitions of blocker, should-fix and nit are in `templates/review.md`.
 - **Commits.** Every fix is committed before the implementer returns, one commit per finding or per batch of one
   class. The review range sees only commits, so `orch brief review` refuses a dirty worktree.
-- **The gate repeats at every new tip** (step 8: beside the check or re-review), except that a passing gate, and the
+- **The gate repeats at every new tip** (step 8 says when it starts: beside a real review round, and after a fix batch's check
+  passes, not beside the check), except that a passing gate, and the
   last passing security round, stand across commits that are all docs-only (`orch merge` checks it).
 - A task started before this rule keeps working: a journal without `check` lines just has no checks yet, and a check
   line without `cycle` reads as cycle 1. A review file without `cause:` or `fix:` lines reads as before (a missing
@@ -694,7 +698,8 @@ git -C <repo> worktree add .claude/worktrees/orch-<task-slug> -b orch/<task-slug
 ```
 
 Base = the user's current branch unless they say otherwise. Record worktree, branch, and base in
-`status.md` (`orch set`). If the user says "no worktree", work on a branch in the main tree and record that.
+`status.md` (`orch set worktree=<path>`, before the first `orch brief`: a work, review or security brief with no worktree
+recorded is refused, exit 2). If the user says "no worktree", work on a branch in the main tree and record `worktree=none`.
 
 **Sparse checkout** when the plan's Summary says `checkout: sparse: <dirs>` (the planner's rule: a repo
 of ≥ 100,000 tracked files). Cone mode; files at the repo root always come along:
@@ -796,9 +801,15 @@ may run concurrently.
 
 **Gate alongside review.** In the same turn, start `orch:executor` in the background on the plan's Verification
 commands at the same tip; it reads the tree and changes nothing. A failure is a finding: route it with the
-review's findings (step 9). Every fix batch repeats this at its new tip, beside its check or re-review, except a
-docs-only commit (§ Review loops), which carries the last passing gate. The pass that
+review's findings (step 9). The gate starts beside a **real review round** (round 1, a fresh round N+1, a round
+for a tip that moved after a pass), and after a **fix batch** at the tip where its check (or a security re-review)
+leaves nothing open, never beside that check: a check that opens more fixes moves the tip and the run
+is wasted. When that passing check owes a fresh round N+1 (a blocker chain), the gate runs beside that round. A
+docs-only commit (§ Review loops) carries the last passing gate and starts none. The pass that
 stands at the final tip is step 10's gate, so it doesn't run again. With review skipped, the gate runs at step 10.
+When a scan's pass means "nothing found" (a denylist, a grep, a leak scan), brief the executor with one known positive
+input too (a line or file that must hit) and count the result only if that one hits; "no hits" from an unchecked scan is
+not a pass.
 
 After each reviewer returns, journal the round — the sha comes from that round's brief, the
 counts are findings still **open after** the round, `verdict` is `pass` only at 0 blockers and 0
@@ -837,8 +848,8 @@ yourself. `pre-existing:` findings are not routed (step 9), are not in the journ
    at check 3 with only should-fix open, park first and journal the parked findings as not counted). A docs-only
    commit after a passed review or check takes the same check (§ Review loops, docs-only exception)
    and handle its outcomes as § Review loops says: another cycle, the fresh round after a blocker chain, or the cap.
-   A reviewer who names a broader concern gets the wider scope from you (`--range`). The gate repeats at the new tip
-   beside the check (step 8).
+   A reviewer who names a broader concern gets the wider scope from you (`--range`). No gate runs beside the check:
+   it starts when the check leaves nothing open (step 8).
 3. **Security review: re-review.** Re-review only the touched files, unless the reviewer named a broader concern.
    Name the closed findings in the brief; the reviewer doesn't re-raise them. After commits, brief round N+1
    (`orch brief security`) and resume the same reviewer for it (step 7); a refused or failed resume is a fresh
