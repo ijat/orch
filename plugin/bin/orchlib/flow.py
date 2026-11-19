@@ -136,6 +136,41 @@ def wait_status(task_dir):
     return "usage wait: not armed — run in background: orch -t %s/%s usage wait" % task_names(task_dir)
 
 
+# The briefs each briefed role is spawned on (file-name prefixes in TASK/briefs/); `orch brief` writes them.
+BRIEF_PREFIXES = {"implementer": ("implement-", "fix-"), "code-reviewer": ("review-code-",),
+                  "security-reviewer": ("review-security-",), "director": ("director-",)}
+BRIEF_KINDS = {"implementer": "implement|fix", "code-reviewer": "review", "security-reviewer": "security", "director": "director"}
+
+
+def brief_refusal(task_dir, journal, role):
+    """Why a spawn of `role` has no fresh brief, or None when it has one: some brief of the role's kinds is no older
+    than the end of the minute of the role's previous spawn line (journal times have minute precision, so a brief
+    written in that minute counts as the one that spawn used). With no earlier spawn, any such brief will do."""
+    prefixes = BRIEF_PREFIXES.get(role)
+    if prefixes is None:
+        return None
+    mtimes = []
+    bdir = os.path.join(task_dir, "briefs")
+    try:
+        for name in os.listdir(bdir):
+            if name.endswith(".md") and name.startswith(prefixes):
+                try:
+                    mtimes.append(os.path.getmtime(os.path.join(bdir, name)))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    prev = None
+    for rec in journal:
+        if rec.get("role") == role and kind_of(rec) == "spawn":
+            prev = ts_epoch(rec.get("ts"))
+    floor = prev + 60 if prev is not None else None
+    if mtimes and (floor is None or max(mtimes) >= floor):
+        return None
+    return ("no fresh brief for %s: no briefs/%s*.md is newer than its last spawn — run `orch brief %s` first, or pass "
+            "--no-brief \"<why>\" when `orch brief` cannot be used" % (role, "|".join(prefixes), BRIEF_KINDS[role]))
+
+
 def cmd_spawn(ns, extra):
     cli.require_write_allowed()
     task_dir = cli.get_task(ns)
@@ -149,6 +184,8 @@ def cmd_spawn(ns, extra):
     esc = ns.escalation if ns.escalation not in (None, "none") else None
     if ns.escalation not in (None, "none", "proactive", "post-failure"):
         raise OrchError("--escalation must be none, proactive or post-failure", 1)
+    if ns.no_brief is not None and not ns.no_brief.strip():
+        raise OrchError("--no-brief needs a reason (why no brief was written)", 1)
     if ns.reason is not None and not ns.tradeoff:
         raise OrchError("--reason needs --tradeoff (the tier_choice line records both)", 1)
     if esc:
@@ -184,6 +221,11 @@ def cmd_spawn(ns, extra):
             cli.append_log(task_dir, cli.log_line(ts, "orchestrator", refused))
             raise OrchError("%s — %s" % (refused, usage_line), 2)
 
+        if ns.no_brief is None:
+            why = brief_refusal(task_dir, read_journal(task_dir), role)
+            if why:
+                raise OrchError("spawn refused: %s" % why, 2)
+
         if status is not None:
             try:
                 if cli.record_driver(status):
@@ -213,6 +255,7 @@ def cmd_spawn(ns, extra):
                                  ("steps", ":=", json.dumps(steps)), ("usage_5h", ":=", json.dumps(u5)),
                                  ("usage_7d", ":=", json.dumps(u7))] + ([("head", "=", head)] if head else [])
                                  + ([("reused", ":=", "true")] if ns.reused else [])
+                                 + ([("no_brief", "=", ns.no_brief.strip()[:200])] if ns.no_brief is not None and role in BRIEF_PREFIXES else [])
                                  + ([("basis", "=", basis[:tiers.BASIS_CLIP])] if basis else [])))
         text = "spawned %s (%s, %s)%s%s" % (role, ns.agent, ns.tier, " steps %s" % ",".join(str(s) for s in steps) if steps else "",
                                           ": " + note if note else "")
@@ -606,6 +649,9 @@ def register(add):
                     help='why the tier is above the role\'s default, the text of the prompt\'s `basis:` line: user | "<quote>", '
                          'signal | <token>, rule | <token>, failure | <token>, lesson | <scope>/<name>, claude-md | <path> | "<quote>"; '
                          'required above the default (form and token table are checked here, a user quote by the hook)')
+    sp.add_argument("--no-brief", dest="no_brief", default=None, metavar="WHY",
+                    help="implementer, code-reviewer, security-reviewer and director are refused without a brief newer than "
+                         "their last spawn; this skips that check and journals WHY (the fallback when `orch brief` cannot be used)")
     sp.add_argument("--reused", action="store_true",
                     help="next work goes to the last implementer, code-reviewer or security-reviewer by SendMessage; refused unless its cache is still warm")
 

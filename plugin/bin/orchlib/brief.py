@@ -1362,6 +1362,9 @@ def cmd_brief(ns, extra):
     if ns.whole_repo and ns.range:
         raise OrchError("--whole-repo and --range both set the range; give one", 1)
     c = load_ctx(ns, target=ns.kind in ("revise", "plan-review"))
+    if ns.kind not in ("revise", "plan-review") and not c.wt and not c.no_wt_mode:
+        raise OrchError("no worktree to brief: status.md worktree is %r, not an existing directory or `none` — "
+                        "run `orch set worktree=<path>` (or `worktree=none`), then `orch brief %s` again" % (c.wt_value, ns.kind), 2)
     if ns.kind == "revise":
         return cmd_brief_revise(ns, c)
     if ns.kind == "plan-review":

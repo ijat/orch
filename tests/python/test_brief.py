@@ -308,13 +308,35 @@ class TestImplementBrief(BriefBase):
         self.assertIn("step-1.md (missing)", sec(text, "Where you work"))
 
     def test_no_worktree_variants(self):
-        self.set_field(worktree="not yet created")
-        _, text = self.brief("implement", "1")
-        self.assertIn("none exists yet", sec(text, "Where you work"))
-        self.assertNotIn("this is the worktree", text)
         self.set_field(worktree="none (user: no worktree)")
         _, text = self.brief("implement", "1")
         self.assertIn("no worktree (the user chose to work in the repo itself): %s" % self.repo, sec(text, "Where you work"))
+        self.assertNotIn("this is the worktree", text)
+
+    def test_a_worktree_that_is_not_there_is_refused_and_nothing_is_written(self):
+        gone = os.path.join(self.tmp, "no-such-dir")
+        file_not_dir = os.path.join(self.tmp, "a-file")
+        wr(file_not_dir, "x\n")
+        wr(os.path.join(self.d, "review.md"), "### F1 \u2014 x\n- severity: should-fix\n- file: %s/src/views.py:5\n" % self.repo)
+        for value in ("not yet created", "unknown", "removed after merge", "<path>", gone, file_not_dir):
+            self.set_field(worktree=value)
+            for args in (("implement", "1"), ("director", "1"), ("fix", "1", "--findings", "F1"), ("review",), ("security",)):
+                err = self.refused(2, *args)
+                self.assertIn("worktree", err, (value, args))
+                self.assertIn("orch set worktree=<path>", err, (value, args))
+                self.assertFalse(os.path.isdir(os.path.join(self.d, "briefs")), (value, args))
+
+    def test_an_empty_worktree_field_is_refused(self):
+        self.set_field(worktree="")
+        self.assertIn("orch set worktree=<path>", self.refused(2, "implement", "1"))
+        self.assertFalse(os.path.isdir(os.path.join(self.d, "briefs")))
+
+    def test_the_planner_briefs_need_no_worktree(self):
+        self.set_field(worktree="not yet created")
+        fb = os.path.join(self.tmp, "feedback.md")
+        wr(fb, "Please clarify step 1.\n")
+        self.brief("revise", "--extra", fb)
+        self.brief("plan-review")
 
     def test_checkpoint_commands_are_quoted(self):
         _, text = self.brief("implement", "1,2")
@@ -969,6 +991,7 @@ class TestReviewBrief(BriefBase):
     def test_missing_branch_or_repo(self):
         self.git(self.repo, "worktree", "remove", "--force", self.wt)
         self.git(self.repo, "branch", "-q", "-D", "orch/add-login")
+        self.set_field(worktree="none (user: no worktree)")      # the missing worktree itself is refused first (exit 2)
         self.assertIn("does not exist", self.refused(1, "review"))
         self.set_field(repo="/nonexistent/place")
         self.assertIn("not found", self.refused(1, "review"))
@@ -1998,10 +2021,6 @@ class TestBriefPaths(BriefBase):
         self.assertIn("- step files: and context: paths are relative to the repo root above", w)
         self.assertNotIn("worktree root", w)
         self.assertIn("- files: src/auth.py, tests/test_auth.py", sec(text, "Your steps"))
-        self.set_field(worktree="not yet created")
-        _, text = self.brief("implement", "1")
-        self.assertNotIn("relative to", sec(text, "Where you work"))
-        self.assertIn("- files: %s/src/auth.py" % self.repo, sec(text, "Your steps"))     # nothing rewritten, nothing anchored
 
     def test_fix_brief_steps_are_rewritten_too(self):
         wr(os.path.join(self.d, "review.md"), "### F1 \u2014 x\n- severity: should-fix\n- file: %s/src/views.py:5\n" % self.repo)
