@@ -345,10 +345,8 @@ def where_text(c, role, tier, escalation, steps, extra_lines=()):
         out.append("- worktree: %s  <- this is the worktree, not the main repo. Edit and commit here." % c.wt)
         if c.repo_path != "unknown":
             out.append("- main repo (do not edit): %s" % c.repo_path)
-    elif c.no_wt_mode:
+    else:       # `cmd_brief` refuses a missing worktree before any brief with a Where section, so this is `worktree: none`
         out.append("- no worktree (the user chose to work in the repo itself): %s" % c.repo_path)
-    else:
-        out.append("- worktree: none exists yet (status.md says %r). Do not edit anything; set `blocked` with `need: worktree`." % c.wt_value)
     out.append("- branch: %s" % c.branch)
     out.append("- base: %s" % c.base)
     out.append("- plan: %s" % c.plan_path)
