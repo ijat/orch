@@ -1,27 +1,92 @@
-"""The rules of `orch hook git-guard`: which Bash command lines are refused (see gitguard.py for the list)."""
+"""The rules of `orch hook git-guard`: which Bash command lines are refused (see gitguard.py for the list).
+
+The decision is per command line, not per spelling of a git call:
+  - a line with no git word (outside `echo`/`grep` arguments, heredoc bodies and comments) is allowed, except for an
+    `AGENTDOCS_ALLOW=` assignment and the agent-docs switch-off commands, which are refused on any line;
+  - a line with a git word anywhere (behind `timeout`, `time`, `!`, `xargs`, `then`, `{`, a variable holding git, ...)
+    is refused when any of its commands holds a risky word: a `--no-verify` prefix, `hookspath`, an `agentdocs.` or
+    `alias.` key, `-n` beside `commit`, or a name that moves git's config or the hook's programs (assigned, exported,
+    unset, `env -i`/`-u`);
+  - a line that cannot be read (an unclosed quote, an unterminated heredoc) is judged on its raw words, fail closed.
+Over-blocking a rare harmless command is accepted: the git hooks are the real check, and the user can run it."""
 import re
 import shlex
 
-ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-HEREDOC_RE = re.compile(r"<<-?\s*([\x27\"]?)(\w+)\1[^\n]*\n.*?\n\2(\n|$)", re.S)
-WRAPPERS = ("env", "command", "exec", "sudo")
-ASSIGN_BUILTINS = ("export", "declare", "typeset", "readonly")
-PYTHONS = re.compile(r"^python[0-9.]*$")
+ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
+# Names that move git's configuration (the hooks directory and the hook settings live there), or the programs and data
+# the hooks run from; AGENTDOCS_ALLOW is the hooks' own override. A word that assigns, names (unset, export -n, env -u)
+# or `-u`/`--unset=`-names one of them is risky on a git line.
+GUARDED_WORD = re.compile(r"^(?:-u|--unset=)?(HOME|XDG_CONFIG_HOME|GIT_CONFIG\w*|GIT_EXEC_PATH|PATH|PYTHON\w*|ORCH_BIN|"
+                          r"ORCH_DATA|ORCH_DIR|ORCH_DOCS_PRIVATE|AGENTDOCS_ALLOW)(?:\+?=.*)?$", re.S)
+ALLOW_ASSIGN = re.compile(r"^AGENTDOCS_ALLOW\+?=")
+SHORT_N = re.compile(r"^-[a-zA-Z]*n[a-zA-Z]*$")
+SUBST_RE = re.compile(r"\$\(([^\n]*)|`([^`\n]*)`")
+KEY_RE = re.compile(r"(?:^|=)(agentdocs|alias)\.", re.I)
+DATA_CMDS = ("echo", "grep")        # commands whose arguments are never run: their words are data
+EVALUATORS = ("bash", "sh", "zsh", "dash", "ksh", "eval")
 GLOBAL_VALUE_OPTS = ("-c", "-C", "--git-dir", "--work-tree", "--namespace", "--config-env")
-# Environment names that move git's configuration (the hooks directory and the hook settings live there), or the
-# programs and data the hooks run from. Refused as an assignment on a git command (and after export/declare).
-GUARDED_ENV = re.compile(r"^(HOME|XDG_CONFIG_HOME|GIT_CONFIG|GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|GIT_CONFIG_NOSYSTEM|"
-                         r"GIT_CONFIG_PARAMETERS|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_.*|GIT_CONFIG_VALUE_.*|GIT_EXEC_PATH|"
-                         r"ORCH_BIN|ORCH_DATA|ORCH_DIR|ORCH_DOCS_PRIVATE|PATH|PYTHONPATH|PYTHONHOME|PYTHONSTARTUP)$")
 NO_VERIFY = "--no-verify"
+UNPARSED = "unreadable command line"
+MAX_DEPTH = 3
+
+
+class Unreadable(Exception):
+    pass
+
+
+def _heredoc_delim(cmd, i):
+    """Read the heredoc word that starts at cmd[i]: (delimiter with its quotes removed, whether it was quoted, index
+    after it). A quoted delimiter means the body is not expanded."""
+    n = len(cmd)
+    while i < n and cmd[i] in " \t":
+        i += 1
+    out, quoted = [], False
+    while i < n and cmd[i] not in " \t\n;|&<>()":
+        c = cmd[i]
+        quoted = quoted or c in "'\"\\"
+        if c in "'\"":
+            j = cmd.find(c, i + 1)
+            if j < 0:
+                raise Unreadable()
+            out.append(cmd[i + 1:j])
+            i = j + 1
+            continue
+        if c == "\\" and i + 1 < n:
+            i += 1
+        out.append(cmd[i])
+        i += 1
+    if not out:
+        raise Unreadable()
+    return "".join(out), quoted, i
+
+
+def _skip_heredoc_bodies(cmd, i, pending, runs):
+    """cmd[i] is the first character after a newline; skip the bodies of the pending heredocs, return the index after
+    the last terminator line. `<<-` strips leading tabs before comparing. No terminator: Unreadable. The command
+    substitutions of a body with an unquoted delimiter run, so their text is added to `runs`."""
+    n = len(cmd)
+    for delim, quoted, dash in pending:
+        while True:
+            if i >= n:
+                raise Unreadable()
+            j = cmd.find("\n", i)
+            end = n if j < 0 else j
+            line = cmd[i:end]
+            i = end + 1
+            if (line.lstrip("\t") if dash else line) == delim:
+                break
+            if not quoted:
+                runs += ["".join(m) for m in SUBST_RE.findall(line)]
+    return i
 
 
 def split_segments(cmd):
     """The simple commands of a command line: it is cut at `;`, `|`, `&`, `&&`, `||`, newlines, parentheses and
     backticks that are outside quotes. `>&`, `<&` and `&>` are redirections, not separators; a comment runs to the end
-    of its line. Quoted text is never cut, so a message such as "a; b" stays inside its command."""
-    cmd = cmd.replace("\\\n", " ")
-    segs, cur, quote, i, n = [], [], None, 0, len(cmd)
+    of its line; heredoc bodies (`<<`, `<<-`, quoted delimiter or not) are dropped, except the command substitutions
+    of an unquoted one, which are added as commands. Quoted text is never cut. Raises Unreadable on an unclosed quote
+    or an unterminated heredoc."""
+    segs, cur, quote, i, n, pending, runs = [], [], None, 0, len(cmd), [], []
     while i < n:
         c = cmd[i]
         if quote == "'":
@@ -29,43 +94,67 @@ def split_segments(cmd):
             if c == "'":
                 quote = None
         elif quote == '"':
-            cur.append(c)
             if c == "\\" and i + 1 < n:
+                if cmd[i + 1] != "\n":
+                    cur.append(c)
+                    cur.append(cmd[i + 1])
                 i += 1
-                cur.append(cmd[i])
-            elif c == '"':
-                quote = None
+            else:
+                cur.append(c)
+                if c == '"':
+                    quote = None
         elif c == "\\" and i + 1 < n:
-            cur.append(c)
+            if cmd[i + 1] != "\n":     # backslash-newline is a line continuation
+                cur.append(c)
+                cur.append(cmd[i + 1])
             i += 1
-            cur.append(cmd[i])
         elif c in "'\"":
             quote = c
             cur.append(c)
         elif c == "#" and (not cur or cur[-1] in " \t"):
             while i + 1 < n and cmd[i + 1] != "\n":
                 i += 1
+        elif c == "<" and cmd.startswith("<<<", i):
+            cur.append("<<<")
+            i += 2
+        elif c == "<" and cmd.startswith("<<", i):
+            dash = cmd.startswith("<<-", i)
+            delim, quoted, i = _heredoc_delim(cmd, i + (3 if dash else 2))
+            pending.append((delim, quoted, dash))
+            cur.append(" ")
+            continue
         elif c == "&" and ((i > 0 and cmd[i - 1] in "<>") or (i + 1 < n and cmd[i + 1] == ">")):
             cur.append(c)
         elif c in ";|&\n()`":
             segs.append("".join(cur))
             cur = []
+            if c == "\n" and pending:
+                i = _skip_heredoc_bodies(cmd, i + 1, pending, runs)
+                pending = []
+                continue
         else:
             cur.append(c)
         i += 1
+    if quote or pending:
+        raise Unreadable()
     segs.append("".join(cur))
+    for text in runs:
+        segs += split_segments(text)
     return segs
-
-
-def _split_words(seg):
-    try:
-        return shlex.split(seg, comments=True)
-    except ValueError:      # an unbalanced quote: read the quote marks as spaces (stricter than leaving them in words)
-        return seg.replace('"', " ").replace("'", " ").split()
 
 
 def _base(word):
     return word.split("/")[-1]
+
+
+def _is_git(word):
+    """`git`, a path to it, or an assignment whose value runs it (`G=git`, `G="/usr/bin/git -C x"`)."""
+    if _base(word) == "git":
+        return True
+    if ASSIGN_RE.match(word):
+        value = word.split("=", 1)[1].split()
+        return bool(value) and _base(value[0]) == "git"
+    return False
 
 
 def _is_no_verify(arg):
@@ -74,46 +163,69 @@ def _is_no_verify(arg):
     return len(name) >= 6 and name.startswith("--no-v") and NO_VERIFY.startswith(name)
 
 
-def _git_reasons(args):
+def _config_read_keys(w):
+    """Indexes of the key words of `git config` reads and unsets in this command (they only tighten, so a key such as
+    agentdocs.mode is fine there). Empty when the command is not git config or sets a value."""
+    start = next((k for k, a in enumerate(w) if _base(a) == "git"), None)
+    if start is None:
+        return set()
+    i = start + 1
+    while i < len(w) and w[i].startswith("-"):
+        i += 2 if w[i] in GLOBAL_VALUE_OPTS else 1
+    if i >= len(w) or w[i] != "config":
+        return set()
+    rest = list(range(i + 1, len(w)))
+    pos = [k for k in rest if not w[k].startswith("-")]
+    if pos and w[pos[0]] in ("set", "get", "unset", "list"):
+        verb, pos = w[pos[0]], pos[1:]
+    else:
+        verb = "set" if len(pos) >= 2 else "get"
+    if any(w[k] in ("--add", "--replace-all") for k in rest):
+        verb = "set"
+    if any(w[k].startswith("--unset") or w[k] in ("--get", "--get-all", "--get-regexp", "--list", "-l") for k in rest):
+        verb = "unset"
+    return set(pos) if verb in ("get", "unset", "list") else set()
+
+
+def _env_reasons(w):
+    """`env -i` / `env -` (a clean environment drops HOME and PATH) and `env -S` (a string the guard does not read)."""
     bad = []
-    if any("core.hookspath" in a.lower() for a in args):
-        bad.append("core.hooksPath")
-    sub, i = "", 0
-    while i < len(args):
-        a = args[i]
-        if "agentdocs." in a.lower():           # -c agentdocs.allow=true, --config-env=agentdocs.mode=VAR, ...
-            bad.append("git -c agentdocs.*")
-        if a in GLOBAL_VALUE_OPTS:
-            i += 2
-            if i - 1 < len(args) and "agentdocs." in args[i - 1].lower():
-                bad.append("git -c agentdocs.*")
+    for k, a in enumerate(w):
+        if _base(a) != "env":
             continue
-        if a.startswith("-"):
-            i += 1
-            continue
-        sub = a
-        break
-    rest = args[i + 1:] if sub else []
-    if any(_is_no_verify(a) for a in rest):
-        bad.append(NO_VERIFY)
-    if sub == "commit" and any(re.match(r"^-[a-zA-Z]*n[a-zA-Z]*$", a) for a in rest):
-        bad.append("commit -n")
-    if sub == "config":
-        # reads and unsets only tighten; setting a value (or --add/--replace-all/`config set`) may loosen
-        pos = [a for a in rest if not a.startswith("-")]
-        if pos and pos[0] in ("set", "get", "unset", "list"):
-            verb, pos = pos[0], pos[1:]
-        else:
-            verb = "set" if len(pos) >= 2 else "get"
-        if any(a in ("--add", "--replace-all") for a in rest):
-            verb = "set"
-        if any(a.startswith("--unset") or a in ("--get", "--get-all", "--get-regexp", "--list", "-l") for a in rest):
-            verb = "read-or-unset"
-        if verb == "set" and any(p.lower().startswith("agentdocs.") for p in pos):
-            bad.append("git config agentdocs.*")
-        if verb == "set" and any(NO_VERIFY in p.lower() for p in pos):     # an alias that skips the hooks
-            bad.append("git config " + NO_VERIFY)
+        j = k + 1
+        while j < len(w):
+            o = w[j]
+            if o in ("-", "--ignore-environment") or (re.match(r"^-[a-zA-Z]+$", o) and o[1] not in "uCS" and "i" in o):
+                bad.append("env -i")
+            if o.startswith(("-S", "--split-string")):
+                bad.append("env -S")
+            if o in ("-u", "-C", "-S", "--unset", "--chdir", "--split-string"):
+                j += 2
+            elif o.startswith("-") or ASSIGN_RE.match(o):
+                j += 1
+            else:
+                break
     return bad
+
+
+def _risky(w, exempt=()):
+    """The risky words of one command on a git line."""
+    bad = []
+    for k, a in enumerate(w):
+        if _is_no_verify(a):
+            bad.append(NO_VERIFY)
+        if "hookspath" in a.lower():
+            bad.append("core.hooksPath")
+        m = GUARDED_WORD.match(a)
+        if m:
+            bad.append("AGENTDOCS_ALLOW" if m.group(1) == "AGENTDOCS_ALLOW" else "env " + m.group(1))
+        if k not in exempt:
+            for key in KEY_RE.findall(a):
+                bad.append("git " + key.lower() + ".*")
+    if "commit" in w and any(SHORT_N.match(a) for a in w):
+        bad.append("commit -n")
+    return bad + _env_reasons(w)
 
 
 def _orch_reasons(args):
@@ -137,49 +249,95 @@ def _orch_reasons(args):
     return []
 
 
-def _env_reasons(assigns, runs_git, export_like):
+def _commands(cmd):
+    """(words, is_data) per simple command; Unreadable when the line cannot be split."""
+    out = []
+    for seg in split_segments(cmd):
+        try:
+            w = shlex.split(seg, comments=True)
+        except ValueError:
+            raise Unreadable()
+        k = 0
+        while k < len(w) and ASSIGN_RE.match(w[k]):
+            k += 1
+        out.append((w, k < len(w) and _base(w[k]) in DATA_CMDS))
+    return out
+
+
+def _leading_assigns(w):
+    k = 0
+    while k < len(w) and ASSIGN_RE.match(w[k]):
+        k += 1
+    return w[:k]
+
+
+def _raw_reasons(cmd):
+    """Fail closed for a line that cannot be read: its raw words, with every quote and separator as a space."""
+    words = [x for x in re.split(r"[\s;&|()`'\"<>{}]+", cmd) if x]
     bad = []
-    for a in assigns:
-        name = a.split("=", 1)[0]
-        if name == "AGENTDOCS_ALLOW":
-            bad.append("AGENTDOCS_ALLOW")
-        elif GUARDED_ENV.match(name) and (runs_git or export_like):
-            bad.append("env " + name)
+    if "orch" in [_base(x) for x in words] and (
+            ("docs" in words and "disable" in words) or ("agent_docs" in words and "off" in words)):
+        bad.append("orch docs disable")
+    if any(_is_git(x) for x in words):
+        bad += _risky(words)
+    elif any(ALLOW_ASSIGN.match(x) for x in words):
+        bad.append("AGENTDOCS_ALLOW")
+    return bad + [UNPARSED] if bad else []
+
+
+def _reasons(cmd, depth):
+    try:
+        cmds = _commands(cmd)
+    except Unreadable:
+        return _raw_reasons(cmd)
+    bad = []
+    git_line = False
+    for w, data in cmds:
+        for k, a in enumerate(w):
+            if "$(" in a or "`" in a:       # a command substitution left inside a quoted word still runs
+                bad += _nested(a, depth)
+        if data:    # only its leading assignments act
+            w = _leading_assigns(w)
+        if any(_is_git(a) for a in w):
+            git_line = True
+        for k, a in enumerate(w):
+            if ALLOW_ASSIGN.match(a):
+                bad.append("AGENTDOCS_ALLOW")
+            if _base(a) == "orch":
+                bad += _orch_reasons(w[k + 1:])
+            elif _base(a) in EVALUATORS:        # bash -c '...', eval '...': read each later word as a command line
+                for s in w[k + 1:]:
+                    bad += _nested(s, depth)
+            elif _base(a) == "env":          # env -S 'A=1 git' ...: the string is split into words and run
+                for j in range(k + 1, len(w)):
+                    o = w[j]
+                    if o in ("-S", "--split-string"):
+                        bad += _nested(" ".join(w[j + 1:j + 2]) + " " + shlex.join(w[j + 2:]), depth)
+                        break
+                    if o.startswith(("-S", "--split-string=")):
+                        head = o.split("=", 1)[1] if o.startswith("--") else o[2:]
+                        bad += _nested(head + " " + shlex.join(w[j + 1:]), depth)
+                        break
+    if git_line:
+        for w, data in cmds:
+            if data:
+                w = _leading_assigns(w)
+            ev = next((k for k, a in enumerate(w) if _base(a) in EVALUATORS), None)
+            if ev is not None:      # `eval 'unset HOME'; git ...` acts on this shell: read its strings' words too
+                w = w + [x for s in w[ev + 1:] for x in re.split(r"[\s;&|()`'\"]+", s) if x]
+            bad += _risky(w, _config_read_keys(w))
     return bad
+
+
+def _nested(text, depth):
+    if depth >= MAX_DEPTH:
+        return [UNPARSED] if ("git" in text or "orch" in text) else []
+    return _reasons(text, depth + 1)
 
 
 def reasons(cmd):
     """The sorted, de-duplicated reasons a Bash command line is refused (empty = allowed)."""
-    cmd = HEREDOC_RE.sub("\n", cmd)     # heredoc bodies are data
-    bad = []
-    for seg in split_segments(cmd):
-        w = _split_words(seg)
-        assigns = []
-        while w and ASSIGN_RE.match(w[0]):
-            assigns.append(w.pop(0))
-        export_like = bool(w) and w[0] in ASSIGN_BUILTINS
-        if export_like:
-            assigns += [x for x in w[1:] if ASSIGN_RE.match(x)]
-        wrapped = bool(w) and w[0] in WRAPPERS
-        if wrapped:     # `env -i X=1 git ...`, `sudo -u u X=1 git ...`: assignments anywhere in the wrapper's words
-            w = w[1:]
-            assigns += [x for x in w if ASSIGN_RE.match(x)]
-        runs_git = bool(w) and (any(_base(x) == "git" for x in w) if wrapped else _base(w[0]) == "git")
-        bad += _env_reasons(assigns, runs_git, export_like)
-        if not w:
-            continue
-        if wrapped:     # skip the wrapper's options and assignments (`sudo -u root`) to the command it runs
-            while w and not (_base(w[0]) in ("git", "orch") or PYTHONS.match(_base(w[0]))):
-                w = w[1:]
-            if not w:
-                continue
-        if _base(w[0]) == "git":
-            bad += _git_reasons(w[1:])
-        elif _base(w[0]) == "orch":
-            bad += _orch_reasons(w[1:])
-        elif PYTHONS.match(_base(w[0])) and len(w) > 1 and _base(w[1]) == "orch":
-            bad += _orch_reasons(w[2:])
-    return sorted(set(bad))
+    return sorted(set(_reasons(cmd, 0)))
 
 
 def message(bad):
@@ -187,8 +345,10 @@ def message(bad):
     hooks = [b for b in bad if not b.startswith("orch ")]
     parts = []
     if hooks:
-        parts.append("Blocked (%s): this bypasses or loosens the repo hooks (orch docs / gitleaks). Fix what the hook "
-                     "reports; agent docs belong in the private store (orch docs adopt <path>)." % ", ".join(hooks))
+        parts.append("Blocked (%s): on a line that runs git, this can bypass or loosen the repo hooks (orch docs / "
+                     "gitleaks). Fix what the hook reports; agent docs belong in the private store (orch docs adopt "
+                     "<path>)." % ", ".join(hooks))
     if switch:
         parts.append("Blocked (%s): turning the agent-docs switch off is the user's decision." % ", ".join(switch))
-    return " ".join(parts) + " If the user wants an exception, they run it themselves."
+    return " ".join(parts) + (" The guard reads command lines coarsely and may refuse a harmless one; if so, or if the "
+                              "user wants an exception, they run it themselves.")

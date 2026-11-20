@@ -79,8 +79,6 @@ BLOCKED = [   # the shell guard's own cases
     'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=agentdocs.allow GIT_CONFIG_VALUE_0=true git commit -m y',
     'env HOME=/x git commit -m y',
     'sudo -u root HOME=/x git commit -m y',
-    'export GIT_CONFIG_GLOBAL=/x',
-    'declare -x XDG_CONFIG_HOME=/x',
     'PATH=/tmp:$PATH git commit -m y',
     'PYTHONPATH=/tmp git push',
     # the hook's own trust (S2)
@@ -88,7 +86,6 @@ BLOCKED = [   # the shell guard's own cases
     'ORCH_DATA=/tmp git commit -m x',
     'ORCH_DIR=/tmp git push',
     'ORCH_DOCS_PRIVATE=/nonexistent git commit -m x',
-    'export ORCH_BIN=/usr/bin/true',
     # the agent-docs switch
     'orch docs disable',
     '/opt/orch/bin/orch docs disable',
@@ -102,6 +99,60 @@ BLOCKED = [   # the shell guard's own cases
     'orch -t x setting set agent_docs off',
     '/a/b/orch setting set agent_docs off',
     'env FOO=1 orch setting set agent_docs off',
+    # F4: an export of a guarded name counts when the same line runs git
+    'export PATH=/x; git commit -m y',
+    'export GIT_CONFIG_GLOBAL=/x && git push',
+    # F5: heredoc bodies end at their terminator (`<<-` strips tabs); an unreadable line is judged fail closed
+    "cat <<-EOF > f\n\tdon't\n\tEOF\ngit commit --no-verify -m x",
+    "cat <<'EOF' > f\ndon't\nEOF\ngit commit --no-verify -m x",
+    "cat <<\"E\" > f\nx\nE\ngit push --no-verify",
+    "cat <<EOF > f\nunterminated\ngit commit --no-verify -m x",
+    "echo 'unclosed\ngit commit --no-verify -m x",
+    'cat > f <<EOF\n$(git commit --no-verify -m x)\nEOF',
+    'cat > f <<EOF\nx `git push --no-verify`\nEOF',
+    "git commit -m 'unclosed --no-verify",
+    # S4: git behind prefix commands, keywords and compound syntax
+    'timeout 60 git push --no-verify',
+    'time git commit --no-verify -m x',
+    'nice -n 5 git commit --no-verify -m x',
+    'nohup git push --no-verify',
+    'echo x | xargs git commit --no-verify -m',
+    'xargs -n1 git push --no-verify < remotes',
+    '! git commit --no-verify -m x',
+    'if true; then git commit --no-verify -m x; fi',
+    '{ git commit --no-verify -m x; }',
+    'for r in a b; do git -C $r push --no-verify; done',
+    'while true; do git push --no-verify; break; done',
+    'stdbuf -oL git push --no-verify',
+    'caffeinate -i git push --no-verify',
+    'timeout 60 git commit -nm x',
+    'time git -c core.hooksPath=/x commit',
+    'time orch docs disable',
+    'timeout 5 orch setting set agent_docs off',
+    'if true; then orch docs disable; fi',
+    'G=git; $G commit --no-verify -m x',
+    'bash -c "git commit --no-verify -m x"',
+    "sh -c 'git push --no-verify'",
+    'eval "git push --no-verify"',
+    "eval 'unset HOME'; git commit -m x",
+    'echo "$(git commit --no-verify -m x)"',
+    # S5: config moved by a separate statement, an env reset, or an alias
+    'HOME=/tmp/empty; git commit -m x',
+    'unset HOME; git commit -m x',
+    'export -n HOME; git commit -m x',
+    'env -i /usr/bin/git commit -m x',
+    'env - git commit -m x',
+    'env -u HOME git commit -m x',
+    'env -uHOME git commit -m x',
+    'env --unset=HOME git commit -m x',
+    'env -S "HOME=/x git" commit -m x',
+    "git -c alias.ci='commit --no-verify' ci -m x",
+    "git config alias.ci 'commit -n'",
+    "git config alias.ci 'commit --no-verif'",
+    "git config --global alias.ci '!git commit --no-verify'",
+    'git config alias.st status',
+    'PYTHONSTARTUP=/x git commit -m y',
+    'GIT_EXEC_PATH=/x git commit -m y',
 ]
 
 ALLOWED = [
@@ -148,7 +199,6 @@ ALLOWED = [
     'git commit -m "x" # --no-verify',
     'git -C /tmp/repo status',
     'git -c user.name=x commit -m y',
-    'git config alias.st status',
     'git commit -m \'a\' && echo "AGENTDOCS_ALLOW is a human override"',
     # the switch: reads and enabling stay allowed
     'orch docs enable',
@@ -161,6 +211,33 @@ ALLOWED = [
     'echo orch docs disable',
     'grep -n "agent_docs off" README.md',
     '',
+    # F4: a line that runs no git is allowed whatever it exports
+    'export PATH="$HOME/.local/bin:$PATH" && pnpm run build',
+    'export PATH=$PATH:/opt/x; make',
+    'PATH=/opt/bin:$PATH cargo build',
+    'export GIT_CONFIG_GLOBAL=/x',
+    'declare -x XDG_CONFIG_HOME=/x',
+    'export ORCH_BIN=/usr/bin/true',
+    'unset HOME; ls',
+    'env -i PATH=/bin make test',
+    'timeout 60 pnpm test',
+    # prose counterparts of the new forms
+    "cat <<-EOF > f\n\tgit commit --no-verify\n\tEOF\ngit status",
+    "cat <<'EOF' > f\ndon't --no-verify HOME=/x\nEOF\ngit diff",
+    "cat > f <<'EOF'\n$(git commit --no-verify)\nEOF",
+    'git commit -F - <<EOF\nmsg with "quote and --no-verify\nEOF',
+    'timeout 60 git push origin main',
+    'time git commit -m "skip --no-verify docs"',
+    'if git diff --quiet; then echo clean; fi',
+    '{ git status; git log -n 3; }',
+    'for r in a b; do git -C $r pull; done',
+    'echo x | xargs git add',
+    'git commit -m "mention alias.foo and HOME=/x in prose"',
+    'git config --get alias.st',
+    'git commit -m "x" <<< "y"',
+    'bash -c "git status"',
+    'echo "unset HOME" && git status',
+    'time orch docs status',
 ]
 
 
@@ -198,7 +275,15 @@ class TestRules(unittest.TestCase):
         self.assertEqual(gitrules.reasons("AGENTDOCS_ALLOW=1 git commit -nm x"), ["AGENTDOCS_ALLOW", "commit -n"])
         self.assertEqual(gitrules.reasons("orch docs disable"), ["orch docs disable"])
         self.assertEqual(gitrules.reasons("orch setting set agent_docs off"), ["orch setting set agent_docs off"])
-        self.assertEqual(gitrules.reasons("git config agentdocs.mode warn"), ["git config agentdocs.*"])
+        self.assertEqual(gitrules.reasons("git config agentdocs.mode warn"), ["git agentdocs.*"])
+        self.assertEqual(gitrules.reasons("unset HOME; git commit -m x"), ["env HOME"])
+        self.assertEqual(gitrules.reasons("echo 'x\ngit commit --no-verify"), ["--no-verify", gitrules.UNPARSED])
+
+    def test_message_is_one_line_naming_the_match_and_the_user(self):
+        text = gitrules.message(gitrules.reasons("timeout 9 git push --no-verify"))
+        self.assertNotIn("\n", text)
+        self.assertIn("(--no-verify)", text)
+        self.assertIn("they run it themselves", text)
 
 
 class TestSwitchFile(unittest.TestCase):
