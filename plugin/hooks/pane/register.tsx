@@ -50,6 +50,12 @@ const auto = atom({ plugin: 'orch', key: 'auto' } as const, false)
 // orchestrator reads and this checkbox always agree. The atom only serves the drawing; it starts off, as the setting does.
 const mythos = atom({ plugin: 'orch', key: 'mythos' } as const, false)
 const MYTHOS_SETTING = 'mythos_review'
+// Keep agent docs out of repos: the switch is orch's `agent_docs` setting (read with `orch setting get`); a press runs
+// `orch docs enable|disable`, which also installs the git hooks and re-renders the CLAUDE.md block. The note under the box is
+// the last line that command printed.
+const agentDocs = atom({ plugin: 'orch', key: 'agentDocs' } as const, false)
+const agentDocsNote = atom({ plugin: 'orch', key: 'agentDocsNote' } as const, '')
+const AGENT_DOCS_SETTING = 'agent_docs'
 // Auto-memory off for this project: read from `orch memory status --json` (the settings file is the truth, not $.store).
 const MEMORY_START: MemoryState = { off: false, note: null }
 const memory = atom({ plugin: 'orch', key: 'memory' } as const, MEMORY_START, { shape: 'memory-1' })
@@ -779,6 +785,35 @@ async function toggleMythos($: EngineInterface) {
   await loadMythos($)
 }
 
+// `orch setting get agent_docs` -> the atom (on only when the CLI prints `on`; any failure leaves it as it was).
+async function loadAgentDocs($: EngineInterface) {
+  const where = await whereIsOrch($)
+  if (!where) return
+  try {
+    const ran = await $.process.run([...(where.windows ? ['python'] : []), where.orch, 'setting', 'get', AGENT_DOCS_SETTING], { timeoutMs: RUN_TIMEOUT_MS })
+    if (ran.exitCode === 0) await update($, agentDocs, () => ran.stdout.trim() === 'on')
+  } catch {
+    // The atom keeps what it had: off at the start of a session.
+  }
+}
+
+// Run `orch docs enable` or `orch docs disable`, show its last line, then show what the CLI now says (a failed run leaves the box as the CLI has it).
+async function toggleAgentDocs($: EngineInterface) {
+  const where = await whereIsOrch($)
+  if (!where) return
+  const verb = (await read($, agentDocs)) === true ? 'disable' : 'enable'
+  let note = ''
+  try {
+    const ran = await $.process.run([...(where.windows ? ['python'] : []), where.orch, 'docs', verb], { timeoutMs: RUN_TIMEOUT_MS })
+    const lines = `${ran.stdout}\n${ran.exitCode === 0 ? '' : ran.stderr}`.split('\n').map(l => l.trim()).filter(l => l !== '')
+    note = lines.length > 0 ? lines[lines.length - 1]! : (ran.exitCode === 0 ? '' : `orch docs ${verb} failed`)
+  } catch {
+    note = `orch docs ${verb} did not finish`
+  }
+  await update($, agentDocsNote, () => note)
+  await loadAgentDocs($)
+}
+
 // `orch memory status --json --project <cwd>` -> the atom (any failure leaves it as it was).
 async function loadMemory($: EngineInterface) {
   const where = await whereIsOrch($)
@@ -1066,6 +1101,7 @@ export async function startPane($: EngineInterface): Promise<void> {
   autoBusy = false
   void loadAi($)
   void loadMythos($)
+  void loadAgentDocs($)
   void loadDrafts($)
   void (async () => {
     const data = await fetchStatus($)
@@ -1129,6 +1165,8 @@ export const registerPane: Register = on => {
     const notifyOn = (await read($, notify)) === true
     const compactSendOn = (await read($, compactSend)) === true
     const mythosOn = (await read($, mythos)) === true
+    const agentDocsOn = (await read($, agentDocs)) === true
+    const agentDocsLast = await read($, agentDocsNote)
     const memoryState = await read($, memory)
     const doctorState = await read($, doctor)
     const qs = await readQ($)
@@ -1818,6 +1856,7 @@ export const registerPane: Register = on => {
         check('opt-notify', notifyOn, 'Notify me when a question arrives', null, () => toggleNotify($)),
         check('opt-compact-send', compactSendOn, 'Compact, then send', 'sending answers compacts the conversation first; skipped while an agent runs', () => toggleCompactSend($)),
         check('opt-mythos', mythosOn, 'Offer Mythos security reviews', 'off: the orchestrator never offers one (you can still ask for it); on: it asks before a Mythos review of high-risk code and of a finished product', () => toggleMythos($)),
+        check('opt-agent-docs', agentDocsOn, 'Keep agent docs out of repos', agentDocsLast !== '' ? agentDocsLast : 'on: agent docs live in a private store linked into each repo; git hooks refuse them at commit and push, the orchestrator\'s CLAUDE.md block says so, and a guard blocks hook bypasses. off undoes exactly what on installed', () => toggleAgentDocs($)),
         action('act-memory-move', 'Move memory to orch lessons', 'asks the session to go through this project\'s Claude memory with you: it moves what orch should keep into lessons and changes nothing without your yes', () => moveMemory($)),
         check('opt-memory-off', memoryState.off, 'Auto-memory off for this project', memoryState.note ?? 'Claude stops writing and loading memory for this project; the setting applies to sessions that start after it', () => toggleMemory($)),
         ...(uiFormat
@@ -1861,6 +1900,7 @@ export const registerPane: Register = on => {
             if (t.id === 'more') {
               await ensureLoaded($)   // orch-ui's stored settings, before the first draw of its section
               await loadMythos($)     // the CLI's value, in case it changed since the last look
+              await loadAgentDocs($)
               await loadMemory($)
             }
             await update($, tab, cur => (cur === t.id ? null : t.id))

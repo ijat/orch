@@ -59,6 +59,19 @@ def _known(name):
         raise OrchError("unknown setting %r (known: %s)" % (name, ", ".join(sorted(SETTINGS))), 1)
 
 
+def update(values=None, delete=()):
+    """Write settings.json with `values` set and the keys in `delete` removed, keeping every other key. For orch's own
+    records (not user-settable names); a refused write raises OrchError like `setting set`."""
+    require_write_allowed()
+    data = load()
+    data.update(values or {})
+    for key in delete:
+        data.pop(key, None)
+    path = settings_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    write_atomic(path, (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+
+
 def cmd_setting(ns, extra):
     _known(ns.name)
     if ns.action == "get":

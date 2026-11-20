@@ -85,6 +85,8 @@ type World = {
   tools: string[]; compacts: (string | undefined)[]; compactFails: number; order: string[]
   // `orch setting` runs, the stored value of `mythos_review` (the CLI's file, default off) and whether a `set` fails.
   settingRuns: string[][]; mythos: 'on' | 'off'; settingRefuses?: boolean
+  // `orch docs enable|disable` runs, the stored value of `agent_docs`, what the command prints and whether it fails.
+  docsRuns: string[][]; agentDocs: 'on' | 'off'; docsOut: string; docsFails?: boolean
   // `orch memory` runs, the value `autoMemoryEnabled` has in the project's local settings file ('false' | 'unset'), the
   // global file's value, and whether a switch fails.
   memoryRuns: string[][]; memoryLocal: 'false' | 'unset'; memoryGlobal: 'false' | 'unset'; memoryRefuses?: boolean
@@ -123,7 +125,7 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
                env: Record<string, string> = { HOME: '/home/u' }): World {
   const w: World = {
     runs: [], indexRuns: [], opens: 0, paneOpen: true, placed: true, result, index: INDEX_RAN,
-    answers: [], answered: { exitCode: 0, stdout: 'Q1 answered', stderr: '' }, onAnswers: () => {}, groups: {}, groupRuns: [], toasts: [], wakes: [], notes: [], tools: [], compacts: [], compactFails: 0, order: [], settingRuns: [], mythos: 'off', memoryRuns: [], memoryLocal: 'unset', memoryGlobal: 'unset',
+    answers: [], answered: { exitCode: 0, stdout: 'Q1 answered', stderr: '' }, onAnswers: () => {}, groups: {}, groupRuns: [], toasts: [], wakes: [], notes: [], tools: [], compacts: [], compactFails: 0, order: [], settingRuns: [], mythos: 'off', docsRuns: [], agentDocs: 'off', docsOut: 'orch docs enable: done', memoryRuns: [], memoryLocal: 'unset', memoryGlobal: 'unset',
     doctorRuns: [], doctor: { exitCode: 0, stdout: '', stderr: '' }, doctorFixed: { exitCode: 0, stdout: '', stderr: '' },
     files: new Set(['/home/u/.claude/orch-data/bin/orch-index', 'C:/home/u/.claude/orch-data/bin/orch-index.exe']), uname: 'Darwin arm64\n',
   }
@@ -178,12 +180,19 @@ function world(on: On, result: Ran = { exitCode: 0, stdout: OUTPUT, stderr: '' }
         : `${verb} done\n`
       return { value: { exitCode: verb !== 'status' && w.memoryRefuses ? 1 : 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
+    if (e.argv.includes('docs')) {
+      // `orch docs enable|disable`: flips the CLI's `agent_docs` unless it fails, and prints its lines.
+      const verb = e.argv[e.argv.indexOf('docs') + 1]
+      w.docsRuns.push([...e.argv])
+      if (!w.docsFails) w.agentDocs = verb === 'enable' ? 'on' : 'off'
+      return { value: { exitCode: w.docsFails ? 1 : 0, stdout: w.docsFails ? '' : `wrote a hook\n${w.docsOut}\n`, stderr: w.docsFails ? 'orch: could not write the hooks\n' : '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     if (e.argv.includes('setting')) {
       // `orch setting get|set mythos_review`: the CLI's own file, here a field of the world.
       const [verb, name, value] = e.argv.slice(e.argv.indexOf('setting') + 1)
       w.settingRuns.push([...e.argv])
       if (verb === 'set' && name === 'mythos_review' && !w.settingRefuses) w.mythos = value === 'on' ? 'on' : 'off'
-      const out = verb === 'get' ? `${w.mythos}\n` : verb === 'set' && !w.settingRefuses ? `${value}\n` : ''
+      const out = verb === 'get' && name === 'agent_docs' ? `${w.agentDocs}\n` : verb === 'get' ? `${w.mythos}\n` : verb === 'set' && !w.settingRefuses ? `${value}\n` : ''
       return { value: { exitCode: verb === 'set' && w.settingRefuses ? 1 : 0, stdout: out, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
     if (e.argv.includes('answers')) {
@@ -2399,6 +2408,40 @@ test('Offer Mythos security reviews: the box shows the CLI value (a change made 
   await ui.press({ key: 'opt-mythos' })
   expect(w.mythos).toBe('on')
   expect(await buttonText(ui, 'opt-mythos')).toMatch(/^\[x\] /)
+  await ui.unmount()
+})
+
+test('Keep agent docs out of repos: the box shows `orch setting get agent_docs`, a press runs `orch docs enable|disable` and shows its last line', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  expect(w.settingRuns[0]).toEqual([ORCH, 'setting', 'get', 'mythos_review'])
+  expect(w.settingRuns.some(r => r.join(' ') === `${ORCH} setting get agent_docs`)).toBe(true)
+  await ui.press({ key: 'tab:more' })
+  expect(await buttonText(ui, 'opt-agent-docs')).toMatch(/^\[ \] Keep agent docs out of repos/)
+  await ui.press({ key: 'opt-agent-docs' })
+  expect(w.docsRuns).toEqual([[ORCH, 'docs', 'enable']])
+  expect(w.agentDocs).toBe('on')
+  const on1 = await buttonText(ui, 'opt-agent-docs')
+  expect(on1).toMatch(/^\[x\] Keep agent docs out of repos/)
+  expect(await allText(ui)).toContain('orch docs enable: done')
+  w.docsOut = 'orch docs disable: done'
+  await ui.press({ key: 'opt-agent-docs' })
+  expect(w.docsRuns[1]).toEqual([ORCH, 'docs', 'disable'])
+  expect(w.agentDocs).toBe('off')
+  expect(await buttonText(ui, 'opt-agent-docs')).toMatch(/^\[ \] /)
+  await ui.unmount()
+})
+
+test('Keep agent docs out of repos: a changed value is picked up on opening More, a failed command shows its message and leaves the box as the CLI has it', async ($, on) => {
+  const { ui, w } = await pane($, on, [PROGRAM])
+  w.agentDocs = 'on'                                // enabled from a terminal after the session start
+  await ui.press({ key: 'tab:more' })
+  expect(await buttonText(ui, 'opt-agent-docs')).toMatch(/^\[x\] /)
+  w.docsFails = true
+  await ui.press({ key: 'opt-agent-docs' })
+  expect(w.docsRuns).toEqual([[ORCH, 'docs', 'disable']])
+  expect(w.agentDocs).toBe('on')
+  expect(await buttonText(ui, 'opt-agent-docs')).toMatch(/^\[x\] /)
+  expect(await allText(ui)).toContain('orch: could not write the hooks')
   await ui.unmount()
 })
 

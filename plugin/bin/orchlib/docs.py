@@ -10,6 +10,7 @@ Commands here work whatever the `agent_docs` setting says: it only gates orch's 
 """
 import ast
 import contextlib
+import io
 import os
 import re
 import shutil
@@ -605,10 +606,11 @@ def write_exec(path, text):
     os.replace(tmp, path)
 
 
-def install_hooks(hooks_dir, chain_existing=False):
+def install_hooks(hooks_dir, chain_existing=False, dry_run=False, record=None):
     """Write the three shims into hooks_dir. A foreign hook of the same name is refused, or with chain_existing
-    renamed to <name>.pre-orch. Returns the changes made: [("wrote", path) | ("renamed", from, to)]. Nothing is
-    changed when anything has to be refused."""
+    renamed to <name>.pre-orch. Returns the changes: [("wrote", path) | ("renamed", from, to)]. Nothing is changed
+    when anything has to be refused. With dry_run nothing is changed at all; record(change) is called right after
+    each change is made, so a caller can keep a record that survives a failure half way."""
     plan = []
     for name in HOOK_NAMES:
         path = os.path.join(hooks_dir, name)
@@ -622,15 +624,24 @@ def install_hooks(hooks_dir, chain_existing=False):
         if os.path.lexists(pre):
             raise OrchError("%s already exists; cannot keep %s as %s.pre-orch" % (pre, path, name), 1)
         plan.append((name, path, pre))
-    os.makedirs(hooks_dir, exist_ok=True)
+    if not dry_run:
+        os.makedirs(hooks_dir, exist_ok=True)
     changes = []
+
+    def made(change):
+        changes.append(change)
+        if record and not dry_run:
+            record(change)
+
     for name, path, pre in plan:
         if pre:
-            os.rename(path, pre)
-            changes.append(("renamed", path, pre))
-        if read_text(path) != shim_text(name) or not os.access(path, os.X_OK):
-            write_exec(path, shim_text(name))
-            changes.append(("wrote", path))
+            if not dry_run:
+                os.rename(path, pre)
+            made(("renamed", path, pre))
+        if pre or read_text(path) != shim_text(name) or not os.access(path, os.X_OK):
+            if not dry_run:
+                write_exec(path, shim_text(name))
+            made(("wrote", path))
     return changes
 
 
@@ -713,6 +724,178 @@ def cmd_hook(ctx):
     return chain_hook(name, args, ctx.cwd)
 
 
+# -- one switch: enable / disable ------------------------------------------------------------------
+
+RECORD_KEY = "agent_docs_hooks"
+
+
+def git_global(*args):
+    """git config --global ... (GIT_CONFIG_GLOBAL is honoured by git itself); returns the CompletedProcess."""
+    return git(None, "config", "--global", *args)
+
+
+def hooks_record():
+    from . import settings
+    rec = settings.load(warn=False).get(RECORD_KEY)
+    return rec if isinstance(rec, dict) else None
+
+
+def save_record(rec):
+    from . import settings
+    settings.update({RECORD_KEY: rec})
+
+
+def global_hooks_path():
+    """(raw value or None, expanded directory or None) of git's global core.hooksPath."""
+    res = git_global("--get", "core.hooksPath")
+    raw = res.stdout.rstrip("\n") if res.returncode == 0 else None
+    return raw, (os.path.abspath(os.path.expanduser(raw)) if raw else None)
+
+
+DRY_VERBS = {"wrote": "write", "renamed": "rename"}
+
+
+def step(ctx, text):
+    if ctx.dry_run:
+        verb, _, rest = text.partition(" ")
+        text = "would %s %s" % (DRY_VERBS.get(verb, verb), rest)
+    say(text)
+
+
+def block_step(ctx, value):
+    """Re-render the managed CLAUDE.md block, printing what install-instructions prints; a refusal (hand-written rules,
+    damaged markers) is reported, not fatal. Returns True when the file changed (or would)."""
+    from . import instructions
+    ns = types.SimpleNamespace(file=ctx.claude_md, uninstall=False, replace_existing=False, dry_run=ctx.dry_run,
+                               overrides={"agent_docs": value})
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            instructions.cmd_install_instructions(ns, [])
+    except OrchError as exc:
+        sys.stdout.write(buf.getvalue())
+        say("CLAUDE.md block not updated: %s" % exc)
+        return False
+    out = buf.getvalue()
+    sys.stdout.write(out)
+    return bool(out.strip()) and "nothing to do" not in out
+
+
+def cmd_enable(ctx):
+    from . import settings
+    from .paths import data_root, require_write_allowed
+    if not ctx.dry_run:
+        require_write_allowed()
+    rec = hooks_record()
+    fresh = rec is None
+    if fresh:
+        raw, hdir = global_hooks_path()
+        if raw is not None:
+            rec = {"dir": hdir, "prev": raw, "set_hooks_path": False, "created_dir": False, "renamed": [], "wrote": [], "complete": False}
+        else:
+            rec = {"dir": os.path.join(data_root(), "git-hooks"), "prev": None, "set_hooks_path": False, "created_dir": False,
+                   "renamed": [], "wrote": [], "complete": False}
+    hdir = rec["dir"]
+    changed = False
+    # (a) the setting, and the record first: whatever happens next, disable can undo it
+    if settings.get("agent_docs") != "on":
+        step(ctx, "set agent_docs on")
+        changed = True
+    if not ctx.dry_run:
+        if fresh or settings.get("agent_docs") != "on":
+            settings.update({"agent_docs": "on", RECORD_KEY: rec})
+    # (b) the managed block
+    changed = block_step(ctx, "on") or changed
+    # (c) the global git hooks
+    if not os.path.isdir(hdir):
+        step(ctx, "create %s" % hdir)
+        changed = True
+        if not ctx.dry_run:
+            os.makedirs(hdir, exist_ok=True)
+            rec["created_dir"] = True
+            save_record(rec)
+
+    def record(change):
+        if change[0] == "renamed":
+            rec["renamed"].append({"from": change[1], "to": change[2]})
+        else:
+            rec["wrote"].append(change[1])
+        save_record(rec)
+
+    for change in install_hooks(hdir, chain_existing=True, dry_run=ctx.dry_run, record=record):
+        step(ctx, "%s %s" % (change[0], " -> ".join(change[1:])))
+        changed = True
+    if rec["prev"] is None and not rec["set_hooks_path"]:
+        step(ctx, "set the global git hooks path to %s" % hdir)
+        changed = True
+        if not ctx.dry_run:
+            res = git_global("core.hooksPath", hdir)
+            if res.returncode != 0:
+                raise OrchError("cannot set the global git hooks path: %s" % res.stderr.strip(), 1)
+            rec["set_hooks_path"] = True
+            save_record(rec)
+    if not ctx.dry_run and not rec["complete"]:
+        rec["complete"] = True
+        save_record(rec)
+    say("enable: %s" % ("would change the above" if ctx.dry_run and changed else "nothing to do" if not changed else "done (hooks in %s)" % hdir))
+    return 0
+
+
+def cmd_disable(ctx):
+    from . import settings
+    if not ctx.dry_run:
+        from .paths import require_write_allowed
+        require_write_allowed()
+    rec = hooks_record()
+    changed = False
+    # (a) the setting; the record stays until the hooks are undone
+    if settings.get("agent_docs") != "off":
+        step(ctx, "set agent_docs off")
+        changed = True
+        if not ctx.dry_run:
+            settings.update({"agent_docs": "off"})
+    # (b) the managed block, rendered with the section dropped
+    changed = block_step(ctx, "off") or changed
+    # (c) undo exactly what was recorded, in reverse
+    if rec:
+        hdir = rec.get("dir")
+        raw, now = global_hooks_path()
+        if rec.get("set_hooks_path"):
+            if now is not None and hdir and os.path.abspath(now) == os.path.abspath(hdir):
+                step(ctx, "unset the global git hooks path (it was unset before)")
+                changed = True
+                if not ctx.dry_run:
+                    git_global("--unset", "core.hooksPath")
+            else:
+                say("left the global git hooks path alone: it is not the one orch set")
+        for path in reversed(rec.get("wrote", [])):
+            if is_shim(path):
+                step(ctx, "remove %s" % path)
+                changed = True
+                if not ctx.dry_run:
+                    os.unlink(path)
+        for mv in reversed(rec.get("renamed", [])):
+            src, dst = mv.get("from"), mv.get("to")
+            if src and dst and os.path.lexists(dst) and not os.path.lexists(src):
+                step(ctx, "renamed %s -> %s" % (dst, src))
+                changed = True
+                if not ctx.dry_run:
+                    os.rename(dst, src)
+            elif src and dst and os.path.lexists(dst):
+                say("left %s alone: %s exists again" % (dst, src))
+        if rec.get("created_dir") and hdir and os.path.isdir(hdir) and not os.listdir(hdir):
+            step(ctx, "remove the empty directory %s" % hdir)
+            changed = True
+            if not ctx.dry_run:
+                os.rmdir(hdir)
+        if not ctx.dry_run:
+            settings.update(delete=[RECORD_KEY])
+        else:
+            changed = True
+    say("disable: %s" % ("would change the above" if ctx.dry_run and changed else "nothing to do" if not changed else "done"))
+    return 0
+
+
 # -- session nudge -------------------------------------------------------------------------------
 
 NUDGE_CANDIDATES = ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "GEMINI.md", "STATE.md", "DECISIONS.md", "HANDOFF.md",
@@ -770,6 +953,7 @@ VERBS = {
     "init": cmd_init, "adopt": cmd_adopt, "add": cmd_add, "link": cmd_link, "status": cmd_status,
     "list": cmd_list, "commit": cmd_commit, "migrated": cmd_migrated,
     "check": cmd_check, "hook": cmd_hook, "install-hooks": cmd_install_hooks,
+    "enable": cmd_enable, "disable": cmd_disable,
 }
 
 
@@ -781,6 +965,8 @@ class Ctx:
         self.message = ns.message
         self.hooks_dir = ns.hooks_dir
         self.chain_existing = ns.chain_existing
+        self.dry_run = getattr(ns, "dry_run", False)
+        self.claude_md = getattr(ns, "claude_md", None)
 
 
 def cmd_docs(ns, extra):
@@ -793,18 +979,22 @@ def cmd_docs(ns, extra):
 def register(add):
     sp = add("docs", cmd_docs,
              "private agent-docs store: init | adopt PATH... | add PATH... | link | status | list | commit [-m MSG] | migrated"
-             " | check staged|range|tree | hook NAME [ARGS] | install-hooks [--dir D] [--chain-existing]")
+             " | check staged|range|tree | hook NAME [ARGS] | install-hooks [--dir D] [--chain-existing]"
+             " | enable [--dry-run] | disable [--dry-run]")
     sp.add_argument("verb", nargs="?", choices=list(VERBS), default=None,
                     help="init: register this repo and create .agent | adopt: move paths into the store and link them back"
                          " | add: link a path already in the store | link: (re)create .agent and every link (fresh clone,"
                          " worktree) | status: links, broken links, private paths still tracked | list: every repo in the"
                          " store | commit: commit the store | migrated: drop agentdocs.mode so the hooks block again | check: the path"
                          " and content check (staged; range -- <rev args>; tree [rev]) | hook: what a git hook shim runs"
-                         " (pre-commit, pre-push, post-checkout) | install-hooks: write the shims into the repo's hooks dir")
+                         " (pre-commit, pre-push, post-checkout) | install-hooks: write the shims into the repo's hooks dir | enable:"
+                         " the one switch on (setting, CLAUDE.md block, global git hooks) | disable: undo exactly what enable recorded")
     sp.add_argument("paths", nargs="*", metavar="PATH")
     sp.add_argument("--name", default=None, help="init: the store entry name (default: from .agent, origin, or the directory)")
     sp.add_argument("-m", dest="message", default=None, help="commit: the store commit message")
     sp.add_argument("-C", dest="dir", default=None, help="run as if started in DIR")
     sp.add_argument("--dir", dest="hooks_dir", default=None, help="install-hooks: the hooks directory (default: the repo's)")
+    sp.add_argument("--dry-run", dest="dry_run", action="store_true", help="enable, disable: print each change, make none")
+    sp.add_argument("--file", dest="claude_md", default=None, help="enable, disable: the CLAUDE.md to re-render (default: the global one)")
     sp.add_argument("--chain-existing", dest="chain_existing", action="store_true",
                     help="install-hooks: keep a foreign hook as <name>.pre-orch and chain to it")

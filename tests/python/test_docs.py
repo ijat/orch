@@ -681,6 +681,186 @@ class TestHooks(Base):
         self.assertEqual(res.returncode, 0, res.stderr)
 
 
+def tree_state(root):
+    """{relative path: (kind, mode, content or link target)} for everything under root; {} when it is absent."""
+    out = {}
+    for d, dirs, files in os.walk(root):
+        for n in sorted(dirs + files):
+            p = os.path.join(d, n)
+            rel = os.path.relpath(p, root)
+            if os.path.islink(p):
+                out[rel] = ("link", None, os.readlink(p))
+            elif os.path.isdir(p):
+                out[rel] = ("dir", None, None)
+            else:
+                with open(p, "rb") as fh:
+                    out[rel] = ("file", os.stat(p).st_mode & 0o777, fh.read())
+    return out
+
+
+class TestEnable(Base):
+    def setUp(self):
+        Base.setUp(self)
+        self.cm = os.path.join(self.tmp, "CLAUDE.md")
+        with open(self.cm, "w") as fh:
+            fh.write("# Mine\n")
+        self.gitconfig = self.env["GIT_CONFIG_GLOBAL"]
+        self.settings_file = os.path.join(self.data, "settings.json")
+
+    def cmd(self, *argv):
+        rc, out, err = self.docs(None, *argv, "--file", self.cm)
+        return rc, out, err
+
+    def hooks_path(self):
+        res = self.sh(self.tmp, "git", "config", "--global", "--get", "core.hooksPath")
+        return res.stdout.strip() if res.returncode == 0 else None
+
+    def setting(self):
+        return self.sh(self.tmp, sys.executable, LAUNCHER, "setting", "get", "agent_docs").stdout.strip()
+
+    def foreign_hooks(self, name="foreign-hooks"):
+        d = os.path.join(self.tmp, name)
+        os.makedirs(d)
+        for n, body in (("pre-commit", "#!/bin/sh\necho gitleaks-ish\n"), ("commit-msg", "#!/bin/sh\nexit 0\n")):
+            p = os.path.join(d, n)
+            with open(p, "w") as fh:
+                fh.write(body)
+            os.chmod(p, 0o755)
+        return d
+
+    def test_round_trip_with_a_preset_hooks_path_and_a_foreign_hook(self):
+        hooks = self.foreign_hooks()
+        self.sh(self.tmp, "git", "config", "--global", "core.hooksPath", hooks)
+        cfg0, hooks0, cm0 = slurp(self.gitconfig), tree_state(hooks), slurp(self.cm)
+        rc, out, err = self.cmd("enable")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.setting(), "on")
+        self.assertEqual(slurp(self.gitconfig), cfg0)             # the path was already set: git config untouched
+        for n in docs.HOOK_NAMES:
+            self.assertTrue(docs.is_shim(os.path.join(hooks, n)), n)
+        self.assertEqual(slurp(os.path.join(hooks, "pre-commit.pre-orch")), "#!/bin/sh\necho gitleaks-ish\n")
+        self.assertEqual(slurp(os.path.join(hooks, "commit-msg")), "#!/bin/sh\nexit 0\n")     # other hooks left alone
+        self.assertIn("## Agent docs stay out of repos", slurp(self.cm))
+        self.assertTrue(out.strip().split("\n")[-1].startswith("orch docs: enable: done"), out)
+        state_on = (tree_state(hooks), slurp(self.gitconfig), slurp(self.cm), slurp(self.settings_file))
+        rc, out, err = self.cmd("enable")                         # a second run changes nothing
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out.strip().split("\n")[-1], "orch docs: enable: nothing to do")
+        self.assertEqual((tree_state(hooks), slurp(self.gitconfig), slurp(self.cm), slurp(self.settings_file)), state_on)
+        rc, out, err = self.cmd("disable")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(tree_state(hooks), hooks0)               # byte-identical, modes included
+        self.assertEqual(slurp(self.gitconfig), cfg0)
+        self.assertEqual(self.setting(), "off")
+        self.assertNotIn("agent_docs_hooks", slurp(self.settings_file))
+        cm = slurp(self.cm)
+        self.assertTrue(cm.startswith("# Mine\n") and "orch:begin" in cm)
+        self.assertNotIn("Agent docs stay out of repos", cm)
+        self.assertEqual(self.cmd("disable")[1].strip().split("\n")[-1], "orch docs: disable: nothing to do")
+
+    def test_round_trip_with_no_hooks_path_set(self):
+        cfg0 = slurp(self.gitconfig)
+        self.assertIsNone(self.hooks_path())
+        rc, out, err = self.cmd("enable")
+        self.assertEqual(rc, 0, err)
+        mine = os.path.join(self.data, "git-hooks")
+        self.assertEqual(os.path.realpath(self.hooks_path()), os.path.realpath(mine))
+        self.assertEqual(sorted(os.listdir(mine)), sorted(docs.HOOK_NAMES))
+        state_on = (tree_state(mine), slurp(self.gitconfig), slurp(self.settings_file))
+        self.assertEqual(self.cmd("enable")[1].strip().split("\n")[-1], "orch docs: enable: nothing to do")
+        self.assertEqual((tree_state(mine), slurp(self.gitconfig), slurp(self.settings_file)), state_on)
+        rc, out, err = self.cmd("disable")
+        self.assertEqual(rc, 0, err)
+        self.assertFalse(os.path.exists(mine))                    # the directory enable made is gone
+        self.assertEqual(slurp(self.gitconfig), cfg0)             # byte-identical: the key and its section are gone
+        self.assertIsNone(self.hooks_path())
+        self.assertEqual(self.setting(), "off")
+
+    def test_dry_run_prints_each_change_and_makes_none(self):
+        hooks = self.foreign_hooks()
+        self.sh(self.tmp, "git", "config", "--global", "core.hooksPath", hooks)
+        before = (tree_state(hooks), slurp(self.gitconfig), slurp(self.cm), os.path.exists(self.settings_file))
+        rc, out, err = self.cmd("enable", "--dry-run")
+        self.assertEqual(rc, 0, err)
+        for want in ("would set agent_docs on", "would write ", "would rename ", "+## Agent docs stay out of repos",
+                     "enable: would change the above"):
+            self.assertIn(want, out)
+        self.assertEqual((tree_state(hooks), slurp(self.gitconfig), slurp(self.cm), os.path.exists(self.settings_file)), before)
+        self.assertEqual(self.cmd("enable")[0], 0)
+        on = (tree_state(hooks), slurp(self.cm), slurp(self.settings_file))
+        rc, out, err = self.cmd("disable", "--dry-run")
+        self.assertIn("would set agent_docs off", out)
+        self.assertIn("would remove ", out)
+        self.assertEqual((tree_state(hooks), slurp(self.cm), slurp(self.settings_file)), on)
+
+    def failing_enable(self, fail_at):
+        """Run enable with the Nth shim write failing; returns the exit code."""
+        real = docs.write_exec
+        calls = []
+
+        def flaky(path, text):
+            calls.append(path)
+            if len(calls) == fail_at:
+                raise OSError("disk says no")
+            return real(path, text)
+
+        with mock.patch.object(docs, "write_exec", flaky):
+            return self.cmd("enable")[0]
+
+    def undo_case(self, preset, fail_at, rerun):
+        hooks = self.foreign_hooks()
+        if preset:
+            self.sh(self.tmp, "git", "config", "--global", "core.hooksPath", hooks)
+        cfg0, hooks0 = slurp(self.gitconfig), tree_state(hooks)
+        mine = os.path.join(self.data, "git-hooks")
+        self.assertEqual(self.failing_enable(fail_at), 3)
+        self.assertIn("agent_docs_hooks", slurp(self.settings_file))
+        if rerun:                                            # a re-run finishes what was left
+            rc, out, err = self.cmd("enable")
+            self.assertEqual(rc, 0, err)
+            for n in docs.HOOK_NAMES:
+                self.assertTrue(docs.is_shim(os.path.join(hooks if preset else mine, n)), n)
+        rc, out, err = self.cmd("disable")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(tree_state(hooks), hooks0)
+        self.assertEqual(slurp(self.gitconfig), cfg0)
+        self.assertFalse(os.path.exists(mine))
+        self.assertEqual(self.setting(), "off")
+        self.assertNotIn("agent_docs_hooks", slurp(self.settings_file))
+
+    def test_a_failure_in_the_middle_of_enable_leaves_a_record_disable_can_undo(self):
+        for preset in (True, False):
+            for fail_at in (1, 2, 3):
+                for rerun in (False, True):
+                    with self.subTest(preset=preset, fail_at=fail_at, rerun=rerun):
+                        self.setUp()
+                        self.undo_case(preset, fail_at, rerun)
+
+    def test_a_blocked_block_update_is_reported_and_the_rest_still_applies(self):
+        with open(self.cm, "w") as fh:
+            fh.write("## Orchestration mode\n\n- my own rules\n")
+        rc, out, err = self.cmd("enable")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("CLAUDE.md block not updated: hand-written orch rules found", out)
+        self.assertEqual(slurp(self.cm), "## Orchestration mode\n\n- my own rules\n")
+        self.assertEqual(self.setting(), "on")
+        self.assertTrue(docs.is_shim(os.path.join(self.data, "git-hooks", "pre-commit")))
+        self.assertEqual(self.cmd("disable")[0], 0)
+        self.assertEqual(self.setting(), "off")
+
+    def test_enabled_hooks_block_a_commit_and_disabled_ones_do_not(self):
+        r = self.repo("sw")
+        self.assertEqual(self.cmd("enable")[0], 0)
+        with open(os.path.join(r, "CLAUDE.md"), "w") as fh:
+            fh.write("rules\n")
+        self.git(r, "add", "CLAUDE.md")
+        res = self.sh(r, "git", "commit", "-q", "-m", "x")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("    CLAUDE.md", res.stderr)
+        self.assertEqual(self.cmd("disable")[0], 0)
+        self.assertEqual(self.sh(r, "git", "commit", "-q", "-m", "x").returncode, 0)
+
+
 class TestNudge(Base):
     def switch(self, value):
         os.makedirs(self.data, exist_ok=True)

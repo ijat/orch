@@ -26,9 +26,10 @@ def agent_text(line):
     return AGENT_WORD_RE.sub(lambda m: agent_key(m.group(0)), line)
 
 
-def render_block(template_lines):
+def render_block(template_lines, overrides=None):
     """The template's lines for the settings as they are now: lines between `<!-- orch:if NAME -->` and
-    `<!-- orch:endif -->` stay when the setting NAME is `on` and go when it is not; the marker lines always go."""
+    `<!-- orch:endif -->` stay when the setting NAME is `on` and go when it is not; the marker lines always go.
+    `overrides` ({name: value}) stands in for stored settings, to preview a switch before it is flipped."""
     out, keep, open_at = [], True, None
     for n, line in enumerate(template_lines, 1):
         m = IF_RE.match(line)
@@ -37,7 +38,8 @@ def render_block(template_lines):
                 raise OrchError("the block template nests orch:if (line %d inside the one at line %d)" % (n, open_at), 2)
             if m.group(1) not in settings.SETTINGS:
                 raise OrchError("the block template names an unknown setting %r (line %d)" % (m.group(1), n), 2)
-            open_at, keep = n, settings.get(m.group(1)) == "on"
+            value = (overrides or {}).get(m.group(1)) or settings.get(m.group(1))
+            open_at, keep = n, value == "on"
         elif ENDIF_RE.match(line):
             if open_at is None:
                 raise OrchError("the block template has orch:endif without orch:if (line %d)" % n, 2)
@@ -49,10 +51,10 @@ def render_block(template_lines):
     return out
 
 
-def block_lines():
+def block_lines(overrides=None):
     """The managed block as it is written today (the template rendered for the current settings)."""
     with open(TEMPLATE, encoding="utf-8") as fh:
-        return render_block(fh.read().rstrip("\n").split("\n"))
+        return render_block(fh.read().rstrip("\n").split("\n"), overrides)
 
 
 def default_file():
@@ -149,7 +151,7 @@ def cmd_install_instructions(ns, extra):
     else:
         require_write_allowed()
         path = os.path.realpath(default_file())
-    block = None if ns.uninstall else block_lines()     # a broken template refuses before anything is read or written
+    block = None if ns.uninstall else block_lines(getattr(ns, "overrides", None))     # a broken template refuses before anything is read or written
     try:
         with open(path, encoding="utf-8") as fh:
             old = fh.read()

@@ -315,6 +315,9 @@ declare module 'claude-code' {
       auto: boolean
       // "Offer Mythos security reviews": the value `orch setting get mythos_review` printed (the CLI's file is the source)
       mythos: boolean
+      // "Keep agent docs out of repos": the value `orch setting get agent_docs` printed, and the last line `orch docs enable|disable` printed
+      agentDocs: boolean
+      agentDocsNote: string
       // "Auto-memory off for this project": what `orch memory status --json` said (off = the project's local settings file says false)
       memory: { off: boolean; note: string | null }
       // The Doctor section: what `orch doctor` last gave (a report, or why it could not run); runs only on a press
