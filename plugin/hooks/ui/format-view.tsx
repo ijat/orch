@@ -888,28 +888,33 @@ function classify(block: string): PlainBlock {
 
 // A finished plain reply of an orch session, drawn with its inline references as pills: plain paragraphs and bullets
 // through inline(), every other block through Markdown as written. null when nothing in it would become a pill, so
-// the caller shows the reply as it always did. No page border and no banner: it keeps its plain look.
-export function drawPlain(el: ElementTable<'terminal'>, text: string) {
+// the caller shows the reply as it always did. No page border and no banner: it keeps its plain look, so it also keeps
+// the row's own frame the engine draws around a reply block (a hook's tree replaces it): the blank line above, and the
+// two-column gutter holding the reply's ● on its first block.
+export function drawPlain(el: ElementTable<'terminal'>, text: string, firstOfReply: boolean) {
   const { Box, Text, Markdown } = el
   const blocks = splitBlocks(text).map(classify)
   const pilled = blocks.some(b => (b.kind === 'para' && PILLISH.test(b.text)) || (b.kind === 'items' && b.items.some(t => PILLISH.test(t))))
   if (!pilled) return null
   return (
-    <Box flexDirection="column">
-      {blocks.map((b, n) => {
-        if (b.kind === 'markdown') return <Box key={`b${n}`} marginTop={n === 0 ? 0 : 1}><Markdown text={b.text} /></Box>
-        if (b.kind === 'para') return <Box key={`b${n}`} marginTop={n === 0 ? 0 : 1}><Text>{inlineOf(el, b.text)}</Text></Box>
-        return (
-          <Box key={`b${n}`} flexDirection="column" marginTop={n === 0 ? 0 : 1}>
-            {b.items.map((t, i) => (
-              <Box key={`i${i}`} flexDirection="row">
-                <Box width={2} flexShrink={0}><Text color="inactive">•</Text></Box>
-                <Box flexGrow={1} flexShrink={1}>{richOf(el, t)}</Box>
-              </Box>
-            ))}
-          </Box>
-        )
-      })}
+    <Box flexDirection="row" marginTop={1}>
+      <Box width={2} flexShrink={0}><Text>{firstOfReply ? '●' : ' '}</Text></Box>
+      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+        {blocks.map((b, n) => {
+          if (b.kind === 'markdown') return <Box key={`b${n}`} marginTop={n === 0 ? 0 : 1}><Markdown text={b.text} /></Box>
+          if (b.kind === 'para') return <Box key={`b${n}`} marginTop={n === 0 ? 0 : 1}><Text>{inlineOf(el, b.text)}</Text></Box>
+          return (
+            <Box key={`b${n}`} flexDirection="column" marginTop={n === 0 ? 0 : 1}>
+              {b.items.map((t, i) => (
+                <Box key={`i${i}`} flexDirection="row">
+                  <Box width={2} flexShrink={0}><Text color="inactive">•</Text></Box>
+                  <Box flexGrow={1} flexShrink={1}>{richOf(el, t)}</Box>
+                </Box>
+              ))}
+            </Box>
+          )
+        })}
+      </Box>
     </Box>
   )
 }
@@ -1289,7 +1294,7 @@ export function registerFormat(on: On) {
       if (!orchestrator || tag !== null || (await read($, fmtPills)) === false) return asIs()
       const turn = await read($, fmtTurn)
       if (turn.at != null && bornIn(e.requestId, turn) === turn.n) return asIs()
-      return drawPlain(el, shown) ?? asIs()
+      return drawPlain(el, shown, e.props.isFirstOfReply) ?? asIs()
     }
     if ((await read($, fmtOn)) !== true) return !orchestrator || (await readMark($, keyOf(text))) === true ? asIs() : plain()
     // The original is not complete yet: the placeholder, counting from the start of the turn.

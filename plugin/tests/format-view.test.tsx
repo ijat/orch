@@ -3015,6 +3015,22 @@ test('Inline pills: bullets keep their dot row, a link paragraph and a fence go 
   await ui.unmount()
 })
 
+test('Inline pills: the row keeps the reply frame: a blank line above and a two-column gutter, ● on the first block only', async ($, on) => {
+  await boot($, on, PILLS_SEED)
+  await orchestrate($)
+  for (const [isFirstOfReply, glyph] of [[true, '●'], [false, ' ']] as const) {
+    const ui = await show($, PLAIN_REPLY, { isFirstOfReply })
+    const root = await ui.find({ type: 'Box' })
+    expect(root?.props?.flexDirection).toBe('row')
+    expect(root?.props?.marginTop).toBe(1)
+    const gutter = (await ui.findAll({ type: 'Box' }))[1]
+    expect(gutter?.props?.width).toBe(2)
+    expect((await texts(ui))[0]).toBe(glyph)
+    expect((await texts(ui)).filter(t => t === '●')).toHaveLength(isFirstOfReply ? 1 : 0)
+    await ui.unmount()
+  }
+})
+
 test('Inline pills: the marker line is not drawn, with Format replies off', async ($, on) => {
   await boot($, on, PILLS_SEED)
   await orchestrate($)
