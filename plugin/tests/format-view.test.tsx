@@ -422,11 +422,45 @@ test('session start registers no bare command and the orch-ui settings show unde
   await ui.unmount()
 })
 
-test('the pane holds the Format replies row and the five setting rows, in order', async ($, on) => {
+test('the pane holds the Format replies row, the Inline pills row and the five setting rows, in order', async ($, on) => {
   await boot($, on, SETTINGS_SEED)
   const ui = await settingsPane($)
-  expect(await buttonKeys(ui)).toEqual(['opt-format', ...ROW_KEYS])
+  expect(await buttonKeys(ui)).toEqual(['opt-format', 'opt-format-pills', ...ROW_KEYS])
   expect((await optionRow(ui)).label).toBe('[x] Format replies')
+  await ui.unmount()
+})
+
+test('Inline pills: on by default, a press flips it and the store keeps it, nothing else moves, the stored false is read at start', async ($, on) => {
+  const b = await boot($, on, {})
+  const ui = await settingsPane($)
+  const pills = async () => (await ui.find({ type: 'Button', key: 'opt-format-pills' }))?.text
+  expect(await pills()).toBe('[x] Inline pills')
+  expect((await paneTexts(ui)).some(t => t === 'no model call')).toBe(true)
+  await ui.press({ key: 'opt-format-pills' })
+  expect(await pills()).toBe('[ ] Inline pills')
+  expect(b.w.store.get('opt:format-pills')).toBe(false)
+  // Format replies, raw state and the pause are not touched.
+  expect((await optionRow(ui)).label).toBe('[ ] Format replies')
+  expect(b.w.store.has('opt:format')).toBe(false)
+  await ui.press({ key: 'opt-format-pills' })
+  expect(await pills()).toBe('[x] Inline pills')
+  expect(b.w.store.get('opt:format-pills')).toBe(true)
+  await ui.unmount()
+})
+
+test('Inline pills: a stored false survives a new session and a /clear', async ($, on) => {
+  await boot($, on, { 'opt:format': true, 'opt:format-pills': false })
+  const ui = await settingsPane($)
+  expect((await ui.find({ type: 'Button', key: 'opt-format-pills' }))?.text).toBe('[ ] Inline pills')
+  await ui.unmount()
+})
+
+test('Inline pills: after a /clear a press flips the stored value, not the default', async ($, on) => {
+  const b = await bootThenStore($, on, { 'opt:format-pills': false })
+  const ui = await settingsPane($)
+  expect((await ui.find({ type: 'Button', key: 'opt-format-pills' }))?.text).toBe('[ ] Inline pills')
+  await ui.press({ key: 'opt-format-pills' })
+  expect(b.w.store.get('opt:format-pills')).toBe(true)
   await ui.unmount()
 })
 
@@ -519,10 +553,10 @@ test('setting rows: the API key row is drawn only while billing is api', async (
   const ui = await settingsPane($)
   expect(await buttonKeys(ui)).toContain('opt-format-key')
   await ui.press({ key: 'opt-format-billing' })
-  expect(await buttonKeys(ui)).toEqual(['opt-format', 'opt-format-trigger', 'opt-format-model', 'opt-format-effort', 'opt-format-billing'])
+  expect(await buttonKeys(ui)).toEqual(['opt-format', 'opt-format-pills', 'opt-format-trigger', 'opt-format-model', 'opt-format-effort', 'opt-format-billing'])
   expect((await paneTexts(ui)).some(t => t.startsWith('from '))).toBe(false)
   await ui.press({ key: 'opt-format-billing' })
-  expect(await buttonKeys(ui)).toEqual(['opt-format', ...ROW_KEYS])
+  expect(await buttonKeys(ui)).toEqual(['opt-format', 'opt-format-pills', ...ROW_KEYS])
   await ui.unmount()
 })
 

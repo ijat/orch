@@ -16,6 +16,7 @@ import { textKey } from './lib'
 export const FORMAT_TOOL = 'set_message_format'
 export const FORMAT_TOOL_FULL = 'mcp__orch__set_message_format'
 const OPT_KEY = 'opt:format'
+const OPT_PILLS = 'opt:format-pills'
 const DEFAULT_TRIGGER = 'marked'
 const TRIGGERS = ['marked', 'auto'] as const
 const OPT_MODEL = 'opt:format-model'
@@ -29,6 +30,8 @@ const OPT_TRIGGER = 'opt:format-trigger'
 // the saved outcomes, below) outlive the session.
 
 const fmtOn = atom({ plugin: 'orch', key: 'fmtOn' } as const, false)
+// Inline pills in plain replies of an orch session (also kept in $.store); on unless the stored value says false.
+const fmtPills = atom({ plugin: 'orch', key: 'fmtPills' } as const, true)
 // True once the orchestrate skill has loaded in this session; /clear resets it.
 const fmtOrch = atom({ plugin: 'orch', key: 'fmtOrch' } as const, false)
 // Raw for the whole session: every row as written, no new conversion.
@@ -512,6 +515,12 @@ export async function loadFormat($: EngineInterface) {
   } catch {
     // The default stays: off.
   }
+  try {
+    const stored = await $.store.get(OPT_PILLS)
+    await update($, fmtPills, () => (typeof stored === 'boolean' ? stored : true))
+  } catch {
+    // The default stays: on.
+  }
   const load = async <T extends string>(storeKey: string, allowed: readonly T[], fallback: T, set: (v: T) => Promise<unknown>) => {
     try {
       await set(settingOf(await $.store.get(storeKey), allowed, fallback))
@@ -578,6 +587,23 @@ export async function pressFormat($: EngineInterface) {
     await $.store.set(OPT_KEY, next)
   } catch {
     // This session keeps it; the next one starts from the default.
+  }
+}
+
+// The **Inline pills** row: whether plain replies of an orch session get inline-reference pills. No model call.
+export async function pillsRow($: EngineInterface): Promise<{ on: boolean; note: string | null }> {
+  return { on: (await read($, fmtPills)) !== false, note: 'no model call' }
+}
+
+// A press flips the option and stores it. It touches neither the formatting option, raw state nor a pause.
+export async function pressPills($: EngineInterface) {
+  await ensureLoaded($)
+  const next = (await read($, fmtPills)) === false
+  await update($, fmtPills, () => next)
+  try {
+    await $.store.set(OPT_PILLS, next)
+  } catch {
+    // This session keeps it; the next one starts from the stored value.
   }
 }
 
