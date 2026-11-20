@@ -6,7 +6,9 @@ The decision is per command line, not per spelling of a git call:
   - a line with a git word anywhere (behind `timeout`, `time`, `!`, `xargs`, `then`, `{`, a variable holding git, ...)
     is refused when any of its commands holds a risky word: a `--no-verify` prefix, `hookspath`, an `agentdocs.` or
     `alias.` key, `-n` beside `commit`, or a name that moves git's config or the hook's programs (assigned, exported,
-    unset, `env -i`/`-u`);
+    unset, `env -i`/`-u`). The `--no-verify` prefix, `hookspath` and the keys are matched as text anywhere in a
+    command (quoted words, assignment values, substitutions), so a commit message that mentions them is refused too:
+    a heredoc message (`git commit -F - <<EOF`) is the way to write one;
   - a line that cannot be read (an unclosed quote, an unterminated heredoc) is judged on its raw words, fail closed.
 Over-blocking a rare harmless command is accepted: the git hooks are the real check, and the user can run it."""
 import re
@@ -20,6 +22,8 @@ GUARDED_WORD = re.compile(r"^(?:-u|--unset=)?(HOME|XDG_CONFIG_HOME|GIT_CONFIG\w*
                           r"ORCH_DATA|ORCH_DIR|ORCH_DOCS_PRIVATE|AGENTDOCS_ALLOW)(?:\+?=.*)?$", re.S)
 ALLOW_ASSIGN = re.compile(r"^AGENTDOCS_ALLOW\+?=")
 SHORT_N = re.compile(r"^-[a-zA-Z]*n[a-zA-Z]*$")
+NO_VERIFY_SUB = re.compile(r"--no-v(?:e(?:r(?:i(?:fy?)?)?)?)?(?![\w-])")
+KEY_SUB = re.compile(r"(?:^|[\s=;'\"(`])(agentdocs|alias)\.", re.I)
 SUBST_RE = re.compile(r"\$\(([^\n]*)|`([^`\n]*)`")
 KEY_RE = re.compile(r"(?:^|=)(agentdocs|alias)\.", re.I)
 DATA_CMDS = ("echo", "grep")        # commands whose arguments are never run: their words are data
@@ -85,8 +89,9 @@ def split_segments(cmd):
     backticks that are outside quotes. `>&`, `<&` and `&>` are redirections, not separators; a comment runs to the end
     of its line; heredoc bodies (`<<`, `<<-`, quoted delimiter or not) are dropped, except the command substitutions
     of an unquoted one, which are added as commands. Quoted text is never cut. Raises Unreadable on an unclosed quote
-    or an unterminated heredoc."""
-    segs, cur, quote, i, n, pending, runs = [], [], None, 0, len(cmd), [], []
+    or an unterminated heredoc. Returns (text, spliced) pairs: spliced is true for a command that starts after a `(`
+    or a backtick, or comes from a heredoc body, whose output may become words of another command."""
+    segs, cur, quote, i, n, pending, runs, spliced = [], [], None, 0, len(cmd), [], [], False
     while i < n:
         c = cmd[i]
         if quote == "'":
@@ -126,8 +131,8 @@ def split_segments(cmd):
         elif c == "&" and ((i > 0 and cmd[i - 1] in "<>") or (i + 1 < n and cmd[i + 1] == ">")):
             cur.append(c)
         elif c in ";|&\n()`":
-            segs.append("".join(cur))
-            cur = []
+            segs.append(("".join(cur), spliced))
+            cur, spliced = [], c in "(`"
             if c == "\n" and pending:
                 i = _skip_heredoc_bodies(cmd, i + 1, pending, runs)
                 pending = []
@@ -137,9 +142,9 @@ def split_segments(cmd):
         i += 1
     if quote or pending:
         raise Unreadable()
-    segs.append("".join(cur))
+    segs.append(("".join(cur), spliced))
     for text in runs:
-        segs += split_segments(text)
+        segs += [(t, True) for t, _ in split_segments(text)]
     return segs
 
 
@@ -250,9 +255,10 @@ def _orch_reasons(args):
 
 
 def _commands(cmd):
-    """(words, is_data) per simple command; Unreadable when the line cannot be split."""
+    """(words, is_data, spliced, text) per simple command; Unreadable when the line cannot be split. A command whose
+    output is spliced into another (`$(echo ...)`) is never data."""
     out = []
-    for seg in split_segments(cmd):
+    for seg, spliced in split_segments(cmd):
         try:
             w = shlex.split(seg, comments=True)
         except ValueError:
@@ -260,7 +266,7 @@ def _commands(cmd):
         k = 0
         while k < len(w) and ASSIGN_RE.match(w[k]):
             k += 1
-        out.append((w, k < len(w) and _base(w[k]) in DATA_CMDS))
+        out.append((w, not spliced and k < len(w) and _base(w[k]) in DATA_CMDS, spliced, seg))
     return out
 
 
@@ -280,6 +286,8 @@ def _raw_reasons(cmd):
         bad.append("orch docs disable")
     if any(_is_git(x) for x in words):
         bad += _risky(words)
+        if NO_VERIFY_SUB.search(cmd):
+            bad.append(NO_VERIFY)
     elif any(ALLOW_ASSIGN.match(x) for x in words):
         bad.append("AGENTDOCS_ALLOW")
     return bad + [UNPARSED] if bad else []
@@ -292,7 +300,7 @@ def _reasons(cmd, depth):
         return _raw_reasons(cmd)
     bad = []
     git_line = False
-    for w, data in cmds:
+    for w, data, _, _ in cmds:
         for k, a in enumerate(w):
             if "$(" in a or "`" in a:       # a command substitution left inside a quoted word still runs
                 bad += _nested(a, depth)
@@ -319,13 +327,37 @@ def _reasons(cmd, depth):
                         bad += _nested(head + " " + shlex.join(w[j + 1:]), depth)
                         break
     if git_line:
-        for w, data in cmds:
+        bad += _indirect(cmds)
+        for w, data, _, _ in cmds:
             if data:
                 w = _leading_assigns(w)
             ev = next((k for k, a in enumerate(w) if _base(a) in EVALUATORS), None)
             if ev is not None:      # `eval 'unset HOME'; git ...` acts on this shell: read its strings' words too
                 w = w + [x for s in w[ev + 1:] for x in re.split(r"[\s;&|()`'\"]+", s) if x]
             bad += _risky(w, _config_read_keys(w))
+    return bad
+
+
+def _indirect(cmds):
+    """On a git line, risky text that reaches git through another word: matched in the raw text of every command
+    that is not data (quotes, assignment values and substitutions included; heredoc bodies and comments are already
+    gone), plus `-n` from an assignment value or a substitution when the line has a `commit` word."""
+    bad, short_n, commit = [], False, False
+    for w, data, spliced, text in cmds:
+        if data:
+            w = _leading_assigns(w)
+            text = " ".join(w)
+        commit = commit or "commit" in w
+        if NO_VERIFY_SUB.search(text):
+            bad.append(NO_VERIFY)
+        if "hookspath" in text.lower():
+            bad.append("core.hooksPath")
+        if not _config_read_keys(w):
+            bad += ["git " + key.lower() + ".*" for key in KEY_SUB.findall(text)]
+        vals = [x for a in w if ASSIGN_RE.match(a) for x in a.split("=", 1)[1].split()]
+        short_n = short_n or any(SHORT_N.match(x) for x in vals + (w if spliced else []))
+    if commit and short_n:
+        bad.append("commit -n")
     return bad
 
 

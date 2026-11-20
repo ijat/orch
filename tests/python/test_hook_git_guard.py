@@ -153,11 +153,27 @@ BLOCKED = [   # the shell guard's own cases
     'git config alias.st status',
     'PYTHONSTARTUP=/x git commit -m y',
     'GIT_EXEC_PATH=/x git commit -m y',
+    # F6: a risky word that reaches git through another word (an assignment value, a substitution)
+    'x=--no-verify; git commit -m y $x',
+    'F=--no-verify git commit -m y',
+    'git commit -m y $(echo --no-verify)',
+    'git commit -m y "$(echo --no-verify)"',
+    'git commit -m y `echo --no-verify`',
+    'o=-n; git commit $o -m y',
+    'git commit -m y $(printf -- -n)',
+    'h=core.hooksPath=/x; git -c $h commit',
+    'k=alias.ci; git config $k "commit -n"',
+    # accepted over-blocking: a risky word in quoted prose on a git line (a heredoc message is the way)
+    'git commit -m "skip --no-verify docs"',
+    'git commit -m "fix: a; git commit --no-verify"',
+    'git commit -m "mention --no-verify and -n and core flags"',
+    'git commit -m "line1\nline2\n--no-verify"',
+    'time git commit -m "skip --no-verify docs"',
+    'git commit -m "mention alias.foo and HOME=/x in prose"',
 ]
 
 ALLOWED = [
     'git commit -m "add n option"',
-    'git commit -m "skip --no-verify docs"',
     'git status',
     'git log -n 5',
     'echo --no-verify',
@@ -178,11 +194,8 @@ ALLOWED = [
     'ls -n',
     'git commit -m "n"',
     # quoted prose and separators in messages (F1), names in prose (S1/S2), env on other commands
-    'git commit -m "fix: a; git commit --no-verify"',
     'git commit -m "x & y"',
     'git commit -m "a | b"',
-    'git commit -m "mention --no-verify and -n and core flags"',
-    'git commit -m "line1\nline2\n--no-verify"',
     'git commit -m "it\'s fine; really"',
     'git commit -m "use HOME=/x for tests"',
     'echo "HOME=/x git commit"',
@@ -227,17 +240,20 @@ ALLOWED = [
     "cat > f <<'EOF'\n$(git commit --no-verify)\nEOF",
     'git commit -F - <<EOF\nmsg with "quote and --no-verify\nEOF',
     'timeout 60 git push origin main',
-    'time git commit -m "skip --no-verify docs"',
     'if git diff --quiet; then echo clean; fi',
     '{ git status; git log -n 3; }',
     'for r in a b; do git -C $r pull; done',
     'echo x | xargs git add',
-    'git commit -m "mention alias.foo and HOME=/x in prose"',
     'git config --get alias.st',
     'git commit -m "x" <<< "y"',
     'bash -c "git status"',
     'echo "unset HOME" && git status',
     'time orch docs status',
+    # F6 counterparts: a commit message from a heredoc may mention anything; other -n and key forms
+    'git commit -F - <<EOF\nskip --no-verify docs; alias.x and core.hooksPath\nEOF',
+    "git commit -F - <<'EOF'\nfix: a; git commit --no-verify -n\nEOF",
+    'git commit -m x && git log -n 1',
+    'git add docs/agentdocs.md',
 ]
 
 

@@ -8,14 +8,19 @@ Fails open: unreadable JSON, or any surprise, allows the call (the git hooks sti
 
 The decision is per command line (gitrules.py): a line that runs no git is allowed, except an `AGENTDOCS_ALLOW=`
 assignment and the switch-off commands `orch docs disable` / `orch setting set agent_docs off`, refused anywhere. A line
-with a git word in any position (behind timeout, time, !, xargs, if/then, { }, for/do, a subshell, `bash -c`/`eval`, a
-`$(...)`) is refused when any of its commands holds a risky word:
-  - `--no-verify` or an abbreviation of it; `-n` (or a short-flag group holding n) beside `commit`
-  - `hookspath` (any case); an `agentdocs.` or `alias.` key (reads and --unset of `git config` excepted)
+with a git word in any position (behind timeout, time, !, xargs, if/then, { }, for/do, a subshell, `bash -c`/`eval`,
+a `$(...)` or backticks) is refused when any of its commands holds a risky word:
+  - `--no-verify` or an abbreviation of it, as text anywhere in a command (a quoted message, `x=--no-verify`, a
+    substitution's output source); `-n` (or a short-flag group holding n) beside `commit` in one command, or from an
+    assignment value or a substitution on a line with a `commit` word
+  - `hookspath` (any case) as text; an `agentdocs.` or `alias.` key at the start of a word or after `=` (reads and
+    --unset of `git config` excepted)
   - an assignment, export, unset, `env -u` of HOME, XDG_CONFIG_HOME, GIT_CONFIG*, GIT_EXEC_PATH, PATH, PYTHON*, ORCH_BIN,
     ORCH_DATA, ORCH_DIR, ORCH_DOCS_PRIVATE or AGENTDOCS_ALLOW; `env -i`, `env -`
-Heredoc bodies (`<<`, `<<-`), comments and the arguments of `echo`/`grep` are data. A line that cannot be read (an
-unclosed quote, an unterminated heredoc) is judged on its raw words, fail closed. Over-blocking is accepted; the message
+Data, never checked: heredoc bodies (`<<`, `<<-`; except the `$(...)`/backticks of an unquoted one, which run),
+comments, and the arguments of `echo`/`grep` unless that command sits inside a `$(...)`, backticks or a subshell. The
+strings of `bash -c`/`sh -c`/`eval`/`env -S` and a `$(...)` inside a quoted word are also read as command lines. A line
+that cannot be read (an unclosed quote, an unterminated heredoc) is judged on its raw words, fail closed. Over-blocking is accepted; the message
 says the user can run the command. Known gap: a script or a sourced file that runs git is not read."""
 import os
 import sys
