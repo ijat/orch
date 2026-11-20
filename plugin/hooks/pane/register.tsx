@@ -13,7 +13,7 @@ import {
   COMPACT_SEND_NOTE, COMPACT_TOOL, COMPACT_TOOL_FULL, COMPACT_WAKE_TEXT, busyReason,
 } from './lib'
 import type { ItemState, MdLine, MemoryState } from './lib'
-import { ensureLoaded, formatRow, pressFormat, pressSetting, settingRows } from '../ui/format-view'
+import { ensureLoaded, formatRow, pillsRow, pressFormat, pressPills, pressSetting, settingRows } from '../ui/format-view'
 
 const PANE = 'orch-pane'
 const TITLE = 'Orchestration'
@@ -1809,10 +1809,12 @@ export const registerPane: Register = on => {
 
     // orch-ui's settings (they moved here from the old /orch:ui pane): read only while the More tab is open.
     let uiFormat: { on: boolean; note: string | null } | null = null
+    let uiPills: { on: boolean; note: string | null } | null = null
     let uiRows: Awaited<ReturnType<typeof settingRows>> = []
     if (openTab === 'more') {
       await ensureLoaded($)
       uiFormat = await formatRow($)
+      uiPills = await pillsRow($)
       uiRows = await settingRows($)
     }
 
@@ -1864,6 +1866,7 @@ export const registerPane: Register = on => {
               subhead('orch-ui'),
               blank,
               check('opt-format', uiFormat.on, 'Format replies', uiFormat.note, () => pressFormat($)),
+              ...(uiPills ? [check('opt-format-pills', uiPills.on, 'Inline pills', uiPills.note, () => pressPills($))] : []),
               ...uiRows.map(row => choice(row.key, row.label, row.value, row.note, () => pressSetting($, row.id))),
             ]
           : []),

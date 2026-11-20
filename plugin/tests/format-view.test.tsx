@@ -25,6 +25,10 @@ const FILLER = 'The work continues as planned and nothing else has changed since
 const INFO_SOURCE = FILLER.repeat(5) + 'The file `src/a.ts` is unchanged.'
 const INFO_OUTPUT = '# [info] `src/a.ts` is unchanged\n\n## [more] Where it stands\n\n- **File:** `src/a.ts` is unchanged.\n- **Work:** it continues as planned and nothing else has changed since the last report.'
 
+// Inline pills are off in the default seed: the suites above and below test the formatter, and a plain reply of an orch
+// session would otherwise be drawn with pills. The Inline pills tests seed `PILLS_ON`.
+const PILLS_ON = { 'opt:format-pills': undefined }
+
 // The compaction tool is there from session start; the formatter's is the one that comes with the marking.
 const formatTools = (w: { tools: string[] }) => w.tools.filter(t => t === FORMAT_TOOL)
 
@@ -62,7 +66,7 @@ async function boot($: Engine, on: On, seed: Record<string, unknown> = { 'opt:fo
   })
   const mc = mock.clock(on, { now: Date.parse('2026-11-10T10:00Z') })
   const w: World = {
-    calls: [], tools: [], commands: [], opened: [], store: new Map(Object.entries({ 'opt:format-trigger': 'auto', ...seed })), replies: new Map(), delays: new Map(),
+    calls: [], tools: [], commands: [], opened: [], store: new Map(Object.entries({ 'opt:format-trigger': 'auto', 'opt:format-pills': false, ...seed })), replies: new Map(), delays: new Map(),
     env: { ...envVars }, envAsked: [], files: new Map(), stats: [], reads: [], written: [], runs: [], logs: [], cost: 0.0061, lsExit: 0, aclExit: 0, truncated: false, advancing: 0, periods: 0, engineRows: [], descriptions: [], storeOps: [], denyFmtWrites: false, denyFmtReads: false, gate: null, finalDelay: 0,
   }
   // A fake run that lasts N ms moves the clock N ms from inside its hook. The animation timer ticks every 100 ms on the
@@ -422,11 +426,45 @@ test('session start registers no bare command and the orch-ui settings show unde
   await ui.unmount()
 })
 
-test('the pane holds the Format replies row and the five setting rows, in order', async ($, on) => {
+test('the pane holds the Format replies row, the Inline pills row and the five setting rows, in order', async ($, on) => {
   await boot($, on, SETTINGS_SEED)
   const ui = await settingsPane($)
-  expect(await buttonKeys(ui)).toEqual(['opt-format', ...ROW_KEYS])
+  expect(await buttonKeys(ui)).toEqual(['opt-format', 'opt-format-pills', ...ROW_KEYS])
   expect((await optionRow(ui)).label).toBe('[x] Format replies')
+  await ui.unmount()
+})
+
+test('Inline pills: on by default, a press flips it and the store keeps it, nothing else moves, the stored false is read at start', async ($, on) => {
+  const b = await boot($, on, PILLS_ON)
+  const ui = await settingsPane($)
+  const pills = async () => (await ui.find({ type: 'Button', key: 'opt-format-pills' }))?.text
+  expect(await pills()).toBe('[x] Inline pills')
+  expect((await paneTexts(ui)).some(t => t === 'no model call')).toBe(true)
+  await ui.press({ key: 'opt-format-pills' })
+  expect(await pills()).toBe('[ ] Inline pills')
+  expect(b.w.store.get('opt:format-pills')).toBe(false)
+  // Format replies, raw state and the pause are not touched.
+  expect((await optionRow(ui)).label).toBe('[ ] Format replies')
+  expect(b.w.store.has('opt:format')).toBe(false)
+  await ui.press({ key: 'opt-format-pills' })
+  expect(await pills()).toBe('[x] Inline pills')
+  expect(b.w.store.get('opt:format-pills')).toBe(true)
+  await ui.unmount()
+})
+
+test('Inline pills: a stored false survives a new session and a /clear', async ($, on) => {
+  await boot($, on, { 'opt:format': true, 'opt:format-pills': false })
+  const ui = await settingsPane($)
+  expect((await ui.find({ type: 'Button', key: 'opt-format-pills' }))?.text).toBe('[ ] Inline pills')
+  await ui.unmount()
+})
+
+test('Inline pills: after a /clear a press flips the stored value, not the default', async ($, on) => {
+  const b = await bootThenStore($, on, { 'opt:format-pills': false })
+  const ui = await settingsPane($)
+  expect((await ui.find({ type: 'Button', key: 'opt-format-pills' }))?.text).toBe('[ ] Inline pills')
+  await ui.press({ key: 'opt-format-pills' })
+  expect(b.w.store.get('opt:format-pills')).toBe(true)
   await ui.unmount()
 })
 
@@ -519,10 +557,10 @@ test('setting rows: the API key row is drawn only while billing is api', async (
   const ui = await settingsPane($)
   expect(await buttonKeys(ui)).toContain('opt-format-key')
   await ui.press({ key: 'opt-format-billing' })
-  expect(await buttonKeys(ui)).toEqual(['opt-format', 'opt-format-trigger', 'opt-format-model', 'opt-format-effort', 'opt-format-billing'])
+  expect(await buttonKeys(ui)).toEqual(['opt-format', 'opt-format-pills', 'opt-format-trigger', 'opt-format-model', 'opt-format-effort', 'opt-format-billing'])
   expect((await paneTexts(ui)).some(t => t.startsWith('from '))).toBe(false)
   await ui.press({ key: 'opt-format-billing' })
-  expect(await buttonKeys(ui)).toEqual(['opt-format', ...ROW_KEYS])
+  expect(await buttonKeys(ui)).toEqual(['opt-format', 'opt-format-pills', ...ROW_KEYS])
   await ui.unmount()
 })
 
@@ -2877,5 +2915,151 @@ test('the elapsed seconds of one block never decrease: streaming, final flush, p
   expect(Math.max(...seen)).toBeGreaterThanOrEqual(5)
   await b.clock.advance(3000)
   expect((await texts(ui)).join('\n')).not.toContain('formatting reply')
+  await ui.unmount()
+})
+
+// -- Inline pills in a finished plain reply ---------------------------------------------------------------------------
+// D1: independent of Format replies. D2: off for the pills row, raw for the session, a raw mark, a non-terminal surface,
+// a summary and a reply still streaming in the running turn.
+
+const PILLS_SEED = { ...PILLS_ON, 'opt:format-trigger': undefined }   // Format replies off, marked trigger
+const PILLS_AND_FORMAT = { ...PILLS_SEED, 'opt:format': true }
+const pillCount = async (ui: Ui) => (await texts(ui)).filter(t => t === PILL_LEFT).length
+const markdownsOf = async (ui: Ui) => (await ui.findAll({ type: 'Markdown' })).map(m => String(m.props?.text ?? m.text))
+const PLAIN_REPLY = 'The file `src/a.ts` is unchanged and the branch `fix/cache-evict` is merged.'
+
+for (const [name, seed] of [['off', PILLS_SEED], ['on', PILLS_AND_FORMAT]] as const) {
+  test(`Inline pills: a finished plain reply of an orch session draws its references as pills, Format replies ${name}`, async ($, on) => {
+    const b = await boot($, on, seed)
+    await orchestrate($)
+    const ui = await show($, PLAIN_REPLY)
+    expect(await isOriginal(ui)).toBe(false)
+    expect(await pillCount(ui)).toBe(2)
+    expect(await texts(ui)).toContain('\uf15b src/a.ts')
+    expect(b.w.calls).toHaveLength(0)
+    await ui.unmount()
+  })
+}
+
+test('Inline pills: a reply with nothing to pill, and every excluded case, is the engine\'s own row', async ($, on) => {
+  await boot($, on, PILLS_AND_FORMAT)
+  // outside an orch session
+  const normal = await show($, PLAIN_REPLY)
+  expect(await isOriginal(normal)).toBe(true)
+  await orchestrate($)
+  // nothing to pill, or only in a fence or a table
+  for (const text of ['Nothing to see here.', 'Run:\n\n```sh\necho `date`\n```', '| a | b |\n| - | - |\n| `x` | y |']) {
+    const ui = await show($, text)
+    expect(await isOriginal(ui)).toBe(true)
+    await ui.unmount()
+  }
+  // a summary and another surface
+  const summary = await show($, PLAIN_REPLY, { isSummary: true })
+  expect(await isOriginal(summary)).toBe(true)
+  const desktop = await $.ui.mount({ plugin: 'orch', surface: 'desktop', component: 'AssistantMessage', requestId: 'pd', props: { text: PLAIN_REPLY, isFirstOfReply: true } })
+  expect(await isOriginal(desktop)).toBe(true)
+  // raw for the session
+  await callTool($, { format: 'raw', scope: 'session' })
+  const raw = await show($, PLAIN_REPLY)
+  expect(await isOriginal(raw)).toBe(true)
+  for (const ui of [normal, summary, desktop, raw]) await ui.unmount()
+})
+
+test('Inline pills: the row off gives the reply as written', async ($, on) => {
+  await boot($, on, { ...PILLS_SEED, 'opt:format-pills': false })
+  await orchestrate($)
+  const ui = await show($, PLAIN_REPLY)
+  expect(await isOriginal(ui)).toBe(true)
+  await ui.unmount()
+})
+
+test('Inline pills: a raw mark on a formatted reply gives that reply as written, pills or not', async ($, on) => {
+  const b = await boot($, on, { ...PILLS_ON, 'opt:format': true })
+  b.w.replies.set(INFO_SOURCE, INFO_OUTPUT)
+  await orchestrate($)
+  await finish($, b, INFO_SOURCE)
+  const ui = await show($, INFO_SOURCE)
+  expect(await isOriginal(ui)).toBe(false)
+  await callTool($, { format: 'raw' })
+  expect(await isOriginal(ui)).toBe(true)
+  await ui.unmount()
+})
+
+test('Inline pills: a reply that streams in the running turn is as written, and draws its pills when the turn ends', async ($, on) => {
+  const b = await boot($, on, PILLS_SEED)
+  await orchestrate($)
+  await startTurn($, b)
+  const ui = await show($, PLAIN_REPLY)
+  expect(await isOriginal(ui)).toBe(true)
+  await endTurn($, b, 'answer')
+  expect(await isOriginal(ui)).toBe(false)
+  expect(await pillCount(ui)).toBe(2)
+  await ui.unmount()
+})
+
+test('Inline pills: bullets keep their dot row, a link paragraph and a fence go to Markdown unchanged, and no text is lost', async ($, on) => {
+  await boot($, on, PILLS_SEED)
+  await orchestrate($)
+  const link = 'See [the docs](https://example.com/x) for `not-a-pill`.'
+  const fence = '```sh\n\necho `date`\n```'
+  const reply = ['Intro with `src/a.ts` here.', '- first `b.rs`\n  continued\n- second item', link, fence, 'Last: `main`'].join('\n\n')
+  const ui = await show($, reply)
+  expect(await isOriginal(ui)).toBe(false)
+  // pills: the intro, the first bullet, the last paragraph (not the link paragraph, not the fence)
+  expect(await pillCount(ui)).toBe(3)
+  expect((await texts(ui)).filter(t => t === '•')).toHaveLength(2)
+  const md = await markdownsOf(ui)
+  expect(md).toEqual([link, fence])
+  const all = (await texts(ui)).join('\n')
+  for (const piece of ['Intro with', 'first', 'continued', 'second item', 'Last:']) expect(all.split(piece)).toHaveLength(2)
+  await ui.unmount()
+})
+
+test('Inline pills: the marker line is not drawn, with Format replies off', async ($, on) => {
+  await boot($, on, PILLS_SEED)
+  await orchestrate($)
+  const ui = await show($, first(PLAIN_REPLY))
+  expect(await pillCount(ui)).toBe(2)
+  expect((await texts(ui)).join('\n')).not.toContain('<!--')
+  await ui.unmount()
+})
+
+// Blocks Markdown parses as more than a plain paragraph go to Markdown whole, even when they hold a backticked reference.
+const MARKDOWN_BLOCKS: [string, string][] = [
+  ['a lead-in line and `-` bullets', 'Steps:\n- `a.ts`\n- `b.ts`'],
+  ['a lead-in line and `*` bullets', 'Steps:\n* `a.ts`\n* `b.ts`'],
+  ['`+` bullets', '+ `a.ts`\n+ `b.ts`'],
+  ['a bullet with a lazy continuation line', '- `a.ts`\nlazy line'],
+  ['a lead-in line and an `1)` list', 'Order:\n1) `a.ts`\n2) `b.ts`'],
+  ['a nested `+` list under a bullet', '- `a.ts`\n  + `b.ts`'],
+  ['a nested `1)` list under a bullet', '- `a.ts`\n  1) `b.ts`'],
+  ['a table without outer pipes', 'a | `b`\n--- | ---\nc | d'],
+]
+
+for (const [name, block] of MARKDOWN_BLOCKS) {
+  test(`Inline pills: ${name} is drawn by Markdown as written, and a plain paragraph beside it still gets its pill`, async ($, on) => {
+    await boot($, on, PILLS_SEED)
+    await orchestrate($)
+    const ui = await show($, `Plain with \`src/a.ts\`.\n\n${block}`)
+    expect(await pillCount(ui)).toBe(1)
+    expect(await markdownsOf(ui)).toEqual([block])
+    await ui.unmount()
+  })
+}
+
+test('Inline pills: a longer opening fence is not closed by a shorter run inside it', async ($, on) => {
+  await boot($, on, PILLS_SEED)
+  await orchestrate($)
+  const fence = '````md\n```sh\n\necho `date`\n```\n````'
+  const ui = await show($, `Plain with \`src/a.ts\`.\n\n${fence}\n\nAfter \`b.rs\`.`)
+  expect(await pillCount(ui)).toBe(2)
+  expect(await markdownsOf(ui)).toEqual([fence])
+  await ui.unmount()
+})
+
+test('Inline pills: in a session that never loaded the skill the reply is the engine\'s row (no pill work)', async ($, on) => {
+  await boot($, on, PILLS_SEED)
+  const ui = await show($, PLAIN_REPLY)
+  expect(await isOriginal(ui)).toBe(true)
   await ui.unmount()
 })

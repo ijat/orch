@@ -327,6 +327,7 @@ declare module 'claude-code' {
       hist: { query: string; page: number }
       // orch-ui
       fmtOn: boolean
+      fmtPills: boolean
       fmtOrch: boolean
       fmtRaw: boolean
       fmtSeq: number
