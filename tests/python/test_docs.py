@@ -245,6 +245,11 @@ class TestNames(Base):
         rc, out, err = self.docs(b, "init", "--name", "one")
         self.assertEqual(rc, 1)
         self.assertIn("belongs to git@github.com:own/one.git", err)
+        # the same repo under another spelling of its URL is not refused (compared normalised, as repo_name matches it)
+        c = self.repo("one-https", "https://github.com/Own/one")
+        self.assertEqual(docs.repo_name(c, self.store), "one")
+        self.ok(c, "init")
+        self.assertEqual(os.readlink(os.path.join(c, ".agent")), os.path.join(self.store, "one"))
         self.assertFalse(os.path.lexists(os.path.join(b, ".agent")))
         c = self.repo("two")
         os.mkdir(os.path.join(c, ".agent"))
@@ -419,6 +424,35 @@ class TestCheck(Base):
         rc, out, err = self.docs(r, "check", "staged")
         self.assertEqual(rc, 2)
         self.assertNotIn("unclosed", err)       # a private list's content is never echoed
+
+    def test_a_type_change_symlink_to_file_is_checked(self):
+        r = self.repo("ty")
+        self.private("agent-docs-deny-content.txt", PRIV)
+        base = self.git(r, "rev-parse", "HEAD").strip()
+        os.makedirs(os.path.join(r, "docs"))
+        os.symlink("../README.md", os.path.join(r, "docs", "STATE.md"))
+        os.symlink("README.md", os.path.join(r, "n.txt"))
+        self.git(r, "add", "docs/STATE.md", "n.txt")
+        self.git(r, "commit", "-q", "-m", "links")      # no hook is installed here: the links are tracked
+        for rel, text in (("docs/STATE.md", "state\n"), ("n.txt", "a %s b\n" % PRIV)):
+            os.unlink(os.path.join(r, rel))
+            with open(os.path.join(r, rel), "w") as fh:
+                fh.write(text)
+        self.git(r, "add", "docs/STATE.md", "n.txt")
+        self.assertIn("T\tdocs/STATE.md", self.git(r, "diff", "--cached", "--name-status"))
+        rc, out, err = self.docs(r, "check", "staged")
+        self.assertEqual(rc, 1)
+        self.assertIn("    docs/STATE.md", err)                       # the path check sees the typechange
+        self.assertIn("    n.txt:a %s b" % PRIV, err)                 # and the content check reads the new file's lines
+        self.git(r, "commit", "-q", "-m", "now files")
+        rc, out, err = self.docs(r, "check", "range", "--", "HEAD~1..HEAD")
+        self.assertEqual(rc, 1)
+        self.assertIn("    docs/STATE.md", err)
+        self.assertIn("    n.txt:a %s b" % PRIV, err)
+        rc, out, err = self.docs(r, "check", "range", "--", base + "..HEAD~1")            # the symlink commit alone
+        self.assertEqual(rc, 1)
+        self.assertIn("    docs/STATE.md", err)
+        self.assertNotIn(PRIV, err)
 
     def test_range_and_tree(self):
         r = self.repo("ck")

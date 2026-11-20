@@ -211,7 +211,7 @@ def cmd_init(ctx):
     entry = os.path.join(store, name)
     origin = origin_url(ctx.cwd)
     known = read_text(os.path.join(entry, ".origin"))
-    if known is not None and origin and known.rstrip("\n") != origin:
+    if known is not None and origin and norm_url(known.rstrip("\n")) != norm_url(origin):
         raise OrchError("store entry '%s' belongs to %s; pick another: orch docs init --name <name>"
                         % (name, known.rstrip("\n")), 1)
     if os.path.lexists(os.path.join(root, ".agent")) and not os.path.islink(os.path.join(root, ".agent")):
@@ -468,7 +468,7 @@ def diff_added_lines(text):
     return out
 
 
-DIFF_FLAGS = ["-U0", "--diff-filter=ACMR", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"]
+DIFF_FLAGS = ["-U0", "--diff-filter=ACMRT", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"]
 
 
 def _names(text):
@@ -506,11 +506,11 @@ def run_check(mode, args, cwd=None):
 
     added = []          # "path:text"
     if mode == "staged":
-        res = git(cwd, "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR")
+        res = git(cwd, "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRT")
         paths = _names(res.stdout)
         added = ["%s:%s" % pt for pt in diff_added_lines(git(cwd, "diff", "--cached", *DIFF_FLAGS).stdout)]
     elif mode == "range":
-        res = git(cwd, "log", "--format=", "--name-only", "-z", "--diff-filter=ACMR", *args)
+        res = git(cwd, "log", "--format=", "--name-only", "-z", "--diff-filter=ACMRT", *args)
         if res.returncode != 0:
             err.write("%s check: git log failed: %s\n" % (PREFIX, res.stderr.strip()))
             return 2
