@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -959,12 +960,16 @@ class TestHooks(Base):
         self.assertEqual(os.path.realpath(me[2]), os.path.realpath(os.getcwd()))
         child = subprocess.Popen(["bash", "-c", 'exec -a "%s docs hook pre-commit" sleep 30' % LAUNCHER])
         self.addCleanup(lambda: (child.kill(), child.wait()))
-        for _ in range(50):
+        want = ["%s docs hook pre-commit" % LAUNCHER, "30"]
+        deadline = time.monotonic() + 15       # bash must exec sleep first; under load that can take a while
+        info = None
+        while time.monotonic() < deadline:
             info = docs.process_info(child.pid)
-            if info and info[1][:1] == ["%s docs hook pre-commit" % LAUNCHER]:
+            if info and info[1] == want and os.path.basename(info[0]) == "sleep":
                 break
-            subprocess.run(["sleep", "0.1"])
-        self.assertEqual(os.path.basename(info[0]), "sleep")
+            time.sleep(0.05)
+        else:
+            self.fail("child never became sleep with the expected argv within 15 s; last info: %r" % (info,))
         self.assertEqual(info[1], ["%s docs hook pre-commit" % LAUNCHER, "30"])
         self.assertEqual(docs.ancestors()[0], os.getppid())
 
