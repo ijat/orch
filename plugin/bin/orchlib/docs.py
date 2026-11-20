@@ -10,14 +10,17 @@ Commands here work whatever the `agent_docs` setting says: it only gates orch's 
 """
 import ast
 import contextlib
+import hmac
 import io
 import os
 import re
+import secrets
 import shlex
 import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import types
 
 from .paths import OrchError, docs_store, pointer_path, private_dir
@@ -622,12 +625,21 @@ def write_exec(path, text):
     os.replace(tmp, path)
 
 
-def install_hooks(hooks_dir, chain_existing=False, dry_run=False, record=None, orch_bin=None):
+GIT_PATH_RE = re.compile(r"--git-path\s+['\"]?hooks\b")
+
+
+def warn_line(msg):
+    sys.stderr.write("%s: warning: %s\n" % (PREFIX, msg))
+
+
+def install_hooks(hooks_dir, chain_existing=False, dry_run=False, record=None, orch_bin=None, warn=None):
     """Write the three shims into hooks_dir. A foreign hook of the same name is refused, or with chain_existing
     renamed to <name>.pre-orch. Returns the changes: [("wrote", path) | ("renamed", from, to)]. Nothing is changed
     when anything has to be refused. With dry_run nothing is changed at all; record(change) is called right after
     each change is made, so a caller can keep a record that survives a failure half way. orch_bin is the launcher
-    written into the shims (default: the plugin link under the data root)."""
+    written into the shims (default: the plugin link under the data root). warn(message) is called once for each
+    hook that is kept as <name>.pre-orch and finds the repo's hook with `git rev-parse --git-path hooks` (it will run
+    the shim again: the re-entry guard in chain_hook handles that); default: a line on stderr."""
     orch_bin = os.path.abspath(orch_bin) if orch_bin else default_orch_bin()
     private = private_dir_effective()
     plan = []
@@ -652,8 +664,12 @@ def install_hooks(hooks_dir, chain_existing=False, dry_run=False, record=None, o
         if record and not dry_run:
             record(change)
 
+    warn = warn or warn_line
     for name, path, pre in plan:
         if pre:
+            if GIT_PATH_RE.search(read_text(path) or ""):
+                warn("%s finds the repo's hook with `git rev-parse --git-path hooks`, which leads back to the orch "
+                     "hook; orch runs the check once and then only the repo's own hook" % pre)
             if not dry_run:
                 os.rename(path, pre)
             made(("renamed", path, pre))
@@ -674,13 +690,87 @@ def cmd_install_hooks(ctx):
     return 0
 
 
-def chain_hook(name, args, cwd, stdin_data=None):
+MARKER_ENV = "ORCH_DOCS_HOOK"
+
+
+def marker_path(pid):
+    return os.path.join(tempfile.gettempdir(), "orch-docs-hook-%d-%d" % (getattr(os, "getuid", lambda: 0)(), pid))
+
+
+@contextlib.contextmanager
+def reentry_marker(name):
+    """While an orch hook runs the hook behind it (<name>.pre-orch), which may call the shim again: yields the
+    environment value that tells the second run it is inside the first. The value is `<pid>:<token>`; the token is
+    random and lives only in a 0600 file named for this process, so a committer who sets the variable by hand (any
+    pid, any token) is not believed (see reentered)."""
+    token = secrets.token_hex(16)
+    path = marker_path(os.getpid())
+    try:
+        os.unlink(path)     # a stale file of a dead process with this pid (a link is removed, never followed)
+    except OSError:
+        pass
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write("%s %s" % (name, token))
+        yield "%d:%s" % (os.getpid(), token)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def is_ancestor(pid):
+    """True when pid is a parent, grandparent, ... of this process (read with ps; only called on a re-entry, and
+    only after the marker file's token matched)."""
+    cur = os.getppid()
+    for _ in range(64):
+        if cur == pid:
+            return True
+        if cur <= 1:
+            return False
+        try:
+            res = subprocess.run(["ps", "-o", "ppid=", "-p", str(cur)], capture_output=True, text=True)
+        except OSError:
+            return True     # no ps here: the secret token in the marker file is what vouches for the marker
+        try:
+            cur = int(res.stdout.strip())
+        except ValueError:
+            return False
+    return False
+
+
+def reentered(name):
+    """True only when this run is inside the chain of an outer run of the same hook name: the variable names a live
+    ancestor process whose own marker file holds this hook name and exactly this token. Anything else (unset, a
+    guess, a stale value, another hook's) is ignored and the full check runs."""
+    m = re.fullmatch(r"([0-9]{1,10}):([0-9a-f]{32})", os.environ.get(MARKER_ENV, ""))
+    if not m:
+        return False
+    pid, token = int(m.group(1)), m.group(2)
+    if pid == os.getpid():
+        return False
+    try:
+        with open(marker_path(pid), "r", encoding="utf-8") as fh:
+            held = fh.read(200)
+    except OSError:
+        return False
+    if not hmac.compare_digest(held.encode(), ("%s %s" % (name, token)).encode()):
+        return False
+    return is_ancestor(pid)
+
+
+def chain_hook(name, args, cwd, stdin_data=None, reentry=False):
     """Run the hook this shim stands in front of: <name>.pre-orch beside it, else the repo's own under the git common
-    dir; never the shim itself. Returns its exit code (0 when there is none)."""
+    dir; never the shim itself. Returns its exit code (0 when there is none). While <name>.pre-orch runs, the re-entry
+    marker is in its environment (it may call the shim again, as a hook does that finds the repo's hook with
+    `git rev-parse --git-path hooks/<name>`). reentry=True is that second run: only the repo's own hook, without
+    the marker."""
     hooks = git(cwd, "rev-parse", "--git-path", "hooks").stdout.strip()
     shim = os.path.join(os.path.abspath(hooks), name) if hooks else None
     pre = shim + ".pre-orch" if shim else None
-    if pre and os.path.lexists(pre):
+    if not reentry and pre and os.path.lexists(pre):
         target = pre
     else:
         target = os.path.join(common_dir(cwd), "hooks", name)
@@ -693,8 +783,15 @@ def chain_hook(name, args, cwd, stdin_data=None):
             sys.stderr.write("pre-push: %s exists but can't run (dangling link or not executable); refusing the push\n" % target)
             return 1
         return 0
+    env = {k: v for k, v in os.environ.items() if k != MARKER_ENV}
     try:
-        return subprocess.run([target] + list(args), input=stdin_data, encoding="utf-8", errors="replace").returncode
+        if target == pre:
+            with reentry_marker(name) as value:
+                env[MARKER_ENV] = value
+                return subprocess.run([target] + list(args), input=stdin_data, encoding="utf-8", errors="replace",
+                                      env=env).returncode
+        return subprocess.run([target] + list(args), input=stdin_data, encoding="utf-8", errors="replace",
+                              env=env).returncode
     except OSError as exc:
         sys.stderr.write("%s hook: cannot run %s: %s\n" % (PREFIX, target, exc))
         return 1
@@ -702,6 +799,8 @@ def chain_hook(name, args, cwd, stdin_data=None):
 
 def hook_pre_push(args, cwd):
     data = sys.stdin.read()
+    if reentered("pre-push"):
+        return chain_hook("pre-push", args, cwd, stdin_data=data, reentry=True)
     remote = args[0] if args else ""
     for line in data.split("\n"):
         f = line.split()
@@ -727,6 +826,8 @@ def cmd_hook(ctx):
     if not ctx.paths or ctx.paths[0] not in HOOK_NAMES:
         raise OrchError("usage: orch docs hook pre-commit | pre-push <remote> <url> | post-checkout <old> <new> <flag>", 2)
     name, args = ctx.paths[0], ctx.paths[1:]
+    if name != "pre-push" and reentered(name):    # the hook behind this shim called it again: the check already ran
+        return chain_hook(name, args, ctx.cwd, reentry=True)
     if name == "pre-commit":
         if run_check("staged", [], ctx.cwd) != 0:
             return 1

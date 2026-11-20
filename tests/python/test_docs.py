@@ -40,12 +40,12 @@ class Base(unittest.TestCase):
             fh.write("\n".join(lines) + "\n")
         return path
 
-    def sh(self, cwd, *argv, env=None, stdin=None):
+    def sh(self, cwd, *argv, env=None, stdin=None, timeout=None):
         """Run a command with the isolated env; returns the CompletedProcess (no assertion)."""
         e = dict(os.environ)
         e.update(self.env)
         e.update(env or {})
-        return subprocess.run(list(argv), cwd=cwd, capture_output=True, text=True, env=e, input=stdin)
+        return subprocess.run(list(argv), cwd=cwd, capture_output=True, text=True, env=e, input=stdin, timeout=timeout)
 
     def git(self, cwd, *args):
         env = dict(os.environ)
@@ -744,6 +744,114 @@ class TestHooks(Base):
         env["AGENTDOCS_ALLOW"] = "0"
         res = self.sh(r, "git", "checkout", "-q", "-b", "other", env=env)
         self.assertEqual(res.returncode, 0, res.stderr)
+
+    def global_hooks(self, name="gh"):
+        """A global hooks dir (core.hooksPath in the temp global config) holding orch shims, as `orch docs enable` leaves it."""
+        d = os.path.join(self.tmp, name)
+        res = self.sh(self.tmp, LAUNCHER, "docs", "install-hooks", "--orch-bin", LAUNCHER, "--dir", d)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.git(self.tmp, "config", "--global", "core.hooksPath", d)
+        return d
+
+    def looping_pre_orch(self, hooks, log):
+        """The hook that hung the first live commit: it finds the repo's hook with `git rev-parse --git-path` (under a
+        global hooks dir that is the shim again) and compares it with itself only."""
+        path = os.path.join(hooks, "pre-commit.pre-orch")
+        with open(path, "w") as fh:
+            fh.write('#!/bin/sh\necho pre-orch >> %s\nrepo_hook="$(git rev-parse --git-path hooks/pre-commit)"\n'
+                     '[ -x "$repo_hook" ] && [ "$repo_hook" != "$0" ] && exec "$repo_hook" "$@"\nexit 0\n' % shlex.quote(log))
+        os.chmod(path, 0o755)
+
+    def test_a_pre_orch_hook_that_calls_the_shim_again_neither_loops_nor_checks_twice(self):
+        hooks = self.global_hooks()
+        log = os.path.join(self.tmp, "ran.log")
+        self.looping_pre_orch(hooks, log)
+        r = self.repo("lp")
+        own = os.path.join(r, ".git", "hooks", "pre-commit")
+        with open(own, "w") as fh:
+            fh.write("#!/bin/sh\necho repo-hook >> %s\n" % shlex.quote(log))
+        os.chmod(own, 0o755)
+        if os.path.exists(log):     # the repo's first commit already went through the hooks
+            os.unlink(log)
+        self.git(r, "config", "agentdocs.mode", "warn")       # the finding is reported on each check run, never blocks
+        with open(os.path.join(r, "CLAUDE.md"), "w") as fh:
+            fh.write("rules\n")
+        self.git(r, "add", "-f", "CLAUDE.md")
+        res = self.sh(r, "git", "commit", "-q", "-m", "x", timeout=60)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(res.stderr.count("would enter this repo"), 1, res.stderr)     # the orch check ran once
+        self.assertEqual(slurp(log).split(), ["pre-orch", "repo-hook"])                # each hook once
+        self.assertEqual(self.git(r, "rev-list", "--count", "HEAD").strip(), "2")
+        self.assertFalse([n for n in os.listdir(tempfile.gettempdir()) if n.startswith("orch-docs-hook-%d-" % os.getpid())])
+
+    def test_a_forged_marker_does_not_skip_the_check(self):
+        hooks = self.global_hooks()
+        self.looping_pre_orch(hooks, os.path.join(self.tmp, "ran.log"))
+        r = self.repo("fg")
+        with open(os.path.join(r, "CLAUDE.md"), "w") as fh:
+            fh.write("rules\n")
+        self.git(r, "add", "-f", "CLAUDE.md")
+        for value in ("1:" + "0" * 32, "%d:%s" % (os.getpid(), "a" * 32), "%d:%s" % (os.getppid(), "b" * 32), "1", "x:y",
+                      "%d:%s" % (os.getpid(), "c" * 32), ""):
+            res = self.sh(r, "git", "commit", "-q", "-m", "x", env={docs.MARKER_ENV: value}, timeout=60)
+            self.assertNotEqual(res.returncode, 0, value)
+            self.assertIn("    CLAUDE.md", res.stderr, value)
+        self.assertEqual(self.git(r, "rev-list", "--count", "HEAD").strip(), "1")
+
+    def test_reentered_believes_only_a_live_ancestor_with_the_matching_token(self):
+        pid, token = os.getpid(), "ab" * 16
+        path = docs.marker_path(pid)
+        with open(path, "w") as fh:
+            fh.write("pre-commit %s" % token)
+        self.addCleanup(lambda: os.path.exists(path) and os.unlink(path))
+        code = ("import sys; sys.path.insert(0, %r); from orchlib import docs; print(docs.reentered(sys.argv[1]))"
+                % os.path.join(os.path.dirname(os.path.dirname(HERE)), "plugin", "bin"))
+
+        def believed(name, value):
+            res = self.sh(self.tmp, sys.executable, "-c", code, name, env={docs.MARKER_ENV: value})
+            self.assertEqual(res.returncode, 0, res.stderr)
+            return res.stdout.strip() == "True"
+
+        self.assertTrue(believed("pre-commit", "%d:%s" % (pid, token)))
+        self.assertFalse(believed("pre-commit", "%d:%s" % (pid, "cd" * 16)))      # wrong token
+        self.assertFalse(believed("pre-push", "%d:%s" % (pid, token)))            # another hook's marker
+        self.assertFalse(believed("pre-commit", ""))
+        self.assertFalse(believed("pre-commit", "%d:%s" % (pid + 100000, token)))   # no such marker file
+        other = subprocess.Popen(["sleep", "30"])                                  # a live process, not an ancestor
+        self.addCleanup(lambda: (other.kill(), other.wait()))
+        with open(docs.marker_path(other.pid), "w") as fh:
+            fh.write("pre-commit %s" % token)
+        self.addCleanup(os.unlink, docs.marker_path(other.pid))
+        self.assertFalse(believed("pre-commit", "%d:%s" % (other.pid, token)))
+
+    def test_warning_only_for_a_kept_hook_that_uses_git_path(self):
+        for body, warned in (('#!/bin/sh\nh="$(git rev-parse --git-path hooks/pre-commit)"\n', True),
+                             ('#!/bin/sh\nh="$(git rev-parse --git-common-dir)/hooks/pre-commit"\n', False)):
+            d = os.path.join(self.tmp, "w%d" % warned)
+            os.makedirs(d)
+            with open(os.path.join(d, "pre-commit"), "w") as fh:
+                fh.write(body)
+            os.chmod(os.path.join(d, "pre-commit"), 0o755)
+            res = self.sh(self.tmp, LAUNCHER, "docs", "install-hooks", "--orch-bin", LAUNCHER, "--dir", d, "--chain-existing")
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertEqual(res.stderr.count("warning:"), 1 if warned else 0, res.stderr)
+            if warned:
+                self.assertIn("pre-commit.pre-orch", res.stderr)
+                self.assertEqual(self.sh(self.tmp, LAUNCHER, "docs", "install-hooks", "--orch-bin", LAUNCHER, "--dir", d,
+                                         "--chain-existing").stderr, "")     # an installed shim is not warned about again
+
+    def test_a_shim_from_an_earlier_version_is_rewritten(self):
+        d = os.path.join(self.tmp, "old")
+        os.makedirs(d)
+        for n in docs.HOOK_NAMES:
+            with open(os.path.join(d, n), "w") as fh:
+                fh.write("#!/bin/sh\n# orch docs hook\n# an older body\nexit 0\n")
+            os.chmod(os.path.join(d, n), 0o755)
+        res = self.sh(self.tmp, LAUNCHER, "docs", "install-hooks", "--orch-bin", LAUNCHER, "--dir", d)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        for n in docs.HOOK_NAMES:
+            self.assertIn('docs hook %s "$@"' % n, slurp(os.path.join(d, n)))
+            self.assertNotIn("older body", slurp(os.path.join(d, n)))
 
 
 def tree_state(root):
