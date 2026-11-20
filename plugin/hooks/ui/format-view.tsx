@@ -805,10 +805,12 @@ function richOf(el: ElementTable<'terminal'>, text: string, force?: Kind) {
 // Blocks as Markdown would see them: blank lines separate them, a fenced block runs to its closing fence (blank lines
 // inside included), a table is one block.
 const TABLE_LINE = /^\s*\|/
+const FENCE_OPEN = /^\s*(`{3,}|~{3,})/
 function splitBlocks(text: string): string[] {
   const blocks: string[] = []
   let cur: string[] = []
-  let fence: string | null = null
+  // The opening fence: its character and run length; only a run of the same character at least as long closes it.
+  let fence: { char: string; len: number } | null = null
   let table = false
   const flush = () => {
     if (cur.length > 0) blocks.push(cur.join('\n'))
@@ -819,17 +821,18 @@ function splitBlocks(text: string): string[] {
     if (fence !== null) {
       cur.push(line)
       const t = line.trim()
-      if (t.length >= 3 && t.split('').every(c => c === fence)) {
+      if (t.length >= fence.len && t.split('').every(c => c === fence?.char)) {
         flush()
         fence = null
       }
       continue
     }
-    const open = FENCE.exec(line)
+    const open = FENCE_OPEN.exec(line)
     if (open) {
       flush()
       cur.push(line)
-      fence = (open[1] ?? '`').charAt(0)
+      const run = open[1] ?? '```'
+      fence = { char: run.charAt(0), len: run.length }
       continue
     }
     if (line.trim() === '') {
@@ -845,9 +848,20 @@ function splitBlocks(text: string): string[] {
   return blocks
 }
 
-// What Markdown would draw differently from a plain Text, beyond what NOT_INLINE names: rules, setext underlines,
-// strikethrough, an html tag or autolink.
-const NOT_PLAIN = /^\s*(?:([-*_])(?:\s*\1){2,}|=+|-+)\s*$|~~[^~]+~~|<[a-zA-Z/!]/m
+// What Markdown would draw differently from a plain Text, beyond what NOT_INLINE names: a list item line (a lead-in line
+// directly followed by bullets, a `+` bullet, an `1)` item), a table delimiter row (also one without outer pipes), rules,
+// setext underlines, an indented code line, a link reference, `[a][b]`, strikethrough, an html tag or autolink, a backslash escape.
+const NOT_PLAIN = new RegExp([
+  '^\\s*(?:[-*+]|\\d+[.)])\\s',
+  '^\\s*:?-+:?\\s*(?:\\|\\s*:?-+:?\\s*)+\\|?\\s*$',
+  '^\\s*(?:([-*_])(?:\\s*\\1){2,}|=+|-+)\\s*$',
+  '^(?: {4}|\\t)\\S',
+  '^\\s*\\[[^\\]]+\\]:',
+  '\\[[^\\]]+\\]\\[',
+  '~~[^~]+~~',
+  '<[a-zA-Z/!]',
+  '\\\\[\\\\`*_{}\\[\\]()#+.!|-]',
+].join('|'), 'm')
 // A code span or a bare commit hash: what a pill is drawn for.
 const PILLISH = new RegExp('`[^`\\n]+`|\\b' + HEX + '\\b')
 const NESTED_ITEM = /^\s+(?:[-*]|\d+\.)\s/
@@ -1277,7 +1291,7 @@ export function registerFormat(on: On) {
       if (turn.at != null && bornIn(e.requestId, turn) === turn.n) return asIs()
       return drawPlain(el, shown) ?? asIs()
     }
-    if ((await read($, fmtOn)) !== true) return (await readMark($, keyOf(text))) === true ? asIs() : plain()
+    if ((await read($, fmtOn)) !== true) return !orchestrator || (await readMark($, keyOf(text))) === true ? asIs() : plain()
     // The original is not complete yet: the placeholder, counting from the start of the turn.
     if (streaming) return drawPlaceholder(el, await read($, fmtFrame), begun ?? (await read($, fmtTurn)).at ?? undefined)
     const key = keyOf(text)

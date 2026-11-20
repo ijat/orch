@@ -3023,3 +3023,41 @@ test('Inline pills: the marker line is not drawn, with Format replies off', asyn
   expect((await texts(ui)).join('\n')).not.toContain('<!--')
   await ui.unmount()
 })
+
+// Blocks Markdown parses as more than a plain paragraph go to Markdown whole, even when they hold a backticked reference.
+const MARKDOWN_BLOCKS: [string, string][] = [
+  ['a lead-in line and `-` bullets', 'Steps:\n- `a.ts`\n- `b.ts`'],
+  ['a lead-in line and `*` bullets', 'Steps:\n* `a.ts`\n* `b.ts`'],
+  ['`+` bullets', '+ `a.ts`\n+ `b.ts`'],
+  ['a bullet with a lazy continuation line', '- `a.ts`\nlazy line'],
+  ['a lead-in line and an `1)` list', 'Order:\n1) `a.ts`\n2) `b.ts`'],
+  ['a table without outer pipes', 'a | `b`\n--- | ---\nc | d'],
+]
+
+for (const [name, block] of MARKDOWN_BLOCKS) {
+  test(`Inline pills: ${name} is drawn by Markdown as written, and a plain paragraph beside it still gets its pill`, async ($, on) => {
+    await boot($, on, PILLS_SEED)
+    await orchestrate($)
+    const ui = await show($, `Plain with \`src/a.ts\`.\n\n${block}`)
+    expect(await pillCount(ui)).toBe(1)
+    expect(await markdownsOf(ui)).toEqual([block])
+    await ui.unmount()
+  })
+}
+
+test('Inline pills: a longer opening fence is not closed by a shorter run inside it', async ($, on) => {
+  await boot($, on, PILLS_SEED)
+  await orchestrate($)
+  const fence = '````md\n```sh\n\necho `date`\n```\n````'
+  const ui = await show($, `Plain with \`src/a.ts\`.\n\n${fence}\n\nAfter \`b.rs\`.`)
+  expect(await pillCount(ui)).toBe(2)
+  expect(await markdownsOf(ui)).toEqual([fence])
+  await ui.unmount()
+})
+
+test('Inline pills: in a session that never loaded the skill the reply is the engine\'s row (no pill work)', async ($, on) => {
+  await boot($, on, PILLS_SEED)
+  const ui = await show($, PLAIN_REPLY)
+  expect(await isOriginal(ui)).toBe(true)
+  await ui.unmount()
+})
