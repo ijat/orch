@@ -599,7 +599,7 @@ names other work is that work, not a resume. The outcomes:
 - `resume <repo>/<slug>`: resume that task without asking.
 - `ask`: ask the user which of the listed tasks to resume (the startup choice, asked as the global block says).
 - `none`: say no task is active here and name the other repos' tasks it lists; if the project has its own hand-off file
-  (`docs/STATE.md`, `STATE.md`), offer its next step.
+  (`docs/STATE.md`, `STATE.md`; under `.agent/` when the repo has a `.agent` link), offer its next step.
 
 If a task matches this work, `orch resume <repo>/<slug>` prints a packet (its one write is the `driver_session` field of `status.md`, so
 the pane shows the task for this session; times are kept); read it (an old layout it can't read: `status.md` and `log.md`) before anything else, tell the user where things
@@ -622,7 +622,8 @@ shows the proposal, and has the `orch:init` agent write the files in the repo's 
 base branch with one commit. The user may skip; journal the choice (`override` if they skipped against
 the recommendation, else `judgement`) and log `init: set up` or `init: skipped`. Then go on to step 4:
 if set up, the planner's brief names `CLAUDE.md`, `docs/STATE.md`, `docs/DECISIONS.md` and
-`~/.claude/orch-data/tasks/<repo-name>/init.md` as required reading, and the init commit is the base the
+`~/.claude/orch-data/tasks/<repo-name>/init.md` as required reading (with the switch on, init puts the first three in the private
+store, linked at the same paths), and the init commit is the base the
 plan is made against; after a skip those files do not exist and the brief omits them.
 
 ### 4. Plan
@@ -698,6 +699,10 @@ orch:security-reviewer-mythos --tier mythos/high …`, then the `Agent` tool wit
 ```bash
 git -C <repo> worktree add .claude/worktrees/orch-<task-slug> -b orch/<task-slug> <base-branch>
 ```
+
+When `orch setting get agent_docs` prints `on`, run `orch docs link -C <worktree>` after the worktree exists (after `checkout`, for a
+sparse one): it links `.agent/` and the repo's agent docs into it, and does nothing when the repo has no store entry. A worktree
+under `.claude/worktrees/` skips `CLAUDE.md` and `AGENTS.md`, which it already inherits from the main checkout.
 
 Base = the user's current branch unless they say otherwise. Record worktree, branch, and base in
 `status.md` (`orch set worktree=<path>`, before the first `orch brief`: a work, review or security brief with no worktree

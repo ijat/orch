@@ -83,8 +83,8 @@ instead. Never overwrite an existing `CLAUDE.md`.
    `basis: rule | no_reference` (and `--basis "rule | no_reference"` on `orch spawn` in orchestration): the tier
    guard refuses an above-default spawn without it. The brief: repo path, mode `new`, the base
    branch (the one `orch init --base` recorded; outside orchestration, the repo's current or intended
-   default branch, asked if unknown), the answers, the skill dir, the global `CLAUDE.md` path, and "phase 1: write the proposal only, no repo
-   writes". It researches current tooling (web, dated), reads `references/architecture.md` and
+   default branch, asked if unknown), the answers, the skill dir, the global `CLAUDE.md` path, what `orch setting get agent_docs` prints
+   (`on` = store mode, below), and "phase 1: write the proposal only, no repo writes". It researches current tooling (web, dated), reads `references/architecture.md` and
    `references/<ecosystem>.md`, and writes `~/.claude/orch-data/tasks/<repo-name>/init-proposal.md`
    from `templates/proposal.md`: the file list with sizes (including untracked docs already in the
    repo, which the init commit will include), the filled CLAUDE.md, the commands it ran and their
@@ -105,6 +105,14 @@ instead. Never overwrite an existing `CLAUDE.md`.
    from the base has the user's specs). It never adds a remote and never pushes.
    It then writes `~/.claude/orch-data/tasks/<repo-name>/init.md` from `templates/init-record.md`
    (`refresh: pending`).
+   **Store mode** (`agent_docs` is `on`): agent docs never enter the repo. In the main checkout the agent runs
+   `orch docs init`, writes every file the proposal lists whose path the deny-paths check refuses (`CLAUDE.md`,
+   `AGENTS.md`, `docs/STATE.md`, `docs/DECISIONS.md`, and `CLAUDE.local.md` or `.claude/…` when chosen) at
+   `.agent/<path>`, links each with `orch docs add <path>`, adopts untracked docs of that kind the proposal
+   listed with `orch docs adopt <path>`, then runs `orch docs commit`. The one git commit
+   `chore: initialize project (orch:init)` holds only the other files (README, LICENSE, `.gitignore` lines, gate and CI
+   files) and is skipped when there are none; `orch docs check staged` passes on it. With the switch off, none of this
+   applies: the text above is unchanged.
 7. **Verify** (agent, before it reports), limited to what init wrote: every command in CLAUDE.md
    `Commands` that can run on the repo as it is was run and the result is in the report; a command that
    needs code that does not exist yet is marked `not yet runnable (no code)` in CLAUDE.md and is not
@@ -113,6 +121,7 @@ instead. Never overwrite an existing `CLAUDE.md`.
    shows no `CLAUDE.local.md`, `.env*` (except `.env.example`) or `.claude/settings.local.json`; every
    file CLAUDE.md names as existing exists (paths marked "to be created by the first plan" are exempt);
    after the commit `git status --porcelain` is empty for the paths init wrote or the proposal listed.
+   In store mode `git ls-files` also shows none of the agent docs, and `orch docs status` lists them as `ok` links.
 8. **Hand off.** Return to orchestrate step 4. The planner's brief names `CLAUDE.md`,
    `docs/STATE.md`, `docs/DECISIONS.md` and `~/.claude/orch-data/tasks/<repo-name>/init.md` as required
    reading (each "if set up": after a skip they do not exist and the brief omits them), and the init
@@ -127,7 +136,8 @@ mode, the first milestone) has merged. Same two phases: the agent diffs CLAUDE.m
 the architecture notes against the repo as built (real commands re-run, real layout), writes a
 proposal of diffs only; the user is asked through a parked question (`orch ask`; outside orchestration, in text), options explained: **Approve (recommended)** / **Skip** /
 **Hold on**. On Approve: one commit `chore: refresh project docs (orch:init)`, and `init.md` becomes
-`refresh: done`. On Skip: you set `refresh: skipped` in `init.md` yourself (the agent is not running)
+`refresh: done`. In store mode the agent edits the files at `.agent/<path>` and runs `orch docs commit`; the git commit is
+made only when other files changed, and never stages an agent doc. On Skip: you set `refresh: skipped` in `init.md` yourself (the agent is not running)
 and log it, so the refresh is not offered again. Orchestrate fires the refresh only on `pending`.
 Later refreshes happen only through `audit` on request. Never refresh while the tree has uncommitted
 work you did not start. Re-running commands in phase 1 follows the audit rule below (non-mutating only).
@@ -190,6 +200,7 @@ Content rules:
 - Write the repo in `audit` mode, or before the user approved the proposal.
 - Deploy, or touch anything outside the repo and `~/.claude/orch-data/tasks/<repo-name>/`.
 - Commit a secret, a real credential, `.env`, `CLAUDE.local.md` or `settings.local.json`.
+- In store mode (`agent_docs` on), stage or commit an agent doc: any path `orch docs check` refuses.
 - Install tools or global config on the user's machine: it proposes the commands, the user decides.
 - Treat the permission/hook snippets as security: they are config text; deny rules are the control.
 

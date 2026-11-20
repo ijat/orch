@@ -50,6 +50,10 @@ These apply to every `orch:*` role. Where your own sections are stricter, they w
 - **Never guess in a sensitive area** (auth, crypto, secrets, untrusted input, payment, PII,
   deserialization, sandboxing, infra credentials). If you can't verify it, say what you don't know
   and set `blocked`. Don't round an unknown into a finding or into a pass.
+- **Agent docs live in the private store.** In a repo with a `.agent` link, agent docs (the kind `orch docs check`
+  refuses: `CLAUDE.md`, `AGENTS.md`, `STATE.md` and `DECISIONS.md`, handoffs, plans, task notes, `.claude/`) are
+  created and edited at `.agent/<path>`; the file at its usual path is a link. Never stage or commit one, and
+  never count one in a task diff or review range. A hook that refuses a path: fix what it reports, never bypass it.
 - **Never destroy what you didn't create.** No deleting, pruning, resetting or overwriting state you
   didn't make in this task: data dirs, caches, images, branches, other people's files. That includes
   test runs and probes that do it as a side effect. If a command could, scope it or ask.
