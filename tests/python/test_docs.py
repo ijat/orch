@@ -872,9 +872,70 @@ class TestHooks(Base):
     def test_a_depth_value_can_only_refuse(self):
         self.global_hooks()
         r = self.repo("dp")
-        for value, refused in (("3", True), ("99", True), ("-5", False), ("x", False), ("", False)):
+        here = "pre-commit:" + os.path.realpath(r)
+        for value, refused in (("3:" + here, True), ("99:" + here, True), ("99:pre-commit:" + self.tmp, False),
+                               ("99:post-checkout:" + os.path.realpath(r), False), ("3", False), ("99", False),
+                               ("-5:" + here, False), ("x:" + here, False), ("x", False), ("", False)):
             res = self.sh(r, "git", "commit", "-q", "--allow-empty", "-m", "x", env={docs.DEPTH_ENV: value}, timeout=60)
             self.assertEqual(res.returncode != 0, refused, (value, res.stderr))
+            if refused:
+                self.assertIn("hooks deep", res.stderr)
+
+    def nested_commits(self, with_pre_orch):
+        """F9: four repos under the global shims; each repo's own pre-commit commits in the next one (a clean
+        environment for that repo, as a real hook must), so the commit in the first runs the hooks four levels deep."""
+        hooks = self.global_hooks()
+        log = os.path.join(self.tmp, "ran.log")
+        if with_pre_orch:
+            self.looping_pre_orch(hooks, log)
+        repos = [self.repo("n%d" % i) for i in range(4)]
+        for i, r in enumerate(repos):
+            self.git(r, "config", "agentdocs.mode", "warn")     # each check reports CLAUDE.md once, never blocks
+            with open(os.path.join(r, "CLAUDE.md"), "w") as fh:
+                fh.write("rules\n")
+            self.git(r, "add", "-f", "CLAUDE.md")
+            own = os.path.join(r, ".git", "hooks", "pre-commit")
+            body = "#!/bin/sh\necho repo-hook-%d >> %s\n" % (i, shlex.quote(log))
+            if i + 1 < len(repos):
+                body += ("unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX\ncd %s && git commit -q -m nested\n"
+                         % shlex.quote(repos[i + 1]))
+            with open(own, "w") as fh:
+                fh.write(body)
+            os.chmod(own, 0o755)
+        if os.path.exists(log):
+            os.unlink(log)
+        res = self.sh(repos[0], "git", "commit", "-q", "-m", "x", timeout=120)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertNotIn("refusing instead of looping", res.stderr)
+        self.assertEqual(res.stderr.count("would enter this repo"), len(repos), res.stderr)    # each repo checked once
+        ran = slurp(log).split()
+        self.assertEqual([w for w in ran if w.startswith("repo-hook")], ["repo-hook-%d" % i for i in range(4)])
+        self.assertEqual(ran.count("pre-orch"), len(repos) if with_pre_orch else 0)
+        for r in repos:
+            self.assertEqual(self.git(r, "rev-list", "--count", "HEAD").strip(), "2")
+
+    def test_a_repo_hook_committing_in_other_repos_is_never_refused_by_the_depth_limit(self):
+        self.nested_commits(with_pre_orch=False)
+
+    def test_a_repo_hook_committing_in_other_repos_under_a_re_entering_pre_orch(self):
+        self.nested_commits(with_pre_orch=True)
+
+    def test_a_repo_hook_that_keeps_calling_the_shim_is_refused_not_looped(self):
+        """A recognised run passes the depth counter on unchanged; a repo hook that calls the global shim again is
+        ended by the count of orch runs above it instead."""
+        hooks = self.global_hooks()
+        log = os.path.join(self.tmp, "ran.log")
+        r = self.repo("rl")
+        own = os.path.join(r, ".git", "hooks", "pre-commit")
+        with open(own, "w") as fh:
+            fh.write('#!/bin/sh\necho repo-hook >> %s\nexec %s "$@"\n'
+                     % (shlex.quote(log), shlex.quote(os.path.join(hooks, "pre-commit"))))
+        os.chmod(own, 0o755)
+        res = self.sh(r, "git", "commit", "-q", "--allow-empty", "-m", "x", timeout=60)
+        self.assertNotEqual(res.returncode, 0, res.stderr)
+        self.assertIn("already above this one", res.stderr)
+        self.assertEqual(slurp(log).split(), ["repo-hook"] * docs.MAX_HOOK_DEPTH)
+        self.assertEqual(self.git(r, "rev-list", "--count", "HEAD").strip(), "1")
 
     def test_is_outer_hook_needs_the_same_interpreter_launcher_name_and_directory(self):
         me = ("/usr/bin/python3", ["python3", LAUNCHER, "docs", "hook", "pre-commit"], self.tmp)
