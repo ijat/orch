@@ -66,6 +66,11 @@ def private_dir():
     return os.path.join(data_root(), "private")
 
 
+def docs_store():
+    """The private agent-docs store (a local git repo, one dir per repo): AGENTDOCS_STORE, else <data root>/docs."""
+    return os.environ.get("AGENTDOCS_STORE") or os.path.join(data_root(), "docs")
+
+
 def backups_dir():
     return os.path.join(data_root(), "backups")
 

@@ -223,7 +223,7 @@ class Launcher(Case):
     def test_hooks_json_wires_it(self):
         with open(os.path.join(BIN, "..", "hooks", "hooks.json")) as f:
             hooks = json.load(f)["hooks"]["PreToolUse"]
-        self.assertEqual([h["matcher"] for h in hooks], ["Agent|Task", "AskUserQuestion"])
+        self.assertEqual([h["matcher"] for h in hooks], ["Agent|Task", "AskUserQuestion", "Bash"])
         self.assertEqual(hooks[0]["hooks"][0]["command"], '"${CLAUDE_PLUGIN_ROOT}/bin/orch" hook tier')
 
 

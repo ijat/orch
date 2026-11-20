@@ -20,7 +20,7 @@ NO_INIT = "|".join(sorted((r for r in ROLES if r != "init"), key=len, reverse=Tr
 
 LEGACY_AGENT = re.compile(r"(?<![\w.:-])orch-(%s)(?![\w-])" % NO_INIT)
 AGENT_WORD = re.compile(r"orch:(\*|[A-Za-z][\w-]*)")
-MARKERS = {"begin", "end"}  # `<!-- orch:begin` / `<!-- orch:end` in the CLAUDE.md block template
+MARKERS = {"begin", "end", "if", "endif"}  # `<!-- orch:begin` / `<!-- orch:end` / `<!-- orch:if` / `<!-- orch:endif` in the CLAUDE.md block template
 PLUGIN_ROOT = "${CLAUDE_PLUGIN_ROOT}"
 ROOT_PATH = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT\}(/[^\s`'\")<{…,;]*)?")
 REMOVED_TOOLS = re.compile(r"orch-build-agents|sync-live|export\.py|install\.sh|orch-build-hook")

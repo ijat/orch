@@ -1,0 +1,17 @@
+# Paths that hold agent/internal docs. One extended regex per line, matched against repo-relative paths.
+# A repo with `git config agentdocs.allow true` is exempt.
+(^|/)CLAUDE(\.local)?\.md$
+(^|/)AGENTS\.md$
+(^|/)GEMINI\.md$
+(^|/)\.agent(/|$)
+(^|/)\.claude(/|$)
+(^|/)\.cursor(/|$)
+(^|/)\.codex(/|$)
+(^|/)copilot-instructions\.md$
+(^|/)ai-docs(/|$)
+(^|/)human-docs(/|$)
+^docs/(STATE|DECISIONS|lessons|todo|TODO|PLAN|PUBLIC-RELEASE)\.md$
+^(STATE|DECISIONS|PLAYBOOK|HANDOFF|LESSONS)\.md$
+^docs/(tasks|notes|plans|handoff)/
+(^|/)[^/]*handoff[^/]*\.md$
+(^|/)[^/]*bug-ledger[^/]*\.md$

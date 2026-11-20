@@ -476,9 +476,12 @@ def cmd_hook(ns, extra):
     if ns.which == "tier":
         from . import tierguard
         return tierguard.run()
+    if ns.which == "git-guard":
+        from . import gitguard
+        return gitguard.run()
     return run()
 
 
 def register(add):
-    sp = add("hook", cmd_hook, "PreToolUse hooks (hook delegate: send repo-wide searches to orch:explorer; hook tier: keep explorer, executor and graph on haiku/low)")
-    sp.add_argument("which", choices=["delegate", "tier"])
+    sp = add("hook", cmd_hook, "PreToolUse hooks (hook delegate: send repo-wide searches to orch:explorer; hook tier: keep explorer, executor and graph on haiku/low; hook git-guard: refuse commands that bypass the agent-docs hooks, with agent_docs on)")
+    sp.add_argument("which", choices=["delegate", "tier", "git-guard"])

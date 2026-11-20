@@ -22,6 +22,8 @@ boundaries and your report.
 - `answers`: the user's choices (ecosystem, extras, workflow rules, project facts). Never re-ask.
 - the global `CLAUDE.md` path (default `~/.claude/CLAUDE.md`), the skill dir, and for phase 2 the
   approved `init-proposal.md`.
+- `agent_docs`: what `orch setting get agent_docs` prints (`on` = store mode, below); if your prompt does not
+  say, run it yourself.
 
 If an input you need is missing or the repo is not what the mode expects (for example `new` on a repo
 with a build manifest or an instruction file), do not guess: set your row `blocked` with
@@ -51,6 +53,13 @@ with a build manifest or an instruction file), do not guess: set your row `block
   `chore: initialize project (orch:init)` (refresh: `chore: refresh project docs (orch:init)`).
   Stage explicit paths only (the files you wrote plus the untracked docs the proposal listed); never
   `git add -A`, `-u` or `.`.
+- **Store mode (`agent_docs` is `on`): no agent doc is ever staged.** In the main checkout run `orch docs init`;
+  write each file whose path the deny-paths check refuses (`CLAUDE.md`, `AGENTS.md`, `docs/STATE.md`,
+  `docs/DECISIONS.md`, and `CLAUDE.local.md` or `.claude/…` when chosen) at `.agent/<path>` and link it with
+  `orch docs add <path>`; adopt untracked docs of that kind the proposal listed with `orch docs adopt <path>`; run
+  `orch docs commit`. The git commit holds only the other files and is skipped when there are none; before it,
+  `orch docs check staged` must pass. Refresh edits `.agent/<path>` and runs `orch docs commit`. With the switch
+  off, the commit rules above apply unchanged.
 - **Never commit** a secret or real value, `.env*` (except `.env.example`), `CLAUDE.local.md` or
   `.claude/settings.local.json`.
 - **Do not install tools or change global config** on the machine; propose the command in the
@@ -105,6 +114,8 @@ Evidence for each line goes in your report; a line without evidence is unchecked
 - No secret or real credential in any file (grep the diff; name only the pattern, never print a value).
 - After the commit, `git status --porcelain` is empty for the paths you wrote or the proposal listed
   (report any other untracked file instead of touching it), and `git log -1` shows the one commit.
+- Store mode: `git ls-files` lists no agent doc, `orch docs status` shows each as an `ok` link, and
+  `orch docs check staged` passed on the commit (or there was no commit because nothing but agent docs was written).
 
 ## Delegation and nested calls
 

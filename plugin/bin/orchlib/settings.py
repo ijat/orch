@@ -13,6 +13,8 @@ from .paths import OrchError, data_root, require_write_allowed, warn_stderr, wri
 # name -> (default, allowed values)
 SETTINGS = {
     "mythos_review": ("off", ("on", "off")),
+    # Keep agent docs out of repos: the managed CLAUDE.md block carries the rule text, the git guard acts (orch docs).
+    "agent_docs": ("off", ("on", "off")),
     # Whether the memory skill has already offered the global auto-memory switch (it offers it once).
     "memory_global_offered": ("no", ("yes", "no")),
 }
@@ -55,6 +57,19 @@ def get(name):
 def _known(name):
     if name not in SETTINGS:
         raise OrchError("unknown setting %r (known: %s)" % (name, ", ".join(sorted(SETTINGS))), 1)
+
+
+def update(values=None, delete=()):
+    """Write settings.json with `values` set and the keys in `delete` removed, keeping every other key. For orch's own
+    records (not user-settable names); a refused write raises OrchError like `setting set`."""
+    require_write_allowed()
+    data = load()
+    data.update(values or {})
+    for key in delete:
+        data.pop(key, None)
+    path = settings_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    write_atomic(path, (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8"))
 
 
 def cmd_setting(ns, extra):
