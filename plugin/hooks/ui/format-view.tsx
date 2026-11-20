@@ -864,7 +864,7 @@ const NOT_PLAIN = new RegExp([
 ].join('|'), 'm')
 // A code span or a bare commit hash: what a pill is drawn for.
 const PILLISH = new RegExp('`[^`\\n]+`|\\b' + HEX + '\\b')
-const NESTED_ITEM = /^\s+(?:[-*]|\d+\.)\s/
+const NESTED_ITEM = /^\s+(?:[-*+]|\d+[.)])\s/
 
 // The items of a block that is only `-`/`*` bullets (indented lines continue the item above), else null.
 function bulletItems(block: string): string[] | null {

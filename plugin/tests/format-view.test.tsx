@@ -3031,6 +3031,8 @@ const MARKDOWN_BLOCKS: [string, string][] = [
   ['`+` bullets', '+ `a.ts`\n+ `b.ts`'],
   ['a bullet with a lazy continuation line', '- `a.ts`\nlazy line'],
   ['a lead-in line and an `1)` list', 'Order:\n1) `a.ts`\n2) `b.ts`'],
+  ['a nested `+` list under a bullet', '- `a.ts`\n  + `b.ts`'],
+  ['a nested `1)` list under a bullet', '- `a.ts`\n  1) `b.ts`'],
   ['a table without outer pipes', 'a | `b`\n--- | ---\nc | d'],
 ]
 
