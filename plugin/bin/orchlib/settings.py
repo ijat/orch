@@ -13,6 +13,8 @@ from .paths import OrchError, data_root, require_write_allowed, warn_stderr, wri
 # name -> (default, allowed values)
 SETTINGS = {
     "mythos_review": ("off", ("on", "off")),
+    # Keep agent docs out of repos: the managed CLAUDE.md block carries the rule text, the git guard acts (orch docs).
+    "agent_docs": ("off", ("on", "off")),
     # Whether the memory skill has already offered the global auto-memory switch (it offers it once).
     "memory_global_offered": ("no", ("yes", "no")),
 }

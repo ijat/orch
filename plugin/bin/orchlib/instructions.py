@@ -5,12 +5,16 @@ import os
 import re
 import shutil
 
+from . import settings
 from .paths import OrchError, agent_key, require_write_allowed, tilde, write_atomic
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(os.path.dirname(os.path.dirname(HERE)), "skills", "orchestrate", "templates", "claude-md-block.md")
 BEGIN = "<!-- orch:begin"
 END = "<!-- orch:end"
+ENDIF = "<!-- orch:endif"
+IF_RE = re.compile(r"^<!-- orch:if (\w+) -->$")
+ENDIF_RE = re.compile(r"^<!-- orch:endif -->$")
 HEADING_RE = re.compile(r"^(#{1,6})\s")
 LEGACY_HEADING_RE = re.compile(r"^#{1,6}\s+Orchestration mode\b")
 BULLET_RE = re.compile(r"^\s*[-*]\s")
@@ -22,6 +26,35 @@ def agent_text(line):
     return AGENT_WORD_RE.sub(lambda m: agent_key(m.group(0)), line)
 
 
+def render_block(template_lines):
+    """The template's lines for the settings as they are now: lines between `<!-- orch:if NAME -->` and
+    `<!-- orch:endif -->` stay when the setting NAME is `on` and go when it is not; the marker lines always go."""
+    out, keep, open_at = [], True, None
+    for n, line in enumerate(template_lines, 1):
+        m = IF_RE.match(line)
+        if m:
+            if open_at is not None:
+                raise OrchError("the block template nests orch:if (line %d inside the one at line %d)" % (n, open_at), 2)
+            if m.group(1) not in settings.SETTINGS:
+                raise OrchError("the block template names an unknown setting %r (line %d)" % (m.group(1), n), 2)
+            open_at, keep = n, settings.get(m.group(1)) == "on"
+        elif ENDIF_RE.match(line):
+            if open_at is None:
+                raise OrchError("the block template has orch:endif without orch:if (line %d)" % n, 2)
+            open_at, keep = None, True
+        elif keep:
+            out.append(line)
+    if open_at is not None:
+        raise OrchError("the block template has orch:if (line %d) without orch:endif" % open_at, 2)
+    return out
+
+
+def block_lines():
+    """The managed block as it is written today (the template rendered for the current settings)."""
+    with open(TEMPLATE, encoding="utf-8") as fh:
+        return render_block(fh.read().rstrip("\n").split("\n"))
+
+
 def default_file():
     return os.path.join(os.path.expanduser("~"), ".claude", "CLAUDE.md")
 
@@ -29,7 +62,7 @@ def default_file():
 def block_span(lines):
     """(start, end) line indexes of the marked block, end exclusive; None when there is none."""
     begins = [i for i, l in enumerate(lines) if l.startswith(BEGIN)]
-    ends = [i for i, l in enumerate(lines) if l.startswith(END)]
+    ends = [i for i, l in enumerate(lines) if l.startswith(END) and not l.startswith(ENDIF)]
     if not begins and not ends:
         return None
     if len(begins) != 1 or len(ends) != 1 or ends[0] < begins[0]:
@@ -116,6 +149,7 @@ def cmd_install_instructions(ns, extra):
     else:
         require_write_allowed()
         path = os.path.realpath(default_file())
+    block = None if ns.uninstall else block_lines()     # a broken template refuses before anything is read or written
     try:
         with open(path, encoding="utf-8") as fh:
             old = fh.read()
@@ -129,8 +163,6 @@ def cmd_install_instructions(ns, extra):
     if ns.uninstall:
         out = plan_uninstall(lines)
     else:
-        with open(TEMPLATE, encoding="utf-8") as fh:
-            block = fh.read().rstrip("\n").split("\n")
         out = plan_install(lines, block, ns.replace_existing)
     new = "\n".join(out) + "\n" if out else ""
     if new == (old or ""):

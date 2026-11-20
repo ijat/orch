@@ -56,6 +56,14 @@ class TestSetting(core.Base):
                 os.environ.pop(k, None)
             self.assertEqual(settings.settings_path(), os.path.join(self.home, ".claude", "orch-data", "settings.json"))
 
+    def test_agent_docs_defaults_to_off_takes_on_off_and_refuses_the_rest(self):
+        self.assertEqual(self.ok("setting", "get", "agent_docs")[0], "off\n")
+        self.ok("setting", "set", "agent_docs", "on")
+        self.assertEqual(self.ok("setting", "get", "agent_docs")[0], "on\n")
+        err = self.refuse(1, "setting", "set", "agent_docs", "maybe")
+        self.assertIn("must be one of: on | off", err)
+        self.assertEqual(self.ok("setting", "get", "agent_docs")[0], "on\n")
+
     def test_memory_global_offered_defaults_to_no_and_takes_yes_no(self):
         self.assertEqual(self.ok("setting", "get", "memory_global_offered")[0], "no\n")
         self.ok("setting", "set", "memory_global_offered", "yes")
