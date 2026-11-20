@@ -13,13 +13,22 @@ The settings are in orch-pane's More tab (`/orch:pane`), under the **orch-ui** h
 | Row | Values | Default |
 | --- | --- | --- |
 | **Format replies** | on, off | off |
+| **Inline pills** | on, off | on |
 | **Format trigger** | `marked`, `auto` | `marked` |
 | **Format model** | `opus`, `sonnet`, `haiku` | `opus` |
 | **Format effort** | `low`, `medium`, `high` | `low` |
 | **Format billing** | `API key`, `subscription` | `API key` |
 | **Format API key** | `ANTHROPIC_API_KEY`, `~/.claude/settings.local.json` | `ANTHROPIC_API_KEY` (shown only while billing is `API key`) |
 
-A setting applies from the next call. Pressing any of the five setting rows also lifts a pause (see **When it stops**).
+A setting applies from the next call. Pressing any of the five setting rows (not **Inline pills**) also lifts a pause (see **When it stops**).
+
+## Inline pills
+
+In a session where the `orchestrate` skill has loaded, a finished plain reply (one shown as written) gets its inline references drawn as pills: a backticked path, branch, command or id, and a bare commit hash (7 to 40 hex characters with a digit and a letter). It needs no model call and does not depend on **Format replies**; turn it off with the **Inline pills** row (a press flips it, the choice is kept across sessions, and it has no effect on a pause or on raw state).
+
+Plain paragraphs and `-`/`*` bullets are redrawn with pills; every other block (a heading, a quote, a numbered list, a table, a fenced block, a paragraph with a link or italics) is drawn by Claude Code's own Markdown as before, so nothing inside a fence or a table becomes a pill. A reply with nothing to pill is Claude Code's own row, untouched. The reply has no border and no banner. The marker line is still removed.
+
+It does not apply to a reply that is still streaming in the running turn (it is drawn as written, then with pills when the turn ends), to a summary, to another surface, to a reply shown raw (the session, or one message), or to a session where the skill never loaded. Terminal only. It is a redraw only; the transcript never changes.
 
 ## Format replies
 

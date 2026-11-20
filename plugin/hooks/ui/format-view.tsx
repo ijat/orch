@@ -775,29 +775,137 @@ export function drawPlaceholder(el: ElementTable<'terminal'>, frame: FmtFrame, s
   )
 }
 
+// `**bold**` and `code` drawn inline: code (and a bare commit hash) becomes a pill, bold stays bold. `force` makes
+// every code span that kind (a reply the model quotes).
+function inlineOf(el: ElementTable<'terminal'>, text: string, force?: Kind): RenderChildren[] {
+  const { Text } = el
+  return text.split(TOKEN).filter(Boolean).map((t, n) => {
+    if (t.startsWith('**') && t.endsWith('**') && t.length > 4) return <Text key={`t${n}`} bold color="#ffffff">{inlineOf(el, t.slice(2, -2), force)}</Text>
+    const isCode = t.startsWith('`') && t.endsWith('`') && t.length > 2
+    if (!isCode && !IS_HEX.test(t)) return t
+    const value = isCode ? t.slice(1, -1) : t
+    const kind = KINDS[(isCode && force) || kindOf(value)]
+    return (
+      <Text key={`t${n}`}>
+        <Text color={kind.pill}>{PILL_LEFT}</Text>
+        <Text color={kind.color} backgroundColor={kind.pill}>{kind.icon ? `${kind.icon} ${value}` : value}</Text>
+        <Text color={kind.pill}>{PILL_RIGHT}</Text>
+      </Text>
+    )
+  })
+}
+
+// Markdown for anything richer than bold and code, so links and lists keep working.
+function richOf(el: ElementTable<'terminal'>, text: string, force?: Kind) {
+  const { Text, Markdown } = el
+  return NOT_INLINE.test(text) ? <Markdown text={text} /> : <Text>{inlineOf(el, text, force)}</Text>
+}
+
+// -- a finished plain reply (Inline pills) ---------------------------------------------------------------
+// Blocks as Markdown would see them: blank lines separate them, a fenced block runs to its closing fence (blank lines
+// inside included), a table is one block.
+const TABLE_LINE = /^\s*\|/
+function splitBlocks(text: string): string[] {
+  const blocks: string[] = []
+  let cur: string[] = []
+  let fence: string | null = null
+  let table = false
+  const flush = () => {
+    if (cur.length > 0) blocks.push(cur.join('\n'))
+    cur = []
+    table = false
+  }
+  for (const line of text.split('\n')) {
+    if (fence !== null) {
+      cur.push(line)
+      const t = line.trim()
+      if (t.length >= 3 && t.split('').every(c => c === fence)) {
+        flush()
+        fence = null
+      }
+      continue
+    }
+    const open = FENCE.exec(line)
+    if (open) {
+      flush()
+      cur.push(line)
+      fence = (open[1] ?? '`').charAt(0)
+      continue
+    }
+    if (line.trim() === '') {
+      flush()
+      continue
+    }
+    const isTable = TABLE_LINE.test(line)
+    if (isTable !== table) flush()
+    table = isTable
+    cur.push(line)
+  }
+  flush()
+  return blocks
+}
+
+// What Markdown would draw differently from a plain Text, beyond what NOT_INLINE names: rules, setext underlines,
+// strikethrough, an html tag or autolink.
+const NOT_PLAIN = /^\s*(?:([-*_])(?:\s*\1){2,}|=+|-+)\s*$|~~[^~]+~~|<[a-zA-Z/!]/m
+// A code span or a bare commit hash: what a pill is drawn for.
+const PILLISH = new RegExp('`[^`\\n]+`|\\b' + HEX + '\\b')
+const NESTED_ITEM = /^\s+(?:[-*]|\d+\.)\s/
+
+// The items of a block that is only `-`/`*` bullets (indented lines continue the item above), else null.
+function bulletItems(block: string): string[] | null {
+  const items: string[] = []
+  for (const line of block.split('\n')) {
+    const m = ITEM.exec(line)
+    if (m) items.push(m[1] ?? '')
+    else if (items.length > 0 && /^\s+\S/.test(line) && !NESTED_ITEM.test(line)) items[items.length - 1] += ' ' + line.trim()
+    else return null
+  }
+  return items.length > 0 ? items : null
+}
+
+type PlainBlock = { kind: 'items'; items: string[] } | { kind: 'para'; text: string } | { kind: 'markdown'; text: string }
+
+function classify(block: string): PlainBlock {
+  const items = bulletItems(block)
+  if (items) return items.some(t => NOT_INLINE.test(t) || NOT_PLAIN.test(t)) ? { kind: 'markdown', text: block } : { kind: 'items', items }
+  return NOT_INLINE.test(block) || NOT_PLAIN.test(block) ? { kind: 'markdown', text: block } : { kind: 'para', text: block.trim() }
+}
+
+// A finished plain reply of an orch session, drawn with its inline references as pills: plain paragraphs and bullets
+// through inline(), every other block through Markdown as written. null when nothing in it would become a pill, so
+// the caller shows the reply as it always did. No page border and no banner: it keeps its plain look.
+export function drawPlain(el: ElementTable<'terminal'>, text: string) {
+  const { Box, Text, Markdown } = el
+  const blocks = splitBlocks(text).map(classify)
+  const pilled = blocks.some(b => (b.kind === 'para' && PILLISH.test(b.text)) || (b.kind === 'items' && b.items.some(t => PILLISH.test(t))))
+  if (!pilled) return null
+  return (
+    <Box flexDirection="column">
+      {blocks.map((b, n) => {
+        if (b.kind === 'markdown') return <Box key={`b${n}`} marginTop={n === 0 ? 0 : 1}><Markdown text={b.text} /></Box>
+        if (b.kind === 'para') return <Box key={`b${n}`} marginTop={n === 0 ? 0 : 1}><Text>{inlineOf(el, b.text)}</Text></Box>
+        return (
+          <Box key={`b${n}`} flexDirection="column" marginTop={n === 0 ? 0 : 1}>
+            {b.items.map((t, i) => (
+              <Box key={`i${i}`} flexDirection="row">
+                <Box width={2} flexShrink={0}><Text color="inactive">•</Text></Box>
+                <Box flexGrow={1} flexShrink={1}>{richOf(el, t)}</Box>
+              </Box>
+            ))}
+          </Box>
+        )
+      })}
+    </Box>
+  )
+}
+
 // The tree of a rewritten reply: a banner, then titled sections and at most one panel.
 export function drawParts(el: ElementTable<'terminal'>, parts: readonly Part[]) {
   const { Box, Text, Markdown } = el
 
-  const inline = (text: string, force?: Kind): RenderChildren[] =>
-    text.split(TOKEN).filter(Boolean).map((t, n) => {
-      if (t.startsWith('**') && t.endsWith('**') && t.length > 4) return <Text key={`t${n}`} bold color="#ffffff">{inline(t.slice(2, -2), force)}</Text>
-      const isCode = t.startsWith('`') && t.endsWith('`') && t.length > 2
-      if (!isCode && !IS_HEX.test(t)) return t
-      const value = isCode ? t.slice(1, -1) : t
-      const kind = KINDS[(isCode && force) || kindOf(value)]
-      return (
-        <Text key={`t${n}`}>
-          <Text color={kind.pill}>{PILL_LEFT}</Text>
-          <Text color={kind.color} backgroundColor={kind.pill}>{kind.icon ? `${kind.icon} ${value}` : value}</Text>
-          <Text color={kind.pill}>{PILL_RIGHT}</Text>
-        </Text>
-      )
-    })
-
-  // Markdown for anything richer than bold and code, so links and lists keep working.
-  const rich = (text: string, force?: Kind) =>
-    NOT_INLINE.test(text) ? <Markdown text={text} /> : <Text>{inline(text, force)}</Text>
+  const inline = (text: string, force?: Kind) => inlineOf(el, text, force)
+  const rich = (text: string, force?: Kind) => richOf(el, text, force)
 
   const body = (text: string, force?: Kind) => (
     <Box flexDirection="column" marginTop={1}>
@@ -1159,8 +1267,17 @@ export function registerFormat(on: On) {
     const shown = marked ? text : orchestrator && endsWithPartialMark(original) ? hidePartialMark(original) : original
     const asIs = () => (shown === rowText ? next(e) : next({ ...e, props: { ...e.props, text: shown } }))
     if (e.surface !== 'terminal' || e.props.isSummary) return asIs()
-    if ((await read($, fmtOn)) !== true || (await read($, fmtRaw)) === true) return asIs()
+    if ((await read($, fmtRaw)) === true) return asIs()
     const el = $.ui.resolve(e)
+    // A finished reply shown as written in an orch session gets its inline references as pills (Inline pills): not one
+    // that still streams in the running turn, not a hidden marked block, and nothing for a reply with no pill in it.
+    const plain = async () => {
+      if (!orchestrator || tag !== null || (await read($, fmtPills)) === false) return asIs()
+      const turn = await read($, fmtTurn)
+      if (turn.at != null && bornIn(e.requestId, turn) === turn.n) return asIs()
+      return drawPlain(el, shown) ?? asIs()
+    }
+    if ((await read($, fmtOn)) !== true) return (await readMark($, keyOf(text))) === true ? asIs() : plain()
     // The original is not complete yet: the placeholder, counting from the start of the turn.
     if (streaming) return drawPlaceholder(el, await read($, fmtFrame), begun ?? (await read($, fmtTurn)).at ?? undefined)
     const key = keyOf(text)
@@ -1171,7 +1288,7 @@ export function registerFormat(on: On) {
     if (entry?.state === 'done') return drawParts(el, entry.parts)
     if (!orchestrator) return asIs()
     // Only a marked reply (or the first characters of one) gets the placeholder and the reason line; any other is as written.
-    if (!marked && !startsWithPartialMark(original)) return asIs()
+    if (!marked && !startsWithPartialMark(original)) return plain()
     // The original text, and one dim line saying why it is not formatted.
     const asWritten = async (reason: string) => {
       const { Box, Text } = el
@@ -1194,6 +1311,6 @@ export function registerFormat(on: On) {
     const turn = await read($, fmtTurn)
     const bornAt = bornIn(e.requestId, turn)
     if (turn.at != null && bornAt === turn.n) return drawPlaceholder(el, await read($, fmtFrame), begun ?? turn.at)
-    return asIs()
+    return plain()
   })
 }
