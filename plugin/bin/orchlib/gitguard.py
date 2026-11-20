@@ -13,8 +13,10 @@ a flag is not blocked. Blocked:
   - an `AGENTDOCS_ALLOW=` assignment: env prefix, after env/command/exec/sudo, or `export`/`declare`/`typeset`/`readonly`
   - `git config` that sets, adds or replaces an `agentdocs.*` key (reads and --unset only tighten)
   - `orch docs disable` and `orch setting set agent_docs off` (any spelling of the orch binary path); enabling is allowed
-Known gap, shared with the shell guard this replaces: a command hidden inside `$(...)`, backticks, `bash -c '...'` or
-`eval` is not parsed."""
+  - `git -c agentdocs.*` / `--config-env`, `--no-verify` and its abbreviations, and env assignments that move git's config or
+    the hook's programs and data (HOME, XDG_CONFIG_HOME, GIT_CONFIG_*, ORCH_BIN, ORCH_DATA, ORCH_DIR, PATH, PYTHON*) before git
+Commands are cut at separators outside quotes (also parentheses and backticks outside quotes). Known gap, shared with the
+shell guard this replaces: a command inside `bash -c '...'`, `eval`, or a `$(...)` within double quotes is not parsed."""
 import os
 import sys
 
