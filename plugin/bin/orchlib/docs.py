@@ -10,17 +10,14 @@ Commands here work whatever the `agent_docs` setting says: it only gates orch's 
 """
 import ast
 import contextlib
-import hmac
 import io
 import os
 import re
-import secrets
 import shlex
 import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 import types
 
 from .paths import OrchError, docs_store, pointer_path, private_dir
@@ -639,7 +636,7 @@ def install_hooks(hooks_dir, chain_existing=False, dry_run=False, record=None, o
     each change is made, so a caller can keep a record that survives a failure half way. orch_bin is the launcher
     written into the shims (default: the plugin link under the data root). warn(message) is called once for each
     hook that is kept as <name>.pre-orch and finds the repo's hook with `git rev-parse --git-path hooks` (it will run
-    the shim again: the re-entry guard in chain_hook handles that); default: a line on stderr."""
+    the shim again: reentered() and the depth limit handle that); default: a line on stderr."""
     orch_bin = os.path.abspath(orch_bin) if orch_bin else default_orch_bin()
     private = private_dir_effective()
     plan = []
@@ -690,83 +687,136 @@ def cmd_install_hooks(ctx):
     return 0
 
 
-MARKER_ENV = "ORCH_DOCS_HOOK"
+LAUNCHER = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "orch")
+DEPTH_ENV = "ORCH_DOCS_HOOK_DEPTH"   # a loop breaker only: a value can make a hook refuse, never skip anything
+MAX_HOOK_DEPTH = 3
+MAX_ANCESTORS = 16
 
 
-def marker_path(pid):
-    return os.path.join(tempfile.gettempdir(), "orch-docs-hook-%d-%d" % (getattr(os, "getuid", lambda: 0)(), pid))
+def _cstr(raw):
+    return raw.split(b"\0", 1)[0].decode("utf-8", "surrogateescape")
 
 
-@contextlib.contextmanager
-def reentry_marker(name):
-    """While an orch hook runs the hook behind it (<name>.pre-orch), which may call the shim again: yields the
-    environment value that tells the second run it is inside the first. The value is `<pid>:<token>`; the token is
-    random and lives only in a 0600 file named for this process, so a committer who sets the variable by hand (any
-    pid, any token) is not believed (see reentered)."""
-    token = secrets.token_hex(16)
-    path = marker_path(os.getpid())
+def _macos_process(pid):
+    """(executable, argv, cwd) of a process of this user, read from the kernel (libproc and sysctl KERN_PROCARGS2),
+    or None. The executable is the file the kernel runs, not argv[0]."""
+    import ctypes
+    import ctypes.util
+    import struct
+    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+    buf = ctypes.create_string_buffer(4096)
+    if libproc.proc_pidpath(ctypes.c_int(pid), buf, ctypes.c_uint32(4096)) <= 0:
+        return None
+    exe = _cstr(buf.raw)
+    info = ctypes.create_string_buffer(2352)   # struct proc_vnodepathinfo: cdir = vnode_info (152) + path[1024], rdir
+    if libproc.proc_pidinfo(ctypes.c_int(pid), ctypes.c_int(9), ctypes.c_uint64(0), info, ctypes.c_int(2352)) != 2352:
+        return None
+    cwd = _cstr(info.raw[152:152 + 1024])
+    argmax, size = ctypes.c_int(0), ctypes.c_size_t(ctypes.sizeof(ctypes.c_int))
+    if libc.sysctl((ctypes.c_int * 2)(1, 8), 2, ctypes.byref(argmax), ctypes.byref(size), None, 0) != 0:   # KERN_ARGMAX
+        return None
+    args = ctypes.create_string_buffer(argmax.value)
+    size = ctypes.c_size_t(argmax.value)
+    if libc.sysctl((ctypes.c_int * 3)(1, 49, pid), 3, args, ctypes.byref(size), None, 0) != 0:    # KERN_PROCARGS2
+        return None
+    raw = args.raw[:size.value]
+    if len(raw) < 4:
+        return None
+    argc = struct.unpack("i", raw[:4])[0]
+    rest = raw[4:]
+    rest = rest[rest.find(b"\0"):].lstrip(b"\0")      # skip the exec path and its padding
+    parts = rest.split(b"\0")
+    if argc < 0 or len(parts) < argc:
+        return None
+    return exe, [p.decode("utf-8", "surrogateescape") for p in parts[:argc]], cwd
+
+
+def _linux_process(pid):
+    base = "/proc/%d" % pid
     try:
-        os.unlink(path)     # a stale file of a dead process with this pid (a link is removed, never followed)
+        exe = os.readlink(base + "/exe")
+        cwd = os.readlink(base + "/cwd")
+        with open(base + "/cmdline", "rb") as fh:
+            raw = fh.read()
     except OSError:
-        pass
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        return None
+    return exe, [p.decode("utf-8", "surrogateescape") for p in raw.split(b"\0")[:-1]], cwd
+
+
+def process_info(pid):
+    """(real executable, exact argv, cwd) of a live process, or None when it cannot be read (then nothing is believed)."""
     try:
-        with os.fdopen(fd, "w") as fh:
-            fh.write("%s %s" % (name, token))
-        yield "%d:%s" % (os.getpid(), token)
-    finally:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+        if sys.platform == "darwin":
+            return _macos_process(pid)
+        if os.path.isdir("/proc/self"):
+            return _linux_process(pid)
+    except Exception:
+        return None
+    return None
 
 
-def is_ancestor(pid):
-    """True when pid is a parent, grandparent, ... of this process (read with ps; only called on a re-entry, and
-    only after the marker file's token matched)."""
-    cur = os.getppid()
-    for _ in range(64):
-        if cur == pid:
-            return True
-        if cur <= 1:
-            return False
-        try:
-            res = subprocess.run(["ps", "-o", "ppid=", "-p", str(cur)], capture_output=True, text=True)
-        except OSError:
-            return True     # no ps here: the secret token in the marker file is what vouches for the marker
-        try:
-            cur = int(res.stdout.strip())
-        except ValueError:
-            return False
-    return False
+def ancestors():
+    """The pids above this process, nearest first (at most MAX_ANCESTORS); [] when ps cannot be read."""
+    try:
+        res = subprocess.run(["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    parent = {}
+    for line in res.stdout.splitlines():
+        f = line.split()
+        if len(f) == 2 and f[0].isdigit() and f[1].isdigit():
+            parent[int(f[0])] = int(f[1])
+    if res.returncode != 0 or not parent:
+        return []
+    out, cur = [], os.getppid()
+    while cur > 1 and len(out) < MAX_ANCESTORS and cur not in out:
+        out.append(cur)
+        cur = parent.get(cur, 0)
+    return out
+
+
+def is_outer_hook(info, me, name):
+    """True when info is a run of this very orch's `docs hook <name>` in the same directory: the same interpreter
+    binary as this process (by the kernel's executable path, not argv[0]), argv[1] is this launcher (an absolute
+    path to the same file), then exactly `docs hook <name>`."""
+    exe, argv, cwd = info
+    if len(argv) < 5 or argv[2:5] != ["docs", "hook", name] or not os.path.isabs(argv[1]):
+        return False
+    return (os.path.realpath(argv[1]) == os.path.realpath(LAUNCHER) and os.path.realpath(exe) == os.path.realpath(me[0])
+            and os.path.realpath(cwd) == os.path.realpath(me[2]))
 
 
 def reentered(name):
-    """True only when this run is inside the chain of an outer run of the same hook name: the variable names a live
-    ancestor process whose own marker file holds this hook name and exactly this token. Anything else (unset, a
-    guess, a stale value, another hook's) is ignored and the full check runs."""
-    m = re.fullmatch(r"([0-9]{1,10}):([0-9a-f]{32})", os.environ.get(MARKER_ENV, ""))
-    if not m:
+    """True only when an ancestor process is orch's own `docs hook <name>` run for the same directory (see
+    is_outer_hook): that run checks before it chains, so this run is the hook behind it calling the shim again.
+    Nothing in the environment or in a file is believed, so a committer cannot claim this; any process that passes is
+    the real orch hook, which runs the full check first. A forged look-alike needs code the kernel runs as that
+    interpreter on that launcher (a .pth, sitecustomize or library file), which can rewrite the inner check as well.
+    When the process table cannot be read the answer is False: the check runs again (MAX_HOOK_DEPTH ends a loop)."""
+    me = process_info(os.getpid())
+    if not me:
         return False
-    pid, token = int(m.group(1)), m.group(2)
-    if pid == os.getpid():
-        return False
+    for pid in ancestors():
+        info = process_info(pid)
+        if info and is_outer_hook(info, me, name):
+            return True
+    return False
+
+
+def hook_depth():
     try:
-        with open(marker_path(pid), "r", encoding="utf-8") as fh:
-            held = fh.read(200)
-    except OSError:
-        return False
-    if not hmac.compare_digest(held.encode(), ("%s %s" % (name, token)).encode()):
-        return False
-    return is_ancestor(pid)
+        return max(0, int(os.environ.get(DEPTH_ENV, "0")))
+    except ValueError:
+        return 0
 
 
 def chain_hook(name, args, cwd, stdin_data=None, reentry=False):
     """Run the hook this shim stands in front of: <name>.pre-orch beside it, else the repo's own under the git common
-    dir; never the shim itself. Returns its exit code (0 when there is none). While <name>.pre-orch runs, the re-entry
-    marker is in its environment (it may call the shim again, as a hook does that finds the repo's hook with
-    `git rev-parse --git-path hooks/<name>`). reentry=True is that second run: only the repo's own hook, without
-    the marker."""
+    dir; never the shim itself. Returns its exit code (0 when there is none). <name>.pre-orch may call the shim again
+    (a hook that finds the repo's hook with `git rev-parse --git-path hooks/<name>`); that second run finds this one
+    among its ancestors (reentered) and runs with reentry=True: only the repo's own hook. Each chained run gets
+    DEPTH_ENV one higher, and a run at MAX_HOOK_DEPTH refuses (cmd_hook) instead of looping."""
     hooks = git(cwd, "rev-parse", "--git-path", "hooks").stdout.strip()
     shim = os.path.join(os.path.abspath(hooks), name) if hooks else None
     pre = shim + ".pre-orch" if shim else None
@@ -783,13 +833,9 @@ def chain_hook(name, args, cwd, stdin_data=None, reentry=False):
             sys.stderr.write("pre-push: %s exists but can't run (dangling link or not executable); refusing the push\n" % target)
             return 1
         return 0
-    env = {k: v for k, v in os.environ.items() if k != MARKER_ENV}
+    env = dict(os.environ)
+    env[DEPTH_ENV] = str(hook_depth() + 1)
     try:
-        if target == pre:
-            with reentry_marker(name) as value:
-                env[MARKER_ENV] = value
-                return subprocess.run([target] + list(args), input=stdin_data, encoding="utf-8", errors="replace",
-                                      env=env).returncode
         return subprocess.run([target] + list(args), input=stdin_data, encoding="utf-8", errors="replace",
                               env=env).returncode
     except OSError as exc:
@@ -826,6 +872,11 @@ def cmd_hook(ctx):
     if not ctx.paths or ctx.paths[0] not in HOOK_NAMES:
         raise OrchError("usage: orch docs hook pre-commit | pre-push <remote> <url> | post-checkout <old> <new> <flag>", 2)
     name, args = ctx.paths[0], ctx.paths[1:]
+    if hook_depth() >= MAX_HOOK_DEPTH:
+        sys.stderr.write("%s hook: %s was called %d hooks deep (a hook behind the shim calls the shim again and the "
+                         "outer orch run could not be found among its processes); refusing instead of looping\n"
+                         % (PREFIX, name, hook_depth()))
+        return 1
     if name != "pre-push" and reentered(name):    # the hook behind this shim called it again: the check already ran
         return chain_hook(name, args, ctx.cwd, reentry=True)
     if name == "pre-commit":

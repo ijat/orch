@@ -762,6 +762,11 @@ class TestHooks(Base):
                      '[ -x "$repo_hook" ] && [ "$repo_hook" != "$0" ] && exec "$repo_hook" "$@"\nexit 0\n' % shlex.quote(log))
         os.chmod(path, 0o755)
 
+    def hook_temp_files(self):
+        """Entries in the temp dir with the name the old re-entry marker used (this user's prefix)."""
+        prefix = "orch-docs-hook-%d-" % os.getuid()
+        return {n for n in os.listdir(tempfile.gettempdir()) if n.startswith(prefix)}
+
     def test_a_pre_orch_hook_that_calls_the_shim_again_neither_loops_nor_checks_twice(self):
         hooks = self.global_hooks()
         log = os.path.join(self.tmp, "ran.log")
@@ -777,52 +782,130 @@ class TestHooks(Base):
         with open(os.path.join(r, "CLAUDE.md"), "w") as fh:
             fh.write("rules\n")
         self.git(r, "add", "-f", "CLAUDE.md")
+        before = self.hook_temp_files()
         res = self.sh(r, "git", "commit", "-q", "-m", "x", timeout=60)
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(res.stderr.count("would enter this repo"), 1, res.stderr)     # the orch check ran once
         self.assertEqual(slurp(log).split(), ["pre-orch", "repo-hook"])                # each hook once
         self.assertEqual(self.git(r, "rev-list", "--count", "HEAD").strip(), "2")
-        self.assertFalse([n for n in os.listdir(tempfile.gettempdir()) if n.startswith("orch-docs-hook-%d-" % os.getpid())])
+        self.assertEqual(self.hook_temp_files() - before, set())                       # no marker files any more
 
-    def test_a_forged_marker_does_not_skip_the_check(self):
+    def forge_repo(self, name):
+        """A repo with CLAUDE.md staged under global orch shims whose pre-commit.pre-orch calls the shim again."""
         hooks = self.global_hooks()
         self.looping_pre_orch(hooks, os.path.join(self.tmp, "ran.log"))
-        r = self.repo("fg")
+        r = self.repo(name)
         with open(os.path.join(r, "CLAUDE.md"), "w") as fh:
             fh.write("rules\n")
         self.git(r, "add", "-f", "CLAUDE.md")
-        for value in ("1:" + "0" * 32, "%d:%s" % (os.getpid(), "a" * 32), "%d:%s" % (os.getppid(), "b" * 32), "1", "x:y",
-                      "%d:%s" % (os.getpid(), "c" * 32), ""):
-            res = self.sh(r, "git", "commit", "-q", "-m", "x", env={docs.MARKER_ENV: value}, timeout=60)
-            self.assertNotEqual(res.returncode, 0, value)
-            self.assertIn("    CLAUDE.md", res.stderr, value)
+        return r
+
+    def assert_refused(self, r, rc, err):
+        """The commit in r was refused by the orch check (rc nonzero, the finding on stderr) and made nothing."""
+        self.assertNotEqual(rc, 0, err)
+        self.assertIn("    CLAUDE.md", err)
         self.assertEqual(self.git(r, "rev-list", "--count", "HEAD").strip(), "1")
 
-    def test_reentered_believes_only_a_live_ancestor_with_the_matching_token(self):
-        pid, token = os.getpid(), "ab" * 16
-        path = docs.marker_path(pid)
-        with open(path, "w") as fh:
-            fh.write("pre-commit %s" % token)
-        self.addCleanup(lambda: os.path.exists(path) and os.unlink(path))
-        code = ("import sys; sys.path.insert(0, %r); from orchlib import docs; print(docs.reentered(sys.argv[1]))"
-                % os.path.join(os.path.dirname(os.path.dirname(HERE)), "plugin", "bin"))
+    def test_the_old_marker_forge_gets_the_full_check(self):
+        """S6/F7: a marker file plus the variable, written by the committer's own shell, is not believed."""
+        r = self.forge_repo("fg")
+        tmpdir = os.path.join(self.tmp, "tmpdir")
+        os.makedirs(tmpdir)
+        token = "ab" * 16
+        line = ('printf "pre-commit %s" > "$TMPDIR/orch-docs-hook-$(id -u)-$$"; ORCH_DOCS_HOOK=$$:%s git commit -q -m x'
+                % (token, token))
+        res = self.sh(r, "sh", "-c", line, env={"TMPDIR": tmpdir}, timeout=60)
+        self.assert_refused(r, res.returncode, res.stderr)
+        for value in ("1:" + "0" * 32, "%d:%s" % (os.getpid(), "a" * 32), "1", "x:y", ""):
+            res = self.sh(r, "git", "commit", "-q", "-m", "x", env={"ORCH_DOCS_HOOK": value}, timeout=60)
+            self.assert_refused(r, res.returncode, res.stderr)
 
-        def believed(name, value):
-            res = self.sh(self.tmp, sys.executable, "-c", code, name, env={docs.MARKER_ENV: value})
-            self.assertEqual(res.returncode, 0, res.stderr)
-            return res.stdout.strip() == "True"
+    def test_a_look_alike_ancestor_gets_the_full_check(self):
+        r = self.forge_repo("la")
+        py = os.path.realpath(sys.executable)
+        # argv[0] made to read like the orch hook (ps shows the same text)
+        res = self.sh(r, "bash", "-c", 'exec -a "%s %s docs hook pre-commit" bash -c "git commit -q -m x"'
+                      % (py, LAUNCHER), timeout=60)
+        self.assert_refused(r, res.returncode, res.stderr)
+        # exactly the orch hook's argv, but the kernel runs bash, which runs the committer's BASH_ENV file first
+        forge = os.path.join(self.tmp, "forge.sh")
+        err, rc = os.path.join(self.tmp, "forge.err"), os.path.join(self.tmp, "forge.rc")
+        with open(forge, "w") as fh:
+            fh.write("git commit -q -m x 2>%s; echo $? > %s; exit 0\n" % (shlex.quote(err), shlex.quote(rc)))
+        self.sh(r, "bash", LAUNCHER, "docs", "hook", "pre-commit", env={"BASH_ENV": forge}, timeout=60)
+        self.assert_refused(r, int(slurp(rc)), slurp(err))
 
-        self.assertTrue(believed("pre-commit", "%d:%s" % (pid, token)))
-        self.assertFalse(believed("pre-commit", "%d:%s" % (pid, "cd" * 16)))      # wrong token
-        self.assertFalse(believed("pre-push", "%d:%s" % (pid, token)))            # another hook's marker
-        self.assertFalse(believed("pre-commit", ""))
-        self.assertFalse(believed("pre-commit", "%d:%s" % (pid + 100000, token)))   # no such marker file
-        other = subprocess.Popen(["sleep", "30"])                                  # a live process, not an ancestor
-        self.addCleanup(lambda: (other.kill(), other.wait()))
-        with open(docs.marker_path(other.pid), "w") as fh:
-            fh.write("pre-commit %s" % token)
-        self.addCleanup(os.unlink, docs.marker_path(other.pid))
-        self.assertFalse(believed("pre-commit", "%d:%s" % (other.pid, token)))
+    def test_a_real_orch_hook_run_for_another_directory_does_not_skip_the_check(self):
+        """The real launcher run as a hook in a scratch repo, whose own hook commits in the target repo."""
+        self.global_hooks()
+        r = self.repo("target")
+        with open(os.path.join(r, "CLAUDE.md"), "w") as fh:
+            fh.write("rules\n")
+        self.git(r, "add", "-f", "CLAUDE.md")
+        s = self.repo("scratch")
+        err, rc = os.path.join(self.tmp, "nested.err"), os.path.join(self.tmp, "nested.rc")
+        own = os.path.join(s, ".git", "hooks", "pre-commit")
+        with open(own, "w") as fh:
+            fh.write("#!/bin/sh\ncd %s && git commit -q -m x 2>%s; echo $? > %s\n"
+                     % (shlex.quote(r), shlex.quote(err), shlex.quote(rc)))
+        os.chmod(own, 0o755)
+        res = self.sh(s, LAUNCHER, "docs", "hook", "pre-commit", timeout=60)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assert_refused(r, int(slurp(rc)), slurp(err))
+
+    def test_without_ps_the_check_runs_again_and_the_depth_limit_ends_the_loop(self):
+        r = self.forge_repo("np")
+        self.git(r, "config", "agentdocs.mode", "warn")
+        bindir = os.path.join(self.tmp, "nops")
+        os.makedirs(bindir)
+        for tool in ("git", "python3", "id", "dirname", "basename", "cat"):
+            found = shutil.which(tool)
+            if found:
+                os.symlink(found, os.path.join(bindir, tool))
+        self.assertIsNone(shutil.which("ps", path=bindir))
+        res = self.sh(r, "git", "commit", "-q", "-m", "x", env={"PATH": bindir}, timeout=60)
+        self.assertNotEqual(res.returncode, 0, res.stderr)
+        self.assertIn("hooks deep", res.stderr)
+        self.assertEqual(res.stderr.count("would enter this repo"), docs.MAX_HOOK_DEPTH, res.stderr)  # checked each time
+        self.assertEqual(self.git(r, "rev-list", "--count", "HEAD").strip(), "1")
+
+    def test_a_depth_value_can_only_refuse(self):
+        self.global_hooks()
+        r = self.repo("dp")
+        for value, refused in (("3", True), ("99", True), ("-5", False), ("x", False), ("", False)):
+            res = self.sh(r, "git", "commit", "-q", "--allow-empty", "-m", "x", env={docs.DEPTH_ENV: value}, timeout=60)
+            self.assertEqual(res.returncode != 0, refused, (value, res.stderr))
+
+    def test_is_outer_hook_needs_the_same_interpreter_launcher_name_and_directory(self):
+        me = ("/usr/bin/python3", ["python3", LAUNCHER, "docs", "hook", "pre-commit"], self.tmp)
+        good = ("/usr/bin/python3", ["python3", LAUNCHER, "docs", "hook", "pre-commit"], self.tmp)
+        self.assertTrue(docs.is_outer_hook(good, me, "pre-commit"))
+        self.assertTrue(docs.is_outer_hook(("/usr/bin/python3", ["py", LAUNCHER, "docs", "hook", "pre-push", "o", "u"],
+                                            self.tmp), me, "pre-push"))
+        for info in (("/bin/bash", good[1], self.tmp),                                           # another program
+                     (good[0], good[1], os.path.join(self.tmp, "..")),                          # another directory
+                     (good[0], ["python3", LAUNCHER, "docs", "hook", "pre-push"], self.tmp),     # another hook
+                     (good[0], ["python3", "orch", "docs", "hook", "pre-commit"], self.tmp),     # a relative launcher
+                     (good[0], ["python3", "/x/orch", "docs", "hook", "pre-commit"], self.tmp),  # another launcher
+                     (good[0], ["%s %s docs hook pre-commit" % (good[0], LAUNCHER)], self.tmp),  # one argv word
+                     (good[0], ["python3", "-c", LAUNCHER, "docs", "hook", "pre-commit"], self.tmp)):
+            self.assertFalse(docs.is_outer_hook(info, me, "pre-commit"), info)
+
+    def test_process_info_reads_the_kernel_executable_and_exact_argv(self):
+        me = docs.process_info(os.getpid())
+        if me is None:
+            self.skipTest("no process reader on this platform")
+        self.assertEqual(os.path.realpath(me[2]), os.path.realpath(os.getcwd()))
+        child = subprocess.Popen(["bash", "-c", 'exec -a "%s docs hook pre-commit" sleep 30' % LAUNCHER])
+        self.addCleanup(lambda: (child.kill(), child.wait()))
+        for _ in range(50):
+            info = docs.process_info(child.pid)
+            if info and info[1][:1] == ["%s docs hook pre-commit" % LAUNCHER]:
+                break
+            subprocess.run(["sleep", "0.1"])
+        self.assertEqual(os.path.basename(info[0]), "sleep")
+        self.assertEqual(info[1], ["%s docs hook pre-commit" % LAUNCHER, "30"])
+        self.assertEqual(docs.ancestors()[0], os.getppid())
 
     def test_warning_only_for_a_kept_hook_that_uses_git_path(self):
         for body, warned in (('#!/bin/sh\nh="$(git rev-parse --git-path hooks/pre-commit)"\n', True),
