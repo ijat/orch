@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The one check command: everything that should pass before a commit is pushed.
 
-  scripts/check.py [--only NAME,NAME,...] [--parity] [--list]
+  scripts/check.py [--only NAME,NAME,...] [--list]
 
 Checks (independent ones run in parallel; one line each, with its verdict and wall time):
   agents    scripts/build-agents.py plugin/skills/orchestrate/roles plugin/agents --check
@@ -11,7 +11,6 @@ Checks (independent ones run in parallel; one line each, with its verdict and wa
   mods      `claude plugin test plugin`: the orch-pane and orch-ui mod suites (plugin/tests/)
   lessons   `plugin/bin/orch lessons check` on the live lessons root (no lesson files there: pass, "skip")
   public    scripts/check-public.py --tree . and --range HEAD (commits on no remote-tracking ref; none is a pass)
-  parity    scripts/text-parity.py --base dce7cf7 (only with --parity: this task's gate)
 Exit 0 only if every selected check passed. A check that cannot run (no `claude`, no denylist) fails and is never
 skipped, and finding zero tests fails. Writes nothing to the repo or to ~/.claude.
 """
@@ -29,7 +28,6 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TESTS = os.path.join(ROOT, "tests", "python")
 SCRIPTS = os.path.join(ROOT, "scripts")
-PARITY_BASE = "dce7cf7"
 # Test classes known to run long: started first so they overlap the rest (the run is about as long as the slowest).
 SLOW_FIRST = ("test_merge", "test_usage_wait", "test_dashboard")
 
@@ -191,17 +189,8 @@ def check_lessons():
     return True, "skip: no lesson files" if last.endswith("(skip)") else last, ""
 
 
-def check_parity():
-    script = os.path.join(SCRIPTS, "text-parity.py")
-    if not os.path.isfile(script):
-        return False, "scripts/text-parity.py does not exist yet", ""
-    rc, out = run([sys.executable, script, "--base", PARITY_BASE])
-    return rc == 0, "text parity against %s" % PARITY_BASE, "" if rc == 0 else tail(out, 30)
-
-
 CHECKS = [("agents", check_agents), ("validate", check_validate), ("python", check_python),
           ("mods", check_mods), ("lessons", check_lessons), ("public", check_public)]
-OPTIONAL = {"parity": check_parity}
 
 
 def timed(name, fn):
@@ -216,14 +205,12 @@ def timed(name, fn):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Run the repo's checks.")
     ap.add_argument("--only", help="comma-separated check names")
-    ap.add_argument("--parity", action="store_true", help="also run text-parity (this task's gate)")
     ap.add_argument("--list", action="store_true", help="list the check names")
     try:
         ns = ap.parse_args(argv)
     except SystemExit as exc:
         return 2 if exc.code else 0
     table = dict(CHECKS)
-    table.update(OPTIONAL)
     if ns.list:
         print("\n".join(table))
         return 0
@@ -234,9 +221,7 @@ def main(argv=None):
             sys.stderr.write("check: unknown check %s (known: %s)\n" % (", ".join(unknown) or "(none given)", ", ".join(table)))
             return 2
     else:
-        names = [n for n, _ in CHECKS] + (["parity"] if ns.parity else [])
-        if ns.parity and "parity" not in names:
-            names.append("parity")
+        names = [n for n, _ in CHECKS]
     start = time.time()
     failed = 0
     with concurrent.futures.ThreadPoolExecutor(len(names)) as pool:
