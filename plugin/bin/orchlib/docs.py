@@ -713,6 +713,59 @@ def cmd_hook(ctx):
     return chain_hook(name, args, ctx.cwd)
 
 
+# -- session nudge -------------------------------------------------------------------------------
+
+NUDGE_CANDIDATES = ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "GEMINI.md", "STATE.md", "DECISIONS.md", "HANDOFF.md",
+                    "docs/STATE.md", "docs/DECISIONS.md")
+
+
+def _nested_worktree(root):
+    """True when root is a linked worktree whose main checkout contains it (orch's .claude/worktrees/*). Reads the
+    .git file and the commondir file; no git process."""
+    dotgit = os.path.join(root, ".git")
+    if not os.path.isfile(dotgit):
+        return False
+    try:
+        first = (read_text(dotgit) or "").split("\n")[0]
+        if not first.startswith("gitdir:"):
+            return False
+        gitdir = os.path.normpath(os.path.join(root, first[len("gitdir:"):].strip()))
+        common = (read_text(os.path.join(gitdir, "commondir")) or "").strip()
+        if not common:
+            return False
+        main = os.path.dirname(os.path.normpath(os.path.join(gitdir, common)))
+        return os.path.realpath(root).startswith(os.path.realpath(main).rstrip("/") + "/")
+    except OSError:
+        return False
+
+
+def session_nudge(cwd):
+    """The one SessionStart context line naming agent docs that are real files in this repo (not links into the private
+    store), or None. Reads and stats only: it never moves or creates anything. The common no-hit path starts no process."""
+    root = os.path.abspath(cwd)
+    while not os.path.exists(os.path.join(root, ".git")):
+        parent = os.path.dirname(root)
+        if parent == root:
+            return None
+        root = parent
+    if _nested_worktree(root):
+        return None
+    hits = []
+    for rel in NUDGE_CANDIDATES:
+        try:
+            if stat.S_ISREG(os.lstat(os.path.join(root, rel)).st_mode):
+                hits.append(rel)
+        except OSError:
+            pass
+    if not hits:
+        return None
+    if git(root, "config", "--bool", "agentdocs.allow").stdout.strip() == "true":
+        return None
+    tracked = bool(git(root, "ls-files", "-z", "--", *hits).stdout.strip("\0"))
+    return "%s: agent docs here are not in the private store: %s \u2014 move them: orch docs adopt %s%s" % (
+        PREFIX, ", ".join(hits), " ".join(hits), " (tracked: commit the removal afterwards)" if tracked else "")
+
+
 VERBS = {
     "init": cmd_init, "adopt": cmd_adopt, "add": cmd_add, "link": cmd_link, "status": cmd_status,
     "list": cmd_list, "commit": cmd_commit, "migrated": cmd_migrated,

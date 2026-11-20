@@ -681,5 +681,115 @@ class TestHooks(Base):
         self.assertEqual(res.returncode, 0, res.stderr)
 
 
+class TestNudge(Base):
+    def switch(self, value):
+        os.makedirs(self.data, exist_ok=True)
+        with open(os.path.join(self.data, "settings.json"), "w") as fh:
+            fh.write('{"agent_docs": "%s"}' % value)
+
+    def start(self, cwd):
+        res = self.sh(cwd, sys.executable, LAUNCHER, "session-start", os.path.join(self.tmp, "plugin-root"))
+        return res
+
+    def line(self, cwd):
+        res = self.start(cwd)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        return res.stdout
+
+    def test_off_is_silent_even_with_agent_docs_present(self):
+        r = self.repo("n1")
+        with open(os.path.join(r, "CLAUDE.md"), "w") as fh:
+            fh.write("x\n")
+        self.assertEqual(self.line(r), "")
+        self.switch("off")
+        self.assertEqual(self.line(r), "")
+
+    def test_on_names_real_files_and_the_adopt_command(self):
+        r = self.repo("n2")
+        self.switch("on")
+        self.assertEqual(self.line(r), "")          # nothing there yet
+        for rel in ("CLAUDE.md", "docs/STATE.md", "src/CLAUDE.md"):   # the last is not a candidate: never walks the tree
+            p = os.path.join(r, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as fh:
+                fh.write("x\n")
+        out = self.line(r)
+        self.assertEqual(out, "orch docs: agent docs here are not in the private store: CLAUDE.md, docs/STATE.md "
+                              "\u2014 move them: orch docs adopt CLAUDE.md docs/STATE.md\n")
+        sub = os.path.join(r, "src")
+        self.assertEqual(self.line(sub), out)       # found from a subdirectory
+        self.assertEqual(self.sh(r, "git", "status", "--short").stdout.count("??"), 3)   # nothing was moved or created
+
+    def test_tracked_hits_add_the_commit_note(self):
+        r = self.repo("n3", files={"README.md": "x\n", "STATE.md": "s\n"})
+        self.switch("on")
+        self.assertTrue(self.line(r).endswith("orch docs adopt STATE.md (tracked: commit the removal afterwards)\n"))
+
+    def test_links_the_exempt_the_nested_and_the_non_repo_are_silent(self):
+        r = self.repo("n4")
+        self.switch("on")
+        entry = os.path.join(self.tmp, "somewhere")
+        os.makedirs(entry)
+        with open(os.path.join(entry, "CLAUDE.md"), "w") as fh:
+            fh.write("x\n")
+        os.symlink(os.path.join(entry, "CLAUDE.md"), os.path.join(r, "CLAUDE.md"))
+        self.assertEqual(self.line(r), "")
+        os.unlink(os.path.join(r, "CLAUDE.md"))
+        with open(os.path.join(r, "CLAUDE.md"), "w") as fh:
+            fh.write("x\n")
+        self.assertNotEqual(self.line(r), "")
+        self.git(r, "config", "--bool", "agentdocs.allow", "true")
+        self.assertEqual(self.line(r), "")
+        self.git(r, "config", "--unset", "agentdocs.allow")
+        nested = os.path.join(r, ".claude", "worktrees", "wt")
+        self.git(r, "worktree", "add", "-q", "-b", "wt", nested)
+        with open(os.path.join(nested, "CLAUDE.md"), "w") as fh:
+            fh.write("x\n")
+        self.assertEqual(self.line(nested), "")
+        far = os.path.join(self.tmp, "far-wt")
+        self.git(r, "worktree", "add", "-q", "-b", "far", far)
+        with open(os.path.join(far, "CLAUDE.md"), "w") as fh:
+            fh.write("x\n")
+        self.assertIn("CLAUDE.md", self.line(far))
+        plain = os.path.join(self.tmp, "plain")
+        os.makedirs(plain)
+        with open(os.path.join(plain, "CLAUDE.md"), "w") as fh:
+            fh.write("x\n")
+        self.assertEqual(self.line(plain), "")
+
+    def run_branch(self, **patches):
+        """Run the launcher's session-start branch in this process; returns (exit code, stdout)."""
+        import runpy
+        out = io.StringIO()
+        argv = [LAUNCHER, "session-start", os.path.join(self.tmp, "plugin-root")]
+        with mock.patch.dict(os.environ, self.env), mock.patch.object(sys, "argv", argv), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()), contextlib.ExitStack() as stack:
+            for target, value in patches.items():
+                stack.enter_context(mock.patch(target, value))
+            with self.assertRaises(SystemExit) as cm:
+                runpy.run_path(LAUNCHER, run_name="__main__")
+        return cm.exception.code, out.getvalue()
+
+    def test_a_failing_nudge_changes_neither_the_exit_code_nor_the_pointer_update(self):
+        self.switch("on")
+        calls = []
+        os.makedirs(os.path.join(self.tmp, "cwd", ".git"))
+        old = os.getcwd()
+        os.chdir(os.path.join(self.tmp, "cwd"))
+        self.addCleanup(os.chdir, old)
+        boom = mock.Mock(side_effect=RuntimeError("boom"))
+        code, out = self.run_branch(**{"orchlib.docs.session_nudge": boom,
+                                       "orchlib.paths.update_pointer": lambda root: calls.append(root)})
+        self.assertEqual((code, out), (0, ""))
+        self.assertTrue(boom.called)
+        self.assertEqual(len(calls), 1)
+        # a pointer failure still exits 3, and the nudge still runs
+        nudge = mock.Mock(return_value="orch docs: hello")
+        def bad(root):
+            raise OSError("no link")
+        code, out = self.run_branch(**{"orchlib.docs.session_nudge": nudge, "orchlib.paths.update_pointer": bad})
+        self.assertEqual((code, out), (3, "orch docs: hello\n"))
+
+
 if __name__ == "__main__":
     unittest.main()
