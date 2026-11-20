@@ -8,13 +8,17 @@ In the checkout `.agent` points at <store>/<name> and each path in .links is a s
 The layout and the agentdocs.* git-config keys are the ones the older shell tool used, so existing entries keep working.
 Commands here work whatever the `agent_docs` setting says: it only gates orch's automatic behaviour, not these verbs.
 """
+import ast
 import contextlib
 import os
 import re
 import shutil
+import stat
 import subprocess
+import sys
+import types
 
-from .paths import OrchError, docs_store
+from .paths import OrchError, docs_store, private_dir
 
 PREFIX = "orch docs"
 STORE_README = "# Private agent docs store (managed by `orch docs`). Never push to a public remote.\n"
@@ -29,8 +33,10 @@ def say(msg):
 
 def git(cwd, *args, check=False):
     """Run git in cwd with an argument list (never a shell string); returns the CompletedProcess (text)."""
+    # No -C when cwd is where we already are: inside a git hook GIT_DIR / GIT_INDEX_FILE can be relative to it.
+    pre = ["-C", cwd] if cwd and os.path.abspath(cwd) != os.getcwd() else []
     try:
-        res = subprocess.run(["git", "-C", cwd] + list(args), capture_output=True, text=True)
+        res = subprocess.run(["git"] + pre + list(args), capture_output=True, encoding="utf-8", errors="replace")
     except OSError as exc:
         raise OrchError("cannot run git: %s" % exc, 1)
     if check and res.returncode != 0:
@@ -310,14 +316,52 @@ def cmd_link(ctx):
     return 0
 
 
+def pattern_lines(text):
+    """The pattern lines of a list file: everything but blank lines and # comments."""
+    return [ln for ln in (text or "").split("\n") if ln.strip() and not ln.lstrip().startswith("#")]
+
+
+_POSIX_CLASSES = {
+    "alpha": "a-zA-Z", "digit": "0-9", "alnum": "a-zA-Z0-9", "upper": "A-Z", "lower": "a-z", "blank": " \\t",
+    "space": " \\t\\n\\r\\f\\v", "xdigit": "0-9A-Fa-f", "punct": "!-/:-@\\[-`{-~", "word": "a-zA-Z0-9_",
+}
+
+
+def ere_to_re(pat):
+    """Compile one POSIX extended regex line with Python's re: POSIX bracket classes and \\< \\> are translated.
+    Raises re.error when it does not compile (callers fail closed)."""
+    pat = re.sub(r"\[:(\w+):\]", lambda m: _POSIX_CLASSES.get(m.group(1), m.group(0)), pat)
+    pat = pat.replace("\\<", "\\b").replace("\\>", "\\b")
+    return re.compile(pat)
+
+
+def compile_list(lines):
+    """(regexes, number of lines that did not compile)."""
+    out, bad = [], 0
+    for ln in lines:
+        try:
+            out.append(ere_to_re(ln))
+        except re.error:
+            bad += 1
+    return out, bad
+
+
+def deny_paths_file():
+    """The optional private list that adds path patterns (absent = just the shipped list)."""
+    return os.path.join(private_dir(), "agent-docs-deny-paths.txt")
+
+
+def deny_content_file():
+    """The private list of strings that must not enter a repo (absent = the content check is off)."""
+    return os.path.join(private_dir(), "agent-docs-deny-content.txt")
+
+
+def deny_path_lines():
+    return pattern_lines(read_text(DENY_PATHS_FILE)) + pattern_lines(read_text(deny_paths_file()))
+
+
 def deny_path_regexes():
-    """The compiled path patterns of the shipped list (one extended regex per line, # comments)."""
-    out = []
-    for ln in (read_text(DENY_PATHS_FILE) or "").split("\n"):
-        ln = ln.strip()
-        if ln and not ln.startswith("#"):
-            out.append(re.compile(ln))
-    return out
+    return compile_list(deny_path_lines())[0]
 
 
 def cmd_status(ctx):
@@ -346,6 +390,9 @@ def cmd_status(ctx):
             print("  %s" % f)
     if git(root, "config", "--bool", "agentdocs.allow").stdout.strip() == "true":
         print("(exempt: agentdocs.allow=true)")
+    if read_text(deny_content_file()) is None:
+        sys.stderr.write("%s: no private content list at %s; the content check is off (the path check is on)\n"
+                         % (PREFIX, deny_content_file()))
     return 0
 
 
@@ -379,9 +426,297 @@ def cmd_migrated(ctx):
     return 0
 
 
+# -- check ---------------------------------------------------------------------------------------
+
+CHECK_USAGE = "usage: orch docs check staged | range -- <git rev args>... | tree [<rev>]"
+LIST_MAX = 30
+LINE_MAX = 200
+
+
+def config_all(cwd, key):
+    res = git(cwd, "config", "--get-all", key)
+    return [ln for ln in res.stdout.split("\n") if ln] if res.returncode == 0 else []
+
+
+def diff_added_lines(text):
+    """[(path, line text)] for every added line of a `git diff -U0` / `git log -p` text (b/ side, fixed prefixes)."""
+    out, cur, in_hunk = [], None, False
+    for line in text.split("\n"):
+        if line.startswith("diff --git ") or line.startswith("diff --cc ") or line.startswith("diff --combined "):
+            cur, in_hunk = None, False
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif not in_hunk:
+            if line.startswith("+++ "):
+                name = line[4:]
+                if name.startswith('"'):
+                    try:
+                        name = ast.literal_eval(name)
+                    except (ValueError, SyntaxError):
+                        pass
+                cur = name[2:] if name.startswith("b/") else None
+        elif line.startswith("+") and cur is not None:
+            out.append((cur, line[1:]))
+    return out
+
+
+DIFF_FLAGS = ["-U0", "--diff-filter=ACMR", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"]
+
+
+def _names(text):
+    return sorted({n.strip("\n") for n in text.split("\0") if n.strip("\n")})
+
+
+def run_check(mode, args, cwd=None):
+    """The path and content check. Returns 0 clean, 1 findings, 2 usage or list errors. Writes only to stderr."""
+    err = sys.stderr
+    if os.environ.get("AGENTDOCS_ALLOW") == "1":
+        err.write("%s check: AGENTDOCS_ALLOW=1, skipped\n" % PREFIX)
+        return 0
+    if git(cwd, "config", "--bool", "agentdocs.allow").stdout.strip() == "true":
+        return 0
+    if mode not in ("staged", "range", "tree"):
+        err.write(CHECK_USAGE + "\n")
+        return 2
+    if mode == "range" and not args:
+        err.write(CHECK_USAGE + "\n")
+        return 2
+    rev = args[0] if args else "HEAD"
+    if mode == "tree" and (rev.startswith("-") or len(args) > 1):
+        err.write(CHECK_USAGE + "\n")
+        return 2
+
+    path_res, bad_paths_list = compile_list(deny_path_lines())
+    content_lines = pattern_lines(read_text(deny_content_file()))   # absent = no content check
+    content_res, bad_content_list = compile_list(content_lines)
+    allow_path_res, _ = compile_list(config_all(cwd, "agentdocs.allowPath"))
+    allow_content_res, _ = compile_list(config_all(cwd, "agentdocs.allowContent"))
+    if bad_paths_list or bad_content_list:   # fail closed: a list that does not compile would silently check less
+        err.write("%s check: %d pattern line(s) in the deny lists do not compile; fix them (the check refuses meanwhile)\n"
+                  % (PREFIX, bad_paths_list + bad_content_list))
+        return 2
+
+    added = []          # "path:text"
+    if mode == "staged":
+        res = git(cwd, "diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR")
+        paths = _names(res.stdout)
+        added = ["%s:%s" % pt for pt in diff_added_lines(git(cwd, "diff", "--cached", *DIFF_FLAGS).stdout)]
+    elif mode == "range":
+        res = git(cwd, "log", "--format=", "--name-only", "-z", "--diff-filter=ACMR", *args)
+        if res.returncode != 0:
+            err.write("%s check: git log failed: %s\n" % (PREFIX, res.stderr.strip()))
+            return 2
+        paths = _names(res.stdout)
+        added = ["%s:%s" % pt for pt in diff_added_lines(git(cwd, "log", "-p", "--format=", *(DIFF_FLAGS + list(args))).stdout)]
+    else:
+        res = git(cwd, "ls-tree", "-r", "--name-only", "-z", rev)
+        if res.returncode != 0:
+            err.write("%s check: git ls-tree failed: %s\n" % (PREFIX, res.stderr.strip()))
+            return 2
+        paths = _names(res.stdout)
+        if content_lines:
+            gargs = ["grep", "-I", "-n", "-z", "--no-color", "-E"]
+            for ln in content_lines:
+                gargs += ["-e", ln]
+            res = git(cwd, *(gargs + [rev, "--"]))
+            if res.returncode > 1:
+                err.write("%s check: git grep failed: %s\n" % (PREFIX, res.stderr.strip()))
+                return 2
+            for rec in res.stdout.split("\n"):
+                parts = rec.split("\0", 2)
+                if len(parts) == 3:
+                    path = parts[0][len(rev) + 1:] if parts[0].startswith(rev + ":") else parts[0]
+                    added.append("%s:%s" % (path, parts[2]))
+
+    bad_paths = [p for p in paths if any(r.search(p) for r in path_res) and not any(a.search(p) for a in allow_path_res)]
+    if mode == "tree":
+        bad_lines = [s for s in added if not any(a.search(s) for a in allow_content_res)]
+    else:
+        bad_lines = [s for s in added if any(r.search(s) for r in content_res) and not any(a.search(s) for a in allow_content_res)]
+    if not bad_paths and not bad_lines:
+        return 0
+
+    err.write("%s: private agent docs or private strings would enter this repo.\n" % PREFIX)
+    if bad_paths:
+        err.write("  Agent/internal doc paths (keep them in the private store: orch docs adopt <path>):\n")
+        for p in bad_paths[:LIST_MAX]:
+            err.write("    %s\n" % p)
+    if bad_lines:
+        err.write("  Private strings (home paths, LAN IPs, VM/cluster names):\n")
+        for ln in bad_lines[:LIST_MAX]:
+            err.write("    %s\n" % ln[:LINE_MAX])
+    err.write("  A repo that must keep its docs: git config agentdocs.allow true\n")
+    err.write("  A legitimate string: git config --add agentdocs.allowContent '<regex for path:line>'\n")
+    if git(cwd, "config", "agentdocs.mode").stdout.strip() == "warn":
+        err.write("  (agentdocs.mode=warn: not blocked; migrate this repo with orch docs adopt, then orch docs migrated)\n")
+        return 0
+    return 1
+
+
+def cmd_check(ctx):
+    if not ctx.paths:
+        sys.stderr.write(CHECK_USAGE + "\n")
+        return 2
+    return run_check(ctx.paths[0], ctx.paths[1:], ctx.cwd)
+
+
+# -- git hooks -----------------------------------------------------------------------------------
+
+HOOK_NAMES = ("pre-commit", "pre-push", "post-checkout")
+SHIM_MARKER = "# orch docs hook"
+
+
+def shim_text(name):
+    fail = "exit 0" if name == "post-checkout" else (
+        'echo "orch docs hook: orch is not installed (fix: claude plugin update orch@orch; for one commit or push: '
+        'AGENTDOCS_ALLOW=1)" >&2\nexit 1')
+    allow = "" if name == "post-checkout" else '[ "${AGENTDOCS_ALLOW:-0}" = 1 ] && exit 0\n'
+    return ("#!/bin/sh\n%s\n"
+            "# Written by `orch docs install-hooks`: runs the orch check, then chains to %s.pre-orch or the repo's own hook.\n"
+            'ORCH="${ORCH_BIN:-$HOME/.claude/orch-data/plugin/bin/orch}"\n'
+            '[ -x "$ORCH" ] || ORCH="$(command -v orch 2>/dev/null)"\n'
+            'if [ -x "$ORCH" ]; then exec "$ORCH" docs hook %s "$@"; fi\n'
+            "%s%s\n") % (SHIM_MARKER, name, name, allow, fail)
+
+
+def is_shim(path):
+    if os.path.islink(path) or not os.path.isfile(path):
+        return False
+    text = read_text(path)
+    return text is not None and SHIM_MARKER in text.split("\n")[:3]
+
+
+def describe_hook(path):
+    if os.path.islink(path):
+        return "a symlink to %s" % os.readlink(path)
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            first = fh.readline().strip()[:80]
+        return "a file of %d bytes starting with %r" % (os.path.getsize(path), first)
+    except OSError:
+        return "an entry that cannot be read"
+
+
+def write_exec(path, text):
+    tmp = path + ".orch-tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.chmod(tmp, 0o755)
+    os.replace(tmp, path)
+
+
+def install_hooks(hooks_dir, chain_existing=False):
+    """Write the three shims into hooks_dir. A foreign hook of the same name is refused, or with chain_existing
+    renamed to <name>.pre-orch. Returns the changes made: [("wrote", path) | ("renamed", from, to)]. Nothing is
+    changed when anything has to be refused."""
+    plan = []
+    for name in HOOK_NAMES:
+        path = os.path.join(hooks_dir, name)
+        pre = path + ".pre-orch"
+        if not os.path.lexists(path) or is_shim(path):
+            plan.append((name, path, None))
+            continue
+        if not chain_existing:
+            raise OrchError("%s is %s, not an orch hook; use --chain-existing to keep it as %s.pre-orch and chain to it"
+                            % (path, describe_hook(path), name), 1)
+        if os.path.lexists(pre):
+            raise OrchError("%s already exists; cannot keep %s as %s.pre-orch" % (pre, path, name), 1)
+        plan.append((name, path, pre))
+    os.makedirs(hooks_dir, exist_ok=True)
+    changes = []
+    for name, path, pre in plan:
+        if pre:
+            os.rename(path, pre)
+            changes.append(("renamed", path, pre))
+        if read_text(path) != shim_text(name) or not os.access(path, os.X_OK):
+            write_exec(path, shim_text(name))
+            changes.append(("wrote", path))
+    return changes
+
+
+def cmd_install_hooks(ctx):
+    hooks_dir = os.path.abspath(ctx.hooks_dir) if ctx.hooks_dir else os.path.join(common_dir(ctx.cwd), "hooks")
+    changes = install_hooks(hooks_dir, ctx.chain_existing)
+    if not changes:
+        say("hooks already installed in %s" % hooks_dir)
+    for ch in changes:
+        say("%s %s" % (ch[0], " -> ".join(ch[1:])))
+    return 0
+
+
+def chain_hook(name, args, cwd, stdin_data=None):
+    """Run the hook this shim stands in front of: <name>.pre-orch beside it, else the repo's own under the git common
+    dir; never the shim itself. Returns its exit code (0 when there is none)."""
+    hooks = git(cwd, "rev-parse", "--git-path", "hooks").stdout.strip()
+    shim = os.path.join(os.path.abspath(hooks), name) if hooks else None
+    pre = shim + ".pre-orch" if shim else None
+    if pre and os.path.lexists(pre):
+        target = pre
+    else:
+        target = os.path.join(common_dir(cwd), "hooks", name)
+    if not os.path.lexists(target):
+        return 0
+    if shim and os.path.realpath(target) == os.path.realpath(shim):
+        return 0
+    if not (os.path.isfile(target) and os.access(target, os.X_OK)):
+        if name == "pre-push":   # present but not runnable: fail closed rather than skip the repo's checks
+            sys.stderr.write("pre-push: %s exists but can't run (dangling link or not executable); refusing the push\n" % target)
+            return 1
+        return 0
+    try:
+        return subprocess.run([target] + list(args), input=stdin_data, encoding="utf-8", errors="replace").returncode
+    except OSError as exc:
+        sys.stderr.write("%s hook: cannot run %s: %s\n" % (PREFIX, target, exc))
+        return 1
+
+
+def hook_pre_push(args, cwd):
+    data = sys.stdin.read()
+    remote = args[0] if args else ""
+    for line in data.split("\n"):
+        f = line.split()
+        if len(f) < 4:
+            continue
+        lref, lsha, rsha = f[0], f[1], f[3]
+        if not re.fullmatch(r"[0-9a-f]{40,64}", lsha) or not re.fullmatch(r"[0-9a-f]{40,64}", rsha):
+            sys.stderr.write("pre-push: unexpected input from git for %s; refusing the push\n" % lref)
+            return 1
+        if set(lsha) == {"0"}:    # deleting a ref
+            continue
+        if set(rsha) == {"0"} or git(cwd, "cat-file", "-e", rsha + "^{commit}").returncode != 0:
+            revs = [lsha, "--not", "--remotes=%s" % remote]     # new ref: commits not on this remote yet
+        else:
+            revs = ["%s..%s" % (rsha, lsha)]
+        if run_check("range", revs, cwd) != 0:
+            sys.stderr.write("pre-push: refused (orch docs) for %s. Nothing was pushed.\n" % lref)
+            return 1
+    return chain_hook("pre-push", args, cwd, stdin_data=data)
+
+
+def cmd_hook(ctx):
+    if not ctx.paths or ctx.paths[0] not in HOOK_NAMES:
+        raise OrchError("usage: orch docs hook pre-commit | pre-push <remote> <url> | post-checkout <old> <new> <flag>", 2)
+    name, args = ctx.paths[0], ctx.paths[1:]
+    if name == "pre-commit":
+        if run_check("staged", [], ctx.cwd) != 0:
+            return 1
+        return chain_hook(name, args, ctx.cwd)
+    if name == "pre-push":
+        return hook_pre_push(args, ctx.cwd)
+    if len(args) >= 3 and args[2] == "1":    # a branch checkout: a fresh clone or a new worktree gets its links
+        try:
+            sub = types.SimpleNamespace(dir=None, paths=[], name=None, message=None, hooks_dir=None, chain_existing=False)
+            with open(os.devnull, "w") as null, contextlib.redirect_stdout(null), contextlib.redirect_stderr(null):
+                cmd_link(Ctx(sub))
+        except (Exception, SystemExit):
+            pass
+    return chain_hook(name, args, ctx.cwd)
+
+
 VERBS = {
     "init": cmd_init, "adopt": cmd_adopt, "add": cmd_add, "link": cmd_link, "status": cmd_status,
     "list": cmd_list, "commit": cmd_commit, "migrated": cmd_migrated,
+    "check": cmd_check, "hook": cmd_hook, "install-hooks": cmd_install_hooks,
 }
 
 
@@ -391,24 +726,32 @@ class Ctx:
         self.paths = list(ns.paths or [])
         self.name = ns.name
         self.message = ns.message
+        self.hooks_dir = ns.hooks_dir
+        self.chain_existing = ns.chain_existing
 
 
 def cmd_docs(ns, extra):
     verb = ns.verb or "status"
-    if ns.paths and verb not in ("adopt", "add"):
+    if ns.paths and verb not in ("adopt", "add", "check", "hook"):
         raise OrchError("%s takes no positional argument" % verb, 1)
     return VERBS[verb](Ctx(ns))
 
 
 def register(add):
     sp = add("docs", cmd_docs,
-             "private agent-docs store: init | adopt PATH... | add PATH... | link | status | list | commit [-m MSG] | migrated")
+             "private agent-docs store: init | adopt PATH... | add PATH... | link | status | list | commit [-m MSG] | migrated"
+             " | check staged|range|tree | hook NAME [ARGS] | install-hooks [--dir D] [--chain-existing]")
     sp.add_argument("verb", nargs="?", choices=list(VERBS), default=None,
                     help="init: register this repo and create .agent | adopt: move paths into the store and link them back"
                          " | add: link a path already in the store | link: (re)create .agent and every link (fresh clone,"
                          " worktree) | status: links, broken links, private paths still tracked | list: every repo in the"
-                         " store | commit: commit the store | migrated: drop agentdocs.mode so the hooks block again")
+                         " store | commit: commit the store | migrated: drop agentdocs.mode so the hooks block again | check: the path"
+                         " and content check (staged; range -- <rev args>; tree [rev]) | hook: what a git hook shim runs"
+                         " (pre-commit, pre-push, post-checkout) | install-hooks: write the shims into the repo's hooks dir")
     sp.add_argument("paths", nargs="*", metavar="PATH")
     sp.add_argument("--name", default=None, help="init: the store entry name (default: from .agent, origin, or the directory)")
     sp.add_argument("-m", dest="message", default=None, help="commit: the store commit message")
     sp.add_argument("-C", dest="dir", default=None, help="run as if started in DIR")
+    sp.add_argument("--dir", dest="hooks_dir", default=None, help="install-hooks: the hooks directory (default: the repo's)")
+    sp.add_argument("--chain-existing", dest="chain_existing", action="store_true",
+                    help="install-hooks: keep a foreign hook as <name>.pre-orch and chain to it")
