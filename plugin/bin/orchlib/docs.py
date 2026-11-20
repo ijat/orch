@@ -622,12 +622,21 @@ def write_exec(path, text):
     os.replace(tmp, path)
 
 
-def install_hooks(hooks_dir, chain_existing=False, dry_run=False, record=None, orch_bin=None):
+GIT_PATH_RE = re.compile(r"--git-path\s+['\"]?hooks\b")
+
+
+def warn_line(msg):
+    sys.stderr.write("%s: warning: %s\n" % (PREFIX, msg))
+
+
+def install_hooks(hooks_dir, chain_existing=False, dry_run=False, record=None, orch_bin=None, warn=None):
     """Write the three shims into hooks_dir. A foreign hook of the same name is refused, or with chain_existing
     renamed to <name>.pre-orch. Returns the changes: [("wrote", path) | ("renamed", from, to)]. Nothing is changed
     when anything has to be refused. With dry_run nothing is changed at all; record(change) is called right after
     each change is made, so a caller can keep a record that survives a failure half way. orch_bin is the launcher
-    written into the shims (default: the plugin link under the data root)."""
+    written into the shims (default: the plugin link under the data root). warn(message) is called once for each
+    hook that is kept as <name>.pre-orch and finds the repo's hook with `git rev-parse --git-path hooks` (it will run
+    the shim again: outer_runs() and the depth limit handle that); default: a line on stderr."""
     orch_bin = os.path.abspath(orch_bin) if orch_bin else default_orch_bin()
     private = private_dir_effective()
     plan = []
@@ -652,8 +661,12 @@ def install_hooks(hooks_dir, chain_existing=False, dry_run=False, record=None, o
         if record and not dry_run:
             record(change)
 
+    warn = warn or warn_line
     for name, path, pre in plan:
         if pre:
+            if GIT_PATH_RE.search(read_text(path) or ""):
+                warn("%s finds the repo's hook with `git rev-parse --git-path hooks`, which leads back to the orch "
+                     "hook; orch runs the check once and then only the repo's own hook" % pre)
             if not dry_run:
                 os.rename(path, pre)
             made(("renamed", path, pre))
@@ -674,13 +687,154 @@ def cmd_install_hooks(ctx):
     return 0
 
 
-def chain_hook(name, args, cwd, stdin_data=None):
+LAUNCHER = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "orch")
+DEPTH_ENV = "ORCH_DOCS_HOOK_DEPTH"   # a loop breaker only: a value can make a hook refuse, never skip anything
+MAX_HOOK_DEPTH = 3                  # unrecognised runs in a row (DEPTH_ENV), or recognised runs above one (outer_runs)
+MAX_ANCESTORS = 16
+
+
+def _cstr(raw):
+    return raw.split(b"\0", 1)[0].decode("utf-8", "surrogateescape")
+
+
+def _macos_process(pid):
+    """(executable, argv, cwd) of a process of this user, read from the kernel (libproc and sysctl KERN_PROCARGS2),
+    or None. The executable is the file the kernel runs, not argv[0]."""
+    import ctypes
+    import ctypes.util
+    import struct
+    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+    buf = ctypes.create_string_buffer(4096)
+    if libproc.proc_pidpath(ctypes.c_int(pid), buf, ctypes.c_uint32(4096)) <= 0:
+        return None
+    exe = _cstr(buf.raw)
+    info = ctypes.create_string_buffer(2352)   # struct proc_vnodepathinfo: cdir = vnode_info (152) + path[1024], rdir
+    if libproc.proc_pidinfo(ctypes.c_int(pid), ctypes.c_int(9), ctypes.c_uint64(0), info, ctypes.c_int(2352)) != 2352:
+        return None
+    cwd = _cstr(info.raw[152:152 + 1024])
+    argmax, size = ctypes.c_int(0), ctypes.c_size_t(ctypes.sizeof(ctypes.c_int))
+    if libc.sysctl((ctypes.c_int * 2)(1, 8), 2, ctypes.byref(argmax), ctypes.byref(size), None, 0) != 0:   # KERN_ARGMAX
+        return None
+    args = ctypes.create_string_buffer(argmax.value)
+    size = ctypes.c_size_t(argmax.value)
+    if libc.sysctl((ctypes.c_int * 3)(1, 49, pid), 3, args, ctypes.byref(size), None, 0) != 0:    # KERN_PROCARGS2
+        return None
+    raw = args.raw[:size.value]
+    if len(raw) < 4:
+        return None
+    argc = struct.unpack("i", raw[:4])[0]
+    rest = raw[4:]
+    rest = rest[rest.find(b"\0"):].lstrip(b"\0")      # skip the exec path and its padding
+    parts = rest.split(b"\0")
+    if argc < 0 or len(parts) < argc:
+        return None
+    return exe, [p.decode("utf-8", "surrogateescape") for p in parts[:argc]], cwd
+
+
+def _linux_process(pid):
+    base = "/proc/%d" % pid
+    try:
+        exe = os.readlink(base + "/exe")
+        cwd = os.readlink(base + "/cwd")
+        with open(base + "/cmdline", "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return None
+    return exe, [p.decode("utf-8", "surrogateescape") for p in raw.split(b"\0")[:-1]], cwd
+
+
+def process_info(pid):
+    """(real executable, exact argv, cwd) of a live process, or None when it cannot be read (then nothing is believed)."""
+    try:
+        if sys.platform == "darwin":
+            return _macos_process(pid)
+        if os.path.isdir("/proc/self"):
+            return _linux_process(pid)
+    except Exception:
+        return None
+    return None
+
+
+def ancestors():
+    """The pids above this process, nearest first (at most MAX_ANCESTORS); [] when ps cannot be read."""
+    try:
+        res = subprocess.run(["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    parent = {}
+    for line in res.stdout.splitlines():
+        f = line.split()
+        if len(f) == 2 and f[0].isdigit() and f[1].isdigit():
+            parent[int(f[0])] = int(f[1])
+    if res.returncode != 0 or not parent:
+        return []
+    out, cur = [], os.getppid()
+    while cur > 1 and len(out) < MAX_ANCESTORS and cur not in out:
+        out.append(cur)
+        cur = parent.get(cur, 0)
+    return out
+
+
+def is_outer_hook(info, me, name):
+    """True when info is a run of this very orch's `docs hook <name>` in the same directory: the same interpreter
+    binary as this process (by the kernel's executable path, not argv[0]), argv[1] is this launcher (an absolute
+    path to the same file), then exactly `docs hook <name>`."""
+    exe, argv, cwd = info
+    if len(argv) < 5 or argv[2:5] != ["docs", "hook", name] or not os.path.isabs(argv[1]):
+        return False
+    return (os.path.realpath(argv[1]) == os.path.realpath(LAUNCHER) and os.path.realpath(exe) == os.path.realpath(me[0])
+            and os.path.realpath(cwd) == os.path.realpath(me[2]))
+
+
+def outer_runs(name, limit=MAX_HOOK_DEPTH):
+    """How many ancestor processes (counted up to limit) are orch's own `docs hook <name>` run for the same directory
+    (see is_outer_hook). One or more: such a run checked before it chained, so this run is the hook behind it calling
+    the shim again. Nothing in the environment or in a file is believed, so a committer cannot claim this; any process
+    that passes is the real orch hook, which runs the full check first. A forged look-alike needs code the kernel runs
+    as that interpreter on that launcher (a .pth, sitecustomize or library file), which can rewrite the inner check as
+    well. When the process table cannot be read the answer is 0: the check runs again (DEPTH_ENV ends a loop)."""
+    me = process_info(os.getpid())
+    if not me:
+        return 0
+    n = 0
+    for pid in ancestors():
+        info = process_info(pid)
+        if info and is_outer_hook(info, me, name):
+            n += 1
+            if n >= limit:
+                break
+    return n
+
+
+def depth_key(name, cwd):
+    return "%s:%s" % (name, os.path.realpath(cwd))
+
+
+def hook_depth(name, cwd):
+    """How many runs of this hook for this directory, in a row above this one, found no orch run before them among
+    their processes: DEPTH_ENV is "<count>:<name>:<directory>". A value for another hook or directory, or one that
+    does not parse, counts 0, so a nested commit in another repository starts again from 0."""
+    count, _, key = os.environ.get(DEPTH_ENV, "").partition(":")
+    if key != depth_key(name, cwd):
+        return 0
+    try:
+        return max(0, int(count))
+    except ValueError:
+        return 0
+
+
+def chain_hook(name, args, cwd, stdin_data=None, reentry=False, depth=None):
     """Run the hook this shim stands in front of: <name>.pre-orch beside it, else the repo's own under the git common
-    dir; never the shim itself. Returns its exit code (0 when there is none)."""
+    dir; never the shim itself. Returns its exit code (0 when there is none). <name>.pre-orch may call the shim again
+    (a hook that finds the repo's hook with `git rev-parse --git-path hooks/<name>`); that second run finds this one
+    among its ancestors (outer_runs) and runs with reentry=True: only the repo's own hook. A run that found no outer
+    run passes depth (its own count plus one) in DEPTH_ENV, so the same loop with no process table refuses at
+    MAX_HOOK_DEPTH (cmd_hook); a recognised run passes depth=None and leaves DEPTH_ENV as it found it."""
     hooks = git(cwd, "rev-parse", "--git-path", "hooks").stdout.strip()
     shim = os.path.join(os.path.abspath(hooks), name) if hooks else None
     pre = shim + ".pre-orch" if shim else None
-    if pre and os.path.lexists(pre):
+    if not reentry and pre and os.path.lexists(pre):
         target = pre
     else:
         target = os.path.join(common_dir(cwd), "hooks", name)
@@ -693,15 +847,21 @@ def chain_hook(name, args, cwd, stdin_data=None):
             sys.stderr.write("pre-push: %s exists but can't run (dangling link or not executable); refusing the push\n" % target)
             return 1
         return 0
+    env = dict(os.environ)
+    if depth is not None:
+        env[DEPTH_ENV] = "%d:%s" % (depth, depth_key(name, cwd))
     try:
-        return subprocess.run([target] + list(args), input=stdin_data, encoding="utf-8", errors="replace").returncode
+        return subprocess.run([target] + list(args), input=stdin_data, encoding="utf-8", errors="replace",
+                              env=env).returncode
     except OSError as exc:
         sys.stderr.write("%s hook: cannot run %s: %s\n" % (PREFIX, target, exc))
         return 1
 
 
-def hook_pre_push(args, cwd):
+def hook_pre_push(args, cwd, reentry, depth):
     data = sys.stdin.read()
+    if reentry:
+        return chain_hook("pre-push", args, cwd, stdin_data=data, reentry=True)
     remote = args[0] if args else ""
     for line in data.split("\n"):
         f = line.split()
@@ -720,19 +880,35 @@ def hook_pre_push(args, cwd):
         if run_check("range", revs, cwd) != 0:
             sys.stderr.write("pre-push: refused (orch docs) for %s. Nothing was pushed.\n" % lref)
             return 1
-    return chain_hook("pre-push", args, cwd, stdin_data=data)
+    return chain_hook("pre-push", args, cwd, stdin_data=data, depth=depth + 1)
 
 
 def cmd_hook(ctx):
     if not ctx.paths or ctx.paths[0] not in HOOK_NAMES:
         raise OrchError("usage: orch docs hook pre-commit | pre-push <remote> <url> | post-checkout <old> <new> <flag>", 2)
     name, args = ctx.paths[0], ctx.paths[1:]
+    # Re-entry first: DEPTH_ENV bounds only runs that found no orch run above them; a recognised run is bounded by
+    # the number of orch runs above it, so a nested commit in another repository is never refused.
+    outer = outer_runs(name)
+    if outer >= MAX_HOOK_DEPTH:
+        sys.stderr.write("%s hook: %s: %d orch runs of it for this directory are already above this one (the hook "
+                         "behind the shim keeps calling the shim again); refusing instead of looping\n"
+                         % (PREFIX, name, outer))
+        return 1
+    depth = hook_depth(name, ctx.cwd)
+    if not outer and depth >= MAX_HOOK_DEPTH:
+        sys.stderr.write("%s hook: %s was called %d hooks deep (a hook behind the shim calls the shim again and the "
+                         "outer orch run could not be found among its processes); refusing instead of looping\n"
+                         % (PREFIX, name, depth))
+        return 1
+    if name == "pre-push":
+        return hook_pre_push(args, ctx.cwd, outer > 0, depth)
+    if outer:    # the hook behind this shim called it again: the check already ran
+        return chain_hook(name, args, ctx.cwd, reentry=True)
     if name == "pre-commit":
         if run_check("staged", [], ctx.cwd) != 0:
             return 1
-        return chain_hook(name, args, ctx.cwd)
-    if name == "pre-push":
-        return hook_pre_push(args, ctx.cwd)
+        return chain_hook(name, args, ctx.cwd, depth=depth + 1)
     if len(args) >= 3 and args[2] == "1":    # a branch checkout: a fresh clone or a new worktree gets its links
         try:
             sub = types.SimpleNamespace(dir=None, paths=[], name=None, message=None, hooks_dir=None, chain_existing=False)
@@ -740,7 +916,7 @@ def cmd_hook(ctx):
                 cmd_link(Ctx(sub))
         except (Exception, SystemExit):
             pass
-    return chain_hook(name, args, ctx.cwd)
+    return chain_hook(name, args, ctx.cwd, depth=depth + 1)
 
 
 # -- one switch: enable / disable ------------------------------------------------------------------
