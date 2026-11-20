@@ -2,6 +2,7 @@
 import contextlib
 import io
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -28,7 +29,7 @@ class Base(unittest.TestCase):
         self.data = os.path.join(self.tmp, "data")
         self.env = {"HOME": os.path.join(self.tmp, "home"), "GIT_CONFIG_GLOBAL": gitconfig, "GIT_CONFIG_NOSYSTEM": "1",
                     "AGENTDOCS_STORE": self.store, "ORCH_NO_INDEX": "1", "ORCH_DATA": self.data,
-                    "ORCH_BIN": LAUNCHER, "AGENTDOCS_ALLOW": "0"}
+                    "AGENTDOCS_ALLOW": "0"}
         os.makedirs(self.env["HOME"])
 
     def private(self, name, *lines):
@@ -506,9 +507,9 @@ class TestCheck(Base):
 
 
 class TestHooks(Base):
-    def install(self, repo, *extra):
-        res = self.sh(repo, LAUNCHER, "docs", "install-hooks", *extra)
-        return res
+    def install(self, repo, *extra, orch_bin=LAUNCHER):
+        """Install the shims with an explicit launcher (a shim runs the path written into it, never one from the env)."""
+        return self.sh(repo, LAUNCHER, "docs", "install-hooks", "--orch-bin", orch_bin, *extra)
 
     def test_install_writes_idempotent_shims_and_refuses_foreign_hooks(self):
         r = self.repo("ih")
@@ -522,7 +523,11 @@ class TestHooks(Base):
                 text = fh.read()
             self.assertEqual(text.split("\n")[:2], ["#!/bin/sh", "# orch docs hook"])
             self.assertIn('exec "$ORCH" docs hook %s "$@"' % name, text)
-            self.assertIn("ORCH_BIN:-$HOME/.claude/orch-data/plugin/bin/orch", text)
+            self.assertIn("ORCH=%s\n" % shlex.quote(LAUNCHER), text)             # the launcher is written into the shim
+            self.assertIn("unset PYTHONPATH PYTHONHOME PYTHONSTARTUP", text)
+            self.assertNotIn("ORCH_BIN", text)
+            if name != "post-checkout":
+                self.assertIn("ORCH_DOCS_PRIVATE=%s exec" % shlex.quote(os.path.join(self.data, "private")), text)
         before = {n: slurp(os.path.join(hooks, n)) for n in docs.HOOK_NAMES}
         res = self.install(r)
         self.assertIn("already installed", res.stdout)
@@ -546,7 +551,7 @@ class TestHooks(Base):
         self.assertEqual(self.install(r2, "--chain-existing").returncode, 0)
 
         custom = os.path.join(self.tmp, "hookdir")
-        res = self.sh(self.tmp, LAUNCHER, "docs", "install-hooks", "--dir", custom)
+        res = self.sh(self.tmp, LAUNCHER, "docs", "install-hooks", "--orch-bin", LAUNCHER, "--dir", custom)
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(sorted(os.listdir(custom)), sorted(docs.HOOK_NAMES))
 
@@ -577,6 +582,32 @@ class TestHooks(Base):
             fh.write("ok\n")
         self.git(r, "add", "ok.txt")
         self.assertEqual(self.sh(r, "git", "commit", "-q", "-m", "y").returncode, 0)
+
+    def test_the_committing_environment_cannot_redirect_the_shim_or_the_lists(self):
+        r = self.repo("tr")
+        self.private("agent-docs-deny-content.txt", PRIV)
+        self.assertEqual(self.install(r).returncode, 0)      # the shims bake the launcher and this private dir
+        other = os.path.join(self.tmp, "elsewhere")
+        os.makedirs(other)
+        fake = os.path.join(self.tmp, "fake-orch")
+        with open(fake, "w") as fh:
+            fh.write("#!/bin/sh\nexit 0\n")
+        os.chmod(fake, 0o755)
+        with open(os.path.join(r, "leak.txt"), "w") as fh:
+            fh.write("a %s b\n" % PRIV)
+        self.git(r, "add", "leak.txt")
+        for env in ({"ORCH_BIN": fake}, {"ORCH_DATA": other}, {"ORCH_DIR": other}, {"ORCH_DOCS_PRIVATE": other},
+                    {"HOME": other}, {"PYTHONPATH": other},
+                    {"ORCH_BIN": "/usr/bin/true", "ORCH_DATA": other, "ORCH_DOCS_PRIVATE": "/nonexistent"}):
+            res = self.sh(r, "git", "commit", "-q", "-m", "x", env=env)
+            self.assertNotEqual(res.returncode, 0, env)
+            self.assertIn("    leak.txt:a %s b" % PRIV, res.stderr)
+        # and a CLAUDE.md is refused the same way
+        self.git(r, "reset", "-q", "leak.txt")
+        with open(os.path.join(r, "CLAUDE.md"), "w") as fh:
+            fh.write("rules\n")
+        self.git(r, "add", "CLAUDE.md")
+        self.assertNotEqual(self.sh(r, "git", "commit", "-q", "-m", "x", env={"ORCH_BIN": fake}).returncode, 0)
 
     def test_commit_chains_to_the_repo_hook_and_never_to_itself(self):
         r = self.repo("ch")
@@ -664,9 +695,9 @@ class TestHooks(Base):
 
     def test_shim_without_orch_fails_closed_for_commit_and_open_for_checkout(self):
         r = self.repo("no")
-        self.assertEqual(self.install(r).returncode, 0)
+        self.assertEqual(self.install(r, orch_bin=os.path.join(self.tmp, "missing")).returncode, 0)
         gitdir = os.path.dirname(shutil.which("git"))
-        env = {"ORCH_BIN": os.path.join(self.tmp, "missing"), "PATH": gitdir + os.pathsep + "/usr/bin:/bin"}
+        env = {"PATH": gitdir + os.pathsep + "/usr/bin:/bin"}
         self.assertIsNone(shutil.which("orch", path=env["PATH"]))
         with open(os.path.join(r, "ok.txt"), "w") as fh:
             fh.write("ok\n")
@@ -706,6 +737,8 @@ class TestEnable(Base):
             fh.write("# Mine\n")
         self.gitconfig = self.env["GIT_CONFIG_GLOBAL"]
         self.settings_file = os.path.join(self.data, "settings.json")
+        os.makedirs(self.data, exist_ok=True)       # the stable plugin link enable bakes into the shims
+        os.symlink(os.path.dirname(os.path.dirname(LAUNCHER)), os.path.join(self.data, "plugin"))
 
     def cmd(self, *argv):
         rc, out, err = self.docs(None, *argv, "--file", self.cm)

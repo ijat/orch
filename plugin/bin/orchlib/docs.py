@@ -13,13 +13,14 @@ import contextlib
 import io
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
 import sys
 import types
 
-from .paths import OrchError, docs_store, private_dir
+from .paths import OrchError, docs_store, pointer_path, private_dir
 
 PREFIX = "orch docs"
 STORE_README = "# Private agent docs store (managed by `orch docs`). Never push to a public remote.\n"
@@ -347,14 +348,20 @@ def compile_list(lines):
     return out, bad
 
 
+def private_dir_effective():
+    """Where the private lists are: ORCH_DOCS_PRIVATE when set (a hook shim sets it itself, from the directory written
+    into it at install time), else the private dir under the data root."""
+    return os.environ.get("ORCH_DOCS_PRIVATE") or private_dir()
+
+
 def deny_paths_file():
     """The optional private list that adds path patterns (absent = just the shipped list)."""
-    return os.path.join(private_dir(), "agent-docs-deny-paths.txt")
+    return os.path.join(private_dir_effective(), "agent-docs-deny-paths.txt")
 
 
 def deny_content_file():
     """The private list of strings that must not enter a repo (absent = the content check is off)."""
-    return os.path.join(private_dir(), "agent-docs-deny-content.txt")
+    return os.path.join(private_dir_effective(), "agent-docs-deny-content.txt")
 
 
 def deny_path_lines():
@@ -567,17 +574,26 @@ HOOK_NAMES = ("pre-commit", "pre-push", "post-checkout")
 SHIM_MARKER = "# orch docs hook"
 
 
-def shim_text(name):
+def default_orch_bin():
+    """The launcher a shim runs: the stable plugin link under the data root (it follows plugin updates)."""
+    return os.path.join(pointer_path(), "bin", "orch")
+
+
+def shim_text(name, orch_bin, private):
+    """The hook shim. The launcher and the private-list directory are written into it at install time: nothing in the
+    environment of whoever runs `git commit` or `git push` can name another program or another list (the shim sets
+    ORCH_DOCS_PRIVATE itself and drops PYTHON* variables). AGENTDOCS_ALLOW=1 stays the human escape."""
     fail = "exit 0" if name == "post-checkout" else (
         'echo "orch docs hook: orch is not installed (fix: claude plugin update orch@orch; for one commit or push: '
         'AGENTDOCS_ALLOW=1)" >&2\nexit 1')
     allow = "" if name == "post-checkout" else '[ "${AGENTDOCS_ALLOW:-0}" = 1 ] && exit 0\n'
     return ("#!/bin/sh\n%s\n"
             "# Written by `orch docs install-hooks`: runs the orch check, then chains to %s.pre-orch or the repo's own hook.\n"
-            'ORCH="${ORCH_BIN:-$HOME/.claude/orch-data/plugin/bin/orch}"\n'
+            "unset PYTHONPATH PYTHONHOME PYTHONSTARTUP\n"
+            "ORCH=%s\n"
             '[ -x "$ORCH" ] || ORCH="$(command -v orch 2>/dev/null)"\n'
-            'if [ -x "$ORCH" ]; then exec "$ORCH" docs hook %s "$@"; fi\n'
-            "%s%s\n") % (SHIM_MARKER, name, name, allow, fail)
+            'if [ -x "$ORCH" ]; then ORCH_DOCS_PRIVATE=%s exec "$ORCH" docs hook %s "$@"; fi\n'
+            "%s%s\n") % (SHIM_MARKER, name, shlex.quote(orch_bin), shlex.quote(private), name, allow, fail)
 
 
 def is_shim(path):
@@ -606,11 +622,14 @@ def write_exec(path, text):
     os.replace(tmp, path)
 
 
-def install_hooks(hooks_dir, chain_existing=False, dry_run=False, record=None):
+def install_hooks(hooks_dir, chain_existing=False, dry_run=False, record=None, orch_bin=None):
     """Write the three shims into hooks_dir. A foreign hook of the same name is refused, or with chain_existing
     renamed to <name>.pre-orch. Returns the changes: [("wrote", path) | ("renamed", from, to)]. Nothing is changed
     when anything has to be refused. With dry_run nothing is changed at all; record(change) is called right after
-    each change is made, so a caller can keep a record that survives a failure half way."""
+    each change is made, so a caller can keep a record that survives a failure half way. orch_bin is the launcher
+    written into the shims (default: the plugin link under the data root)."""
+    orch_bin = os.path.abspath(orch_bin) if orch_bin else default_orch_bin()
+    private = private_dir_effective()
     plan = []
     for name in HOOK_NAMES:
         path = os.path.join(hooks_dir, name)
@@ -638,16 +657,16 @@ def install_hooks(hooks_dir, chain_existing=False, dry_run=False, record=None):
             if not dry_run:
                 os.rename(path, pre)
             made(("renamed", path, pre))
-        if pre or read_text(path) != shim_text(name) or not os.access(path, os.X_OK):
+        if pre or read_text(path) != shim_text(name, orch_bin, private) or not os.access(path, os.X_OK):
             if not dry_run:
-                write_exec(path, shim_text(name))
+                write_exec(path, shim_text(name, orch_bin, private))
             made(("wrote", path))
     return changes
 
 
 def cmd_install_hooks(ctx):
     hooks_dir = os.path.abspath(ctx.hooks_dir) if ctx.hooks_dir else os.path.join(common_dir(ctx.cwd), "hooks")
-    changes = install_hooks(hooks_dir, ctx.chain_existing)
+    changes = install_hooks(hooks_dir, ctx.chain_existing, orch_bin=ctx.orch_bin)
     if not changes:
         say("hooks already installed in %s" % hooks_dir)
     for ch in changes:
@@ -964,6 +983,7 @@ class Ctx:
         self.name = ns.name
         self.message = ns.message
         self.hooks_dir = ns.hooks_dir
+        self.orch_bin = getattr(ns, "orch_bin", None)
         self.chain_existing = ns.chain_existing
         self.dry_run = getattr(ns, "dry_run", False)
         self.claude_md = getattr(ns, "claude_md", None)
@@ -996,5 +1016,7 @@ def register(add):
     sp.add_argument("--dir", dest="hooks_dir", default=None, help="install-hooks: the hooks directory (default: the repo's)")
     sp.add_argument("--dry-run", dest="dry_run", action="store_true", help="enable, disable: print each change, make none")
     sp.add_argument("--file", dest="claude_md", default=None, help="enable, disable: the CLAUDE.md to re-render (default: the global one)")
+    sp.add_argument("--orch-bin", dest="orch_bin", default=None,
+                    help="install-hooks: the orch launcher the shims run (default: the plugin link under the data root)")
     sp.add_argument("--chain-existing", dest="chain_existing", action="store_true",
                     help="install-hooks: keep a foreign hook as <name>.pre-orch and chain to it")
